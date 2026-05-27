@@ -71,12 +71,6 @@ Devices and the streaming PC must be on the same subnet. UDP broadcast and direc
 do not cross router or VLAN boundaries. This is an accepted constraint — document it
 clearly for end users.
 
-### Recommended Setup
-
-Give the streaming PC a DHCP reservation in the router (fixed IP by MAC address). This
-is a one-time setup that eliminates IP-change issues without requiring a static IP
-configured in Windows.
-
 ---
 
 ## Discovery Protocol (UDP, port 7001)
@@ -231,7 +225,6 @@ networking libraries.
 
 ## Roadmap (Not Yet Designed)
 
-- OTA firmware updates via WiFi
 - Web UI accessible from other devices on the network
 - Multi-switcher support
 - Per-device brightness and colour customisation in UI
@@ -260,14 +253,10 @@ and locked down before implementation.
 
 To allow development and testing without physical hardware:
 
-- **ATEM simulator:** a small script that speaks enough of the atem-connection protocol
-  to appear as a real switcher. Exposes a simple CLI or minimal UI to manually set
-  program and preview inputs, so the sidecar can be exercised end-to-end without an
-  ATEM Mini present.
+- **ATEM simulator:** a stub of the atem-connection library, exposing the same API but with hardcoded or configurable state. This allows the sidecar and UI to be developed and tested without an actual ATEM switcher. it should include controls for changing program/preview state to verify the full data flow.
 - **Tally client simulator:** a script that connects to the sidecar's TCP server,
   sends a HELLO with a configurable fake MAC address, and logs incoming SET_COLOR
   commands to the terminal. Allows the full server-side path to be verified without
   ESP32 hardware.
 
-Both simulators should live in a /tools directory in the repo and be runnable with a
-single command (e.g. npx ts-node tools/atem-sim.ts).
+Both simulators should live in a /tools directory in the repo.
