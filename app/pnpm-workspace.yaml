@@ -1,0 +1,7 @@
+# pnpm blocks package lifecycle scripts by default, then treats the un-run
+# esbuild script as making node_modules "incomplete" — which is fatal in the
+# deps check pnpm runs before `tauri dev`/`tauri build`'s before* commands.
+# esbuild's binary ships in @esbuild/linux-x64 (a static Go binary, fine on
+# NixOS); allowing its install script to run marks the tree complete.
+allowBuilds:
+  esbuild: true

@@ -1,0 +1,8 @@
+# Nix / direnv (per-subtree build output is ignored in app/.gitignore
+# and app/src-tauri/.gitignore — this file covers the repo root only)
+/.direnv/
+result
+result-*
+
+# OS
+.DS_Store
