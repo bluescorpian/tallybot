@@ -1,0 +1,26 @@
+{
+  // The sidecar runs .ts directly via Node's native type stripping, and is
+  // typechecked separately with `tsc --noEmit`. Type stripping only erases
+  // types — it does not check them and cannot transform non-erasable syntax —
+  // so `erasableSyntaxOnly` forbids enums/namespaces/etc. that would not strip,
+  // and `.ts` import specifiers are allowed (Node requires the explicit
+  // extension when stripping). See README.md.
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023"],
+    "types": ["node"],
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "allowImportingTsExtensions": true,
+    "forceConsistentCasingInFileNames": true,
+
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*.ts"]
+}

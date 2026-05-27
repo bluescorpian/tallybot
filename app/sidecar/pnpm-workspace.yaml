@@ -1,0 +1,8 @@
+# Standalone pnpm root. The sidecar is a separate Node project (compiled to its
+# own binary for Tauri later), so its toolchain is kept isolated from the app's.
+#
+# This file exists only as a workspace-root marker: without it, `pnpm install`
+# here walks up to ../pnpm-workspace.yaml, attaches the sidecar to the app's
+# workspace, and hoists the sidecar's @types/node into the app — which types
+# Node globals in the browser-targeted UI and breaks `app`'s `pnpm run check`.
+# Rooting here gives the sidecar its own node_modules + lockfile instead.

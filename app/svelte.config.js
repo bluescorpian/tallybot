@@ -12,6 +12,11 @@ const config = {
     adapter: adapter({
       fallback: "index.html",
     }),
+    alias: {
+      // The UI↔sidecar IPC contract (Phase 0). Import type-only so it's erased
+      // from the bundle: `import type { AppState } from "$ipc"`.
+      $ipc: "sidecar/src/ipc.ts",
+    },
   },
 };
 
