@@ -1,0 +1,26 @@
+{
+  // Same toolchain as app/sidecar: the tools run .ts directly via Node's native
+  // type stripping and are typechecked separately with `tsc --noEmit`. Stripping
+  // only erases types, so `erasableSyntaxOnly` forbids enums/namespaces/etc., and
+  // `.ts` import specifiers are allowed (Node needs the explicit extension when
+  // stripping). The tally client imports the shared codec from app/sidecar/src,
+  // so that file is pulled into this program too — keep both erasable.
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023"],
+    "types": ["node"],
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "allowImportingTsExtensions": true,
+    "forceConsistentCasingInFileNames": true,
+
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*.ts"]
+}

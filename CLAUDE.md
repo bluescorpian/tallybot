@@ -111,9 +111,12 @@ cd app/sidecar && pnpm install
 
 - **app/** — Tauri 2 + SvelteKit scaffolded via `create-tauri-app`. Frontend and
   Rust shell both build cleanly in the nix dev shell. UI is still the default
-  template; `app/sidecar/` is an empty placeholder.
+  template. `app/sidecar/` holds the Phase 0 shared contracts (`protocol.ts`,
+  `ipc.ts`); the runtime (ATEM, engine, servers) is Phase 2.
 - **firmware/** — empty; not yet scaffolded (`platformio.ini` + `src/main.cpp`).
-- **tools/** — empty; simulators not yet written.
+- **tools/** — Phase 1 done: ATEM simulator (`FakeAtem` stub of `atem-connection`)
+  and tally client simulator (a fake ESP32 over TCP), both with CLIs and tests.
+  See `tools/README.md`.
 
 Roadmap items (OTA, web UI, multi-switcher, OBS integration, simulators) are in
 `ARCHITECTURE.md`.

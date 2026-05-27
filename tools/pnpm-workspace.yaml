@@ -1,0 +1,8 @@
+# Standalone pnpm root, for the same reason as app/sidecar's: the tools are a
+# Node project of their own, and we keep their toolchain isolated from the app's.
+#
+# This file exists only as a workspace-root marker. Without it, `pnpm install`
+# here walks up to ../pnpm-workspace.yaml, attaches tools/ to the app's
+# workspace, and hoists tools' @types/node into the app — which types Node
+# globals into the browser-targeted UI and breaks `app`'s `pnpm run check`.
+# Rooting here gives the tools their own node_modules + lockfile instead.
