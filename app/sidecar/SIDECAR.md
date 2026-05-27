@@ -5,11 +5,12 @@ talk. This is the architectural reference for the sidecar; [`README.md`](README.
 day-to-day dev guide, and [`ARCHITECTURE.md`](../../ARCHITECTURE.md) remains the source of
 truth for the binary device protocol.
 
-> **Status.** Phase 0 ships only the **shared contracts** (`src/protocol.ts`,
-> `src/ipc.ts`) and the sidecar's toolchain. The runtime wiring described below — the
-> Tauri shell spawning the process, the stdio bridge, and packaging the binary — is
-> **Phase 5** and is not built yet. It's documented here so the contracts make sense and
-> Phase 5 has a target.
+> **Status.** Phase 2 builds the **sidecar runtime** — the tally engine, device server,
+> ATEM adapter, config store, IPC bridge, and the orchestrator that wires them (`pnpm
+> start` runs it). What's left for **Phase 5** is the *host* side described below: the
+> Tauri shell spawning the process, the Rust stdio bridge to the webview, and packaging
+> the binary. Those are documented here so the contracts make sense and Phase 5 has a
+> target.
 
 ## Why a Node sidecar at all
 
@@ -100,8 +101,10 @@ The UI then `listen`s for `SidecarEvent`s and `invoke`s a command that forwards
 
 - **Runtime:** Node ≥ 22.6 runs `.ts` directly via native type stripping — no bundler or
   dev runner in the loop. **Tests:** the built-in `node:test`. **Typecheck:** `tsc
-  --noEmit` (stripping erases types but does not check them). Only `typescript` +
-  `@types/node` are dev deps; there are no runtime deps until `atem-connection` (Phase 2).
+  --noEmit` (stripping erases types but does not check them). The lone runtime dependency
+  is `atem-connection`; `typescript` + `@types/node` are the dev deps. (`atem-connection`'s
+  native `@julusian/freetype2` is deliberately left unbuilt — `new Atem()` loads it lazily
+  and the sidecar never uses its media features; see `pnpm-workspace.yaml`.)
 - **Stay erasable.** Type stripping only *removes* types, it never *transforms* code, so
   the sidecar must avoid non-erasable TypeScript — no `enum`s, `namespace`s, or constructor
   parameter properties (use `as const` objects + union types). `tsconfig.json`'s

@@ -136,6 +136,7 @@ const NAMED_COLORS: ReadonlyArray<readonly [string, Color]> = [
   ["idle", COLORS.idle],
   ["disconnected", COLORS.disconnected],
   ["setup", SETUP_COLOR],
+  ["off", { r: 0, g: 0, b: 0 }], // the dark phase of the server's flashing-blue fault
 ];
 
 /**

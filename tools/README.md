@@ -52,6 +52,27 @@ server-side `protocol.ts` and reuses that file's constants and framing, so there
 source of truth for the wire format. (It's also the TypeScript counterpart of what the
 firmware implements in C++.)
 
+## Sidecar dev runner
+
+`sidecar-dev-cli.ts` wires the **real Phase 2 sidecar** — orchestrator, tally engine,
+device server, ATEM adapter, store, and IPC — exactly as `app/sidecar/src/main.ts` does,
+but swaps the real `Atem` for the `FakeAtem` above and replaces the NDJSON-over-stdio UI
+with a terminal REPL. So you can drive the switcher and assign devices by hand and watch the
+colours land on real `tally-client` simulators: the whole `ATEM → sidecar → device` flow
+with nothing plugged in. It binds the real ports (TCP 7000 / UDP 7001), so the simulators
+(or actual ESP32s on the LAN) connect to it normally.
+
+```bash
+pnpm sidecar-dev                  # start the sidecar against a simulated ATEM
+# then, in another terminal:
+pnpm tally-client -- --count 2    # two fake devices discover + connect
+```
+
+REPL commands: `pgm <n>` / `pvw <n>` / `cut` / `name <id> <text>` drive the switcher;
+`assign <mac> <n>` / `unassign <mac>` / `flash <mac>` / `bright <mac> <n>` are the UI
+actions (the `<mac>` may be a short tail); `ls` reprints the board, `q` quits. The same
+wiring is asserted automatically in `sidecar-e2e.test.ts`.
+
 ## Develop
 
 Needs Node ≥ 22.6. Same toolchain as the sidecar: the source runs directly under Node's

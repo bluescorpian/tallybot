@@ -41,7 +41,9 @@ bytes that follow). Full tables in `ARCHITECTURE.md`.
 - **Versioning:** HELLO carries the device's protocol version; the server keeps `CURRENT`
   + `MIN_SUPPORTED` and adapts to older devices (warns below `MIN_SUPPORTED`).
 - **Colours:** Live `255,0,0` · Preview `255,180,0` · Idle `0,255,0` ·
-  Disconnected `0,0,255`. Default brightness `128`.
+  Disconnected `0,0,255` (device-local steady blue) · Fault `0,0,255` flashing
+  (server-driven, when the source can't be trusted — never idle-green). Default
+  brightness `128`. See `ARCHITECTURE.md` "Failure signalling".
 - **Identity:** devices are keyed by MAC address.
 
 ## Dev environment (NixOS)
@@ -111,12 +113,15 @@ cd app/sidecar && pnpm install
 
 - **app/** — Tauri 2 + SvelteKit scaffolded via `create-tauri-app`. Frontend and
   Rust shell both build cleanly in the nix dev shell. UI is still the default
-  template. `app/sidecar/` holds the Phase 0 shared contracts (`protocol.ts`,
-  `ipc.ts`); the runtime (ATEM, engine, servers) is Phase 2.
+  template (Phase 4). `app/sidecar/` is **Phase 2 done**: the tally engine, device
+  server (TCP/UDP), ATEM adapter (real `atem-connection` behind an `AtemLike` seam),
+  config store, IPC bridge, and the orchestrator that wires them — built and tested
+  (`pnpm start` runs it). Phase 5 wires it into the Tauri shell.
 - **firmware/** — empty; not yet scaffolded (`platformio.ini` + `src/main.cpp`).
-- **tools/** — Phase 1 done: ATEM simulator (`FakeAtem` stub of `atem-connection`)
-  and tally client simulator (a fake ESP32 over TCP), both with CLIs and tests.
-  See `tools/README.md`.
+- **tools/** — Phase 1 simulators + the Phase 2 dev runner: ATEM simulator
+  (`FakeAtem`) and tally-client simulator (a fake ESP32 over TCP), plus `sidecar-dev`
+  (drive the real sidecar against the `FakeAtem` from a REPL) and an end-to-end test
+  of the whole path. See `tools/README.md`.
 
 Roadmap items (OTA, web UI, multi-switcher, OBS integration, simulators) are in
 `ARCHITECTURE.md`.

@@ -2,13 +2,14 @@
   "name": "@tallybot/tools",
   "version": "0.1.0",
   "private": true,
-  "description": "Hardware-free simulators for TallyBot development: an ATEM stub that drives program/preview state, and a tally client that stands in for an ESP32 device over TCP. Built against the Phase 0 contracts in app/sidecar/src.",
+  "description": "Hardware-free simulators for TallyBot development: an ATEM stub that drives program/preview state, a tally client that stands in for an ESP32 device over TCP, and a dev runner that drives the real sidecar with both. Built against the contracts in app/sidecar/src.",
   "type": "module",
   "scripts": {
     "test": "node --experimental-strip-types --test \"src/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
     "atem-sim": "node --experimental-strip-types src/atem-sim-cli.ts",
-    "tally-client": "node --experimental-strip-types src/tally-client-cli.ts"
+    "tally-client": "node --experimental-strip-types src/tally-client-cli.ts",
+    "sidecar-dev": "node --experimental-strip-types src/sidecar-dev-cli.ts"
   },
   "license": "MIT",
   "devDependencies": {

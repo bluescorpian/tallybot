@@ -162,14 +162,50 @@ eventually retired.
 
 ### Standard Colours
 
-| State | R | G | B | Meaning |
-|---|---|---|---|---|
-| Live | 255 | 0 | 0 | Input is on Program output |
-| Preview | 255 | 180 | 0 | Input is on Preview |
-| Idle | 0 | 255 | 0 | Input is not selected |
-| Disconnected | 0 | 0 | 255 | Device has no server connection |
+| State | R | G | B | Driven by | Meaning |
+|---|---|---|---|---|---|
+| Live | 255 | 0 | 0 | server | Input is on Program output |
+| Preview | 255 | 180 | 0 | server | Input is on Preview |
+| Idle | 0 | 255 | 0 | server | Input is not selected *and the source is trustworthy* |
+| Fault | 0 | 0 | 255 | server | **Flashing.** Source state can't be trusted (see below) |
+| Disconnected | 0 | 0 | 255 | device | **Steady.** The device itself has lost the server |
+| Setup | 255 | 0 | 255 | server | Connected but not yet assigned to an input (`GOALS.md`; provisional) |
 
 Brightness default: 128. Configurable per device in the UI.
+
+### Failure signalling
+
+A tally light's most dangerous failure is a **false "clear"**: if it goes green (or dark)
+when the truth is unknown, an operator reads "you're off air" and relaxes — possibly while
+live. So idle-green is only ever shown when the sidecar genuinely knows the input is *not*
+selected. When it **can't trust the source**, an assigned device shows the **Fault** state —
+**flashing blue** — never idle.
+
+The source is untrusted when:
+
+- the ATEM is **disconnected or reconnecting** (we hold no live program/preview), or
+- the ATEM is connected but **hasn't reported a program input yet** (state we haven't
+  actually received can't be asserted as "not live").
+
+We deliberately do *not* infer staleness from the gap between `stateChanged` events: a quiet
+but perfectly healthy switcher can send nothing for minutes, and a fault that cries wolf
+during a calm show is worse than the bug it guards against. Detecting a silently-dead link is
+`atem-connection`'s job — its keepalive turns one into a `disconnected` event, which the
+above already covers.
+
+**Two blues, one meaning — "don't trust this light":**
+
+- **Steady blue** is *device-local*. The firmware shows it on its own when it loses the
+  server (no commands arriving). The server can't send this, by definition — if it can reach
+  a device, that link is up.
+- **Flashing blue** is *server-driven*. The server is reaching the device fine, but the
+  **source** behind it is down. The flash distinguishes this active, server-known fault from
+  a device that has gone quietly dark, and from a steady tally colour.
+
+Either way the operator's takeaway is identical: this light is not telling you your real
+state. The UI also greys the source out and shows each input as *unknown* rather than idle.
+An **unassigned** connected device is unaffected — with no input bound there is no tally to
+get wrong, so it keeps the steady setup colour.
 
 ---
 
@@ -210,7 +246,13 @@ the sidecar reads state.video.mixEffects[0].programInput and .previewInput, then
 the appropriate SET_COLOR command to each connected device based on its ATEM input
 assignment.
 
-The ATEM's IP is entered once in app settings. DHCP reservation is recommended.
+From `state.inputs` the sidecar exposes only the **camera inputs** — input ids `1`–`999` —
+and takes each input's label from its `longName`. The ATEM's internal sources (black at
+`0`; colour bars, media players, ME outputs and the like at `≥ 1000`) are filtered out, so
+the UI's input row matches the physical switcher rather than listing routing internals.
+
+The ATEM's IP is entered once in app settings, and is persisted alongside the device
+assignments so it is reused on the next launch. DHCP reservation is recommended.
 
 ### Why Not the Official Blackmagic SDK
 

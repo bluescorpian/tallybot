@@ -6,3 +6,12 @@
 # workspace, and hoists the sidecar's @types/node into the app — which types
 # Node globals in the browser-targeted UI and breaks `app`'s `pnpm run check`.
 # Rooting here gives the sidecar its own node_modules + lockfile instead.
+
+# atem-connection pulls in @julusian/freetype2, a native module used only for its
+# media/text-rendering features — which the sidecar never touches (it only reads
+# program/preview state). We deliberately DON'T build it (`false`): the prebuilt
+# binary wouldn't exec under this box's stub nix-ld anyway, and `new Atem()` loads
+# freetype2 lazily, so leaving it unbuilt is harmless. This also silences pnpm's
+# ignored-build warning and records the decision.
+allowBuilds:
+  "@julusian/freetype2": false

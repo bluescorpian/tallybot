@@ -2,13 +2,17 @@
   "name": "@tallybot/sidecar",
   "version": "0.1.0",
   "private": true,
-  "description": "TallyBot sidecar — the brain: ATEM connection, TCP/UDP device server, and the tally engine. Phase 0 ships only the shared contracts (binary protocol codec + IPC schema).",
+  "description": "TallyBot sidecar — the brain: ATEM connection, TCP/UDP device server, the tally engine, and the NDJSON IPC bridge to the UI.",
   "type": "module",
   "scripts": {
+    "start": "node --experimental-strip-types src/main.ts",
     "test": "node --experimental-strip-types --test \"src/**/*.test.ts\"",
     "typecheck": "tsc --noEmit"
   },
   "license": "MIT",
+  "dependencies": {
+    "atem-connection": "^3.9.0"
+  },
   "devDependencies": {
     "@types/node": "^22",
     "typescript": "^5.8.0"

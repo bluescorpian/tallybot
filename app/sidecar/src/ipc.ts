@@ -14,8 +14,14 @@
 
 // ── Domain ──────────────────────────────────────────────────────────────────
 
-/** Per-input tally state, derived from the source. */
-export type Tally = "live" | "preview" | "idle";
+/**
+ * Per-input tally state, derived from the source. `unknown` is the **fault** state:
+ * the sidecar can't trust the source (the ATEM is disconnected/reconnecting, or it's
+ * connected but hasn't reported a program input), so it must NOT claim a confident
+ * `idle` ("you're clear"). A device on an `unknown` input is shown a flashing-blue
+ * fault, never green — see `ARCHITECTURE.md` "Failure signalling".
+ */
+export type Tally = "live" | "preview" | "idle" | "unknown";
 
 export type SourceConnection = "connected" | "connecting" | "disconnected";
 
