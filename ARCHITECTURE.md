@@ -11,6 +11,10 @@ ATEM Mini's own button LEDs.
 The project will be open-sourced. All architecture decisions favour simplicity,
 reliability on unknown networks, and cross-platform support.
 
+**Related docs:** `GOALS.md` holds the product intent and decisions, `DESIGN.md` the UI
+design, and `PHASES.md` the build phases. This document is the source of truth for the
+network/binary protocol and the rationale — keep it consistent with `GOALS.md`.
+
 ---
 
 ## Full Stack
@@ -131,9 +135,9 @@ can physically locate it during setup (R/G/B/Brightness bytes are ignored for ID
 
 | State | R | G | B | Meaning |
 |---|---|---|---|---|
-| Live | 255 | 0 | 0 | Camera is on Program output |
-| Preview | 255 | 180 | 0 | Camera is on Preview |
-| Idle | 0 | 255 | 0 | Camera is not selected |
+| Live | 255 | 0 | 0 | Input is on Program output |
+| Preview | 255 | 180 | 0 | Input is on Preview |
+| Idle | 0 | 255 | 0 | Input is not selected |
 | Disconnected | 0 | 0 | 255 | Device has no server connection |
 
 Brightness default: 128. Configurable per device in the UI.
@@ -158,9 +162,14 @@ Library: WiFiManager (tzapu/WiFiManager on PlatformIO).
 ## Device Identity
 
 Each device is identified by its MAC address, read via WiFi.macAddress() on the ESP32.
-The MAC is included in every TCP message from the device. The server stores a mapping
-of MAC to camera assignment (e.g. AA:BB:CC:DD:EE:FF -> "Camera 1"), persisted to disk
-by the Node.js sidecar so assignments survive app restarts.
+The MAC is included in every TCP message from the device. The server stores a mapping of
+**MAC -> assigned ATEM input** (e.g. AA:BB:CC:DD:EE:FF -> input 1), persisted to disk by
+the Node.js sidecar so assignments survive app restarts.
+
+Devices have **no user-given name**: a device is identified by its MAC (shown as a short
+tail in the UI) and located physically with IDENTIFY (a flash). Human-readable labels come
+from the **input** — the ATEM's own input names — not from the device, and there is no
+separate "camera" entity. See `GOALS.md` for the rationale.
 
 ---
 
@@ -227,8 +236,12 @@ networking libraries.
 
 - Web UI accessible from other devices on the network
 - Multi-switcher support
-- Per-device brightness and colour customisation in UI
-- Tauri sidecar IPC event schema (to be designed once repo is scaffolded)
+- Per-device colour/appearance customisation in UI (per-device brightness is already v1)
+- Non-ATEM input sources (e.g. OBS as a switcher) — a deferred refactor; see `GOALS.md`
+
+The **Tauri sidecar IPC event schema** is no longer an open design question: its shape is
+now determined by `GOALS.md` (device / input / source / program-gate), and writing it is
+the Phase 0 deliverable (see `PHASES.md`).
 
 ### OBS Integration (obs-websocket)
 
@@ -241,13 +254,13 @@ active scene. When OBS is on a scene that does not contain the ATEM feed, the si
 overrides all device colours to Idle. When OBS is back on the ATEM scene, normal tally
 resumes.
 
-**Open question — tally authority when OBS is on the ATEM scene:**
-Current thinking is that ATEM always drives individual camera tally state, and OBS only
-contributes a global "all idle" override. The alternative — OBS taking full control of
-per-camera tally when it is on an ATEM scene — would require OBS to expose per-input
-tally data, which it does not. The ATEM-drives-cameras / OBS-drives-override split is
-therefore both the simpler model and the only practical one. This should be confirmed
-and locked down before implementation.
+**Decided — tally authority:** the **ATEM always drives per-input tally**; OBS contributes
+only a global **program-gate override** that forces every device to Idle when its active
+scene does not contain the ATEM feed. (OBS taking full per-camera control would require
+per-input tally data it does not expose.) The program-gate is modelled in the IPC schema
+from v1 — present but inactive until an override source is configured — so adding OBS *as
+an override* is cheap. OBS *as an input source* (switching cameras in OBS instead of on
+the ATEM) is a separate, deferred refactor. See `GOALS.md`.
 
 ### ATEM and Tally Client Simulators
 
