@@ -43,6 +43,17 @@
         # runtime. wrapGAppsHook4 exports $GSETTINGS_SCHEMAS_PATH; surface it.
         shellHook = ''
           export XDG_DATA_DIRS="$GSETTINGS_SCHEMAS_PATH:$XDG_DATA_DIRS"
+
+          # WebKitGTK's DMA-BUF renderer crashes the Tauri window on NVIDIA +
+          # Wayland with "Error 71 (Protocol error) dispatching to Wayland
+          # display" — an unresolved upstream WebKit bug (CLAUDE.md has the
+          # details: https://bugs.webkit.org/show_bug.cgi?id=280210). Disabling
+          # that renderer is the reliable fix. Gate it to the affected setup so
+          # accelerated rendering is untouched on X11 / non-NVIDIA GPUs, and let
+          # an explicit override win.
+          if [ -z "$WEBKIT_DISABLE_DMABUF_RENDERER" ] && [ -n "$WAYLAND_DISPLAY" ] && [ -d /sys/module/nvidia ]; then
+            export WEBKIT_DISABLE_DMABUF_RENDERER=1
+          fi
         '';
       };
     };

@@ -53,6 +53,19 @@ the npm `@tauri-apps/cli`'s prebuilt binary can't exec — the flake's nix-built
 `app/pnpm-workspace.yaml` (`allowBuilds: esbuild` so pnpm's pre-run deps check
 doesn't fail fatally on the blocked esbuild lifecycle script).
 
+**NVIDIA + Wayland: the window won't open** (`Gdk-Message: Error 71 (Protocol
+error) dispatching to Wayland display`). WebKitGTK's DMA-BUF renderer commits a
+buffer without a Wayland explicit-sync acquire point on the NVIDIA driver; the
+compositor kills the window. It's an unresolved upstream WebKit bug
+([#280210](https://bugs.webkit.org/show_bug.cgi?id=280210)), not a TallyBot/Tauri
+bug — it reproduces in WebKitGTK's own MiniBrowser. The flake's `shellHook` works
+around it by exporting `WEBKIT_DISABLE_DMABUF_RENDERER=1`, but **only** when it
+detects Wayland + a loaded `nvidia` module (so X11 / AMD / Intel keep the
+accelerated path), and only if you haven't set the var yourself. If you're outside
+the dev shell, prefix manually: `WEBKIT_DISABLE_DMABUF_RENDERER=1 cargo tauri dev`.
+The shipped binary is *not* yet covered — packaging for NVIDIA+Wayland end-users
+will need the same env var set (e.g. in `run()`).
+
 ## Commands
 
 ```bash
