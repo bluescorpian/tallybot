@@ -20,9 +20,9 @@ drift as the project grows.
 ## Components & how they fit
 
 - **Sidecar** is the brain: it connects to the ATEM, runs the TCP server and UDP
-  discovery, maps device MACs to camera assignments, and translates ATEM
+  discovery, maps device MACs to ATEM-input assignments, and translates ATEM
   program/preview state into `SET_COLOR` commands.
-- **Svelte UI** talks to the sidecar over Tauri IPC (event schema not yet designed).
+- **Svelte UI** talks to the sidecar over Tauri IPC (schema shape set in `GOALS.md` / `DESIGN.md`).
 - **Firmware** is a TCP *client*: it discovers the server, connects, sends `HELLO`
   then `HEARTBEAT`s, and applies `SET_COLOR` / `IDENTIFY` commands to the LED.
 
@@ -30,13 +30,16 @@ Data flow: `ATEM state change → sidecar → TCP → ESP32 → WS2812 LED`.
 
 ## Protocol quick reference
 
-Fixed-width binary, no framing. Full tables in `ARCHITECTURE.md`.
+Length-prefixed binary: every message is `[len][payload…]` (`len` = count of payload
+bytes that follow). Full tables in `ARCHITECTURE.md`.
 
 - **Discovery (UDP 7001):** device broadcasts `TALLY_FIND`; server replies/broadcasts
   `TALLY_HERE:7000`.
-- **Device → server (7 bytes):** `[type][mac×6]` — `0x01` HELLO, `0x02` HEARTBEAT.
-- **Server → device (5 bytes):** `[type][R][G][B][brightness]` — `0x01` SET_COLOR,
-  `0x02` IDENTIFY.
+- **Device → server:** `0x01` HELLO `[type][version][mac×6]`, `0x02` HEARTBEAT `[type]`.
+- **Server → device:** `0x01` SET_COLOR `[type][R][G][B][brightness]`, `0x02` IDENTIFY
+  `[type]`.
+- **Versioning:** HELLO carries the device's protocol version; the server keeps `CURRENT`
+  + `MIN_SUPPORTED` and adapts to older devices (warns below `MIN_SUPPORTED`).
 - **Colours:** Live `255,0,0` · Preview `255,180,0` · Idle `0,255,0` ·
   Disconnected `0,0,255`. Default brightness `128`.
 - **Identity:** devices are keyed by MAC address.

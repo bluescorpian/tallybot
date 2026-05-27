@@ -96,40 +96,69 @@ and the server accepts connections as they arrive.
 Devices connect to the server, not the other way around. The server is the stable
 endpoint; devices reconnect automatically on drop.
 
-On connect, the device immediately sends a HELLO message containing its MAC address.
-The server maps MAC to socket and uses this to route commands. If the server restarts,
-devices detect the closed connection and reconnect, re-sending HELLO.
+On connect, the device immediately sends a HELLO message containing its MAC address and
+the protocol version it speaks. The server maps the socket to that MAC (and records the
+version) and uses the socket to route commands for the rest of the session. If the server
+restarts, devices detect the closed connection and reconnect, re-sending HELLO.
 
 ---
 
 ## Binary Message Protocol
 
-All messages are fixed-width. No framing bytes needed — each message type has a known
-length.
+### Framing
 
-### Device to Server (7 bytes)
+Every message is length-prefixed: a single leading byte gives the number of payload bytes
+that follow.
 
-| Byte | Field | Values |
-|---|---|---|
-| 0 | Message type | 0x01 = HELLO, 0x02 = HEARTBEAT |
-| 1-6 | MAC address | 6 bytes, always included |
+```
+[len][payload …]      len = count of payload bytes that follow (1 byte, 0-255)
+```
 
-HELLO is sent immediately on connect and on every reconnect.
-HEARTBEAT is sent every 10 seconds. The server resets a 30-second timer per device;
-expiry means the connection is considered dead and the socket is closed.
+The receiver reads one length byte, reads that many bytes, then dispatches on the first
+payload byte (the message type). One uniform loop frames any message regardless of its
+length, and a parser can skip a message — or trailing fields — it doesn't recognise, which
+is what makes forward/backward compatibility possible (see Versioning below). TCP is a
+byte stream with no inherent message boundaries, so some framing rule is required;
+length-prefixing is the simplest one that also tolerates change.
 
-### Server to Device (5 bytes)
+### Device to Server
 
-| Byte | Field | Values |
-|---|---|---|
-| 0 | Message type | 0x01 = SET_COLOR, 0x02 = IDENTIFY |
-| 1 | R | 0-255 |
-| 2 | G | 0-255 |
-| 3 | B | 0-255 |
-| 4 | Brightness | 0-255 |
+| Message | Type | Payload (follows `len`) | On the wire |
+|---|---|---|---|
+| HELLO | 0x01 | `[type][version][MAC×6]` | 9 bytes |
+| HEARTBEAT | 0x02 | `[type]` | 2 bytes |
 
-SET_COLOR sets the WS2812 LED. IDENTIFY causes the device to flash briefly so the user
-can physically locate it during setup (R/G/B/Brightness bytes are ignored for IDENTIFY).
+HELLO is sent immediately on connect and on every reconnect; it carries the device's MAC
+and the protocol version it speaks. HEARTBEAT is sent every 10 seconds and carries no MAC
+— the server already knows which device a connection belongs to from its HELLO (the TCP
+socket is the identity for the rest of the session). The server resets a 30-second timer
+per device on each heartbeat; expiry means the connection is considered dead and the
+socket is closed.
+
+### Server to Device
+
+| Message | Type | Payload (follows `len`) | On the wire |
+|---|---|---|---|
+| SET_COLOR | 0x01 | `[type][R][G][B][brightness]` | 6 bytes |
+| IDENTIFY | 0x02 | `[type]` | 2 bytes |
+
+SET_COLOR sets the WS2812 LED (R/G/B and brightness each 0-255). IDENTIFY causes the
+device to flash briefly so the user can physically locate it during setup.
+
+### Versioning
+
+HELLO carries the protocol version the device speaks. The server defines two constants:
+`CURRENT` (the version it prefers) and `MIN_SUPPORTED` (the oldest it still handles).
+
+- If the device's version is between `MIN_SUPPORTED` and `CURRENT`, the server records it
+  per connection and **speaks that device's dialect** — devices never have to match the
+  server exactly, and never *have* to be re-flashed to keep working.
+- If the device is older than `MIN_SUPPORTED`, the server surfaces a clear "update
+  firmware" warning instead of misbehaving silently.
+
+Backward-compatibility lives in the **server** (easy to update), not the **firmware**
+(flashed onto physical devices). Raising `MIN_SUPPORTED` is how very old versions are
+eventually retired.
 
 ### Standard Colours
 

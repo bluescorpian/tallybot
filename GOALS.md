@@ -119,5 +119,3 @@ These are settled product decisions; they have wide impact on the schema and UX.
 - For OBS specifically: the **override** path is the modelled, cheap one (the program-gate
   is already in the schema); OBS as an **input source** would need the deferred source
   refactor. Which to build first isn't locked.
-- Whether the wire protocol should carry a **version byte** for forward compatibility
-  (flagged in the Phase 0 discussion; costly to change once firmware ships).
