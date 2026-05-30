@@ -1,0 +1,4 @@
+node_modules
+dist
+tallybot-atem-probe.log
+tallybot-atem-probe.config.json

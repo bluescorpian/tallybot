@@ -1,0 +1,20 @@
+{
+  "name": "@tallybot/atem-probe",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone field-test probe: connect to a real ATEM and watch its program/preview state live in a browser. Reuses the sidecar's real AtemSource adapter so the test exercises production code. Run it straight from source with Node — see run.cmd (Windows) / run.sh.",
+  "scripts": {
+    "start": "node src/main.ts",
+    "start:compat": "node --experimental-strip-types src/main.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "atem-connection": "^3.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5.8.0"
+  }
+}

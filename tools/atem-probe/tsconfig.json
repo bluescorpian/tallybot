@@ -1,0 +1,23 @@
+{
+  // Mirrors tools/tsconfig.json: the probe runs .ts directly via Node's type stripping
+  // and is typechecked separately with `tsc --noEmit`. It's fully self-contained — the
+  // AtemSource adapter is vendored into src/ — so nothing outside this folder is needed.
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023"],
+    "types": ["node"],
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "allowImportingTsExtensions": true,
+    "forceConsistentCasingInFileNames": true,
+
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*.ts"]
+}
