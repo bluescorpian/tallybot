@@ -5,3 +5,4 @@
 # NixOS); allowing its install script to run marks the tree complete.
 allowBuilds:
   esbuild: true
+  '@tailwindcss/oxide': true
