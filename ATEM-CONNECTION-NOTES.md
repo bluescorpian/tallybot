@@ -57,9 +57,17 @@ every 600 ms (`atemSocket.ts:157-162`), and is killed/respawned if it stops resp
 (after which `AtemSocket` re-runs `connect()`). The socket can wedge or throw without taking
 the host process down.
 
+The maintainer puts a **concrete number** on the risk of running on the shared loop: *any
+synchronous operation over ~20 ms is likely to drop the connection* — "even things as
+simple as parsing a chunk of json, or just while loops that dont yield" ([#106]). The
+resend timeout is 60 ms ([#136]). Whether single-threaded is safe is therefore entirely
+**load-dependent** — there's no universal safe answer; it depends on the machine and how
+busy the loop gets ([#136]).
+
 On Node it's a `worker_threads` worker, falling back to a forked child process only on very
 old Node (`manager.ts:869-873`). Either transport loads `atemSocketChild` **by file path at
-runtime** — the root cause of packaging warning #1.
+runtime** — the root cause of packaging warning #1 (and of the recurring bundler failures
+in [#106]/[#133]/[#125]; see [Upstream issues](#upstream-issues--field-reports)).
 
 ### What `disableMultithreaded: true` actually does
 
@@ -111,8 +119,12 @@ materially simpler single-threaded.
 *can* happen if the sidecar's loop ever grows heavier.
 
 **Resolve before deciding:** (a) will the sidecar's main loop ever do meaningful synchronous
-work? (b) can we keep the default *and* still package cleanly — i.e. solve warning #1 by
-shipping `atemSocketChild` on disk rather than reaching for the flag? (c) if we disable, is
+work? The upstream threshold is **~20 ms** ([#106]); our loop is light I/O and comfortably
+under it, but watch any large synchronous JSON/state handling. (b) can we keep the default
+*and* still package cleanly — i.e. solve warning #1 by shipping `atemSocketChild` on disk
+rather than reaching for the flag? Our sidecar already ships as a Node process with files on
+disk (like `tools/atem-probe`), which **sidesteps the bundler failures entirely** — those
+only bite when the library is collapsed into one bundle/binary. (c) if we disable, is
 `AtemSocketChild`'s own reconnect loop enough to replace the watchdog?
 
 Production (`app/sidecar/`) still uses the default `new Atem()`. Decide consciously in Phase 5.
@@ -145,6 +157,12 @@ follow these rules:
 Good-to-know: a clean `destroy()` emits a final `disconnected` event during teardown — don't
 treat a `disconnected` received while shutting down as a fault.
 
+On a **hard parent crash** (not a graceful exit), the multithreaded child could historically
+be orphaned ([#68]) — back when it was a forked child process. The `worker_threads` rewrite
+mitigates this (a worker thread dies with its parent; a forked process does not), and the
+single-threaded mode can't orphan anything at all. The exit-hooks above are the *graceful*
+backstop; worker-dies-with-parent is the *crash* backstop.
+
 Done this way, create/destroy is verified leak-free: the worker is terminated, every timer
 cleared, the `threadedclass` registry entry and its event listeners removed, and the
 auto-restart correctly suppressed on intentional kill (the process-level exit handlers and
@@ -164,3 +182,55 @@ only governs *our* code, not dependencies.
 mode — `threadedclass`'s parent-side logging uses `console.log` even single-threaded, so
 disabling multithreading reduces but does not remove the risk. (Same as `ARCHITECTURE.md`
 packaging warning #2.)
+
+---
+
+## Upstream issues & field reports
+
+What the library's own (still-open) issue tracker says about all this — useful both as
+corroboration and as a map of what is *not* fixed. Both core issues are **open since 2021**.
+
+**Threading is acknowledged-awkward but here to stay (for now).** `threadedclass` is a small
+Sofie-internal lib that the maintainer calls "not very popular [with] a few rough corners"
+([#164]). They've tried to replace it: a `threads.js` idea ([#106]), a WASM/native child
+([#136]), and an actual `comlink` rewrite PR ([#164]) — which sat open from **2024 until it
+was closed unmerged in Feb 2026**. None shipped. So the worker-thread machinery (and its
+sharp edges) is stable but not going away soon.
+
+**Bundling the library breaks it — a recurring, unresolved failure.** Webpack/Electron users
+repeatedly hit `Cannot find module '…/atemSocketChild'` or `'…/threadedclass-worker.js'`
+once bundled or packed, because the worker is loaded by path at runtime ([#106], [#133],
+[#125]). The maintainer is candid that making `worker_threads` play nicely with
+webpack/Electron/browser "is not simple" ([#136]). What works:
+
+- **Don't bundle the worker — ship it as a file.** The proven webpack fix is to mark
+  `atemSocketChild` (and the threadedclass worker) as an *external* and copy the file into
+  the output dir (`copy-webpack-plugin`), or build a second bundle target for it ([#106]).
+  electron-vite's analog is emitting the worker via the `?modulePath` / `?worker` suffix.
+- **asar:** 2.x breaks inside an asar; **3.0+ is asar-safe** ([#106]) — we're on 3.9.0.
+- **Node-only — never bundle it into the WebView.** It won't run in a browser
+  (`__dirname is not defined`) ([#168]). TallyBot is already correct here: the library lives
+  in the Node sidecar, not the SvelteKit/Vite frontend.
+- **Reference consumer:** Bitfocus Companion ships atem-connection in production without
+  these reports ([#133]) — because it runs in a Node backend with files on disk, exactly the
+  shape `tools/atem-probe` uses and the one Phase 5 should prefer.
+
+**`disableMultithreaded` — the maintainer's own caveats.** It's offered as the escape hatch
+but explicitly "likely to cause the connection to die when other cpu intensive stuff is
+happening in your app" ([#125]); safety is load-dependent with no single safe timeout
+([#136]). Conversely, in packed/constrained environments the *watchdog itself* can misfire
+("Timeout when trying to restart after 1000"), and disabling multithreading was the fix
+([#133]) — i.e. the watchdog's value is partly negated exactly where packaging is hardest.
+
+**Net for TallyBot:** the bundler failures don't apply to our Node-sidecar-with-files-on-disk
+shape; they'd only return if we went the single-binary (`pkg`/SEA) route. The real
+`disableMultithreaded` question remains the ~20 ms event-loop budget (§1), and our loop is
+well within it.
+
+[#106]: https://github.com/Sofie-Automation/sofie-atem-connection/issues/106
+[#125]: https://github.com/Sofie-Automation/sofie-atem-connection/issues/125
+[#133]: https://github.com/Sofie-Automation/sofie-atem-connection/issues/133
+[#136]: https://github.com/Sofie-Automation/sofie-atem-connection/issues/136
+[#164]: https://github.com/Sofie-Automation/sofie-atem-connection/pull/164
+[#168]: https://github.com/Sofie-Automation/sofie-atem-connection/issues/168
+[#68]: https://github.com/Sofie-Automation/sofie-atem-connection/issues/68
