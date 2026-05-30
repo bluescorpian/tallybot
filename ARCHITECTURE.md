@@ -303,6 +303,57 @@ networking libraries.
 
 ---
 
+## Packaging the Sidecar (Phase 5 warnings)
+
+These were learned the hard way building `tools/atem-probe` (a standalone field-test
+tool that packages just the ATEM read-path). Tauri ships a sidecar differently — as an
+external binary beside the Rust shell — so the *mechanics* below won't all apply, but
+warnings 1–4 are properties of `atem-connection` itself and bite however the sidecar is
+shipped. Decide the packaging shape deliberately; don't discover these on a release.
+
+1. **`atem-connection` assumes its files live on disk in `node_modules`.** It loads a
+   native module *and* loads its UDP-socket worker (`atemSocketChild`) by file *path* at
+   runtime (via `threadedclass`) — neither survives being collapsed into one bundled
+   file. Two shapes work:
+   - **Ship JS + `node_modules` + a Node runtime** (files on disk → the library works
+     unmodified). Simplest; this is what the probe does, and what Phase 5 should prefer
+     unless there's a reason not to.
+   - **Compile to a single binary** (`pkg`/SEA). Then you must: stub out
+     `@julusian/freetype2` (native, used only for multiviewer-label rendering, which we
+     never call), supply `atemSocketChild.js` as a real file at the path `threadedclass`
+     resolves, *and* set `disableMultithreaded`. All three are proven in the probe's git
+     history — but it's a lot of yak-shaving for marginal benefit.
+
+2. **Library code writes to `stdout` — which the IPC bridge owns. (Latent bug today.)**
+   `threadedclass` logs via `console.log`, i.e. to **stdout** (verified with the probe).
+   The sidecar's NDJSON IPC also writes to `process.stdout` (`ipc-bridge.ts`), and the
+   "all logging goes to stderr" rule only governs *our* code, not dependencies. One stray
+   library line will corrupt the IPC framing the UI parses. **Fix:** at sidecar startup,
+   before constructing `Atem`, redirect `console.log`/`info`/`debug` to stderr (or to the
+   IPC log channel). This applies however `Atem` is configured.
+
+3. **The default `new Atem()` is multithreaded — it spawns a child process.** Production
+   currently uses the default, which runs the socket in a `threadedclass` child that
+   re-`require`s `atemSocketChild` by path. In a packed binary or a restricted sandbox
+   that spawn/require can fail. Prefer `new Atem({ disableMultithreaded: true })` unless
+   multithreading is actually needed: one process is simpler to package, observe, and
+   keep from leaking child stdout into the IPC stream (see #2).
+
+4. **Native modules are per-platform *and* per-ABI.** `@julusian/freetype2` ships prebuilt
+   binaries keyed by `platform-arch-napiVersion`. A cross-platform release (win/mac/linux
+   × x64/arm64) needs the matching prebuild for each target. freetype2 happens to bundle
+   *all* of them in its npm tarball — which is why a `node_modules` installed on Linux
+   still runs on Windows (the probe's zip relies on this) — but don't assume every native
+   dep is so generous; per-target installs/builds may be required.
+
+5. **Running TypeScript at runtime is a Node-version dependency.** The sidecar runs `.ts`
+   directly via Node's type stripping (`--experimental-strip-types`, on by default in
+   newer Node). For a shipped product, pin/bundle the Node version or precompile to `.js`
+   rather than trusting the host's Node — but note precompiling reintroduces warning 1's
+   bundling caveats unless `node_modules` ships alongside.
+
+---
+
 ## Roadmap (Not Yet Designed)
 
 - Web UI accessible from other devices on the network
