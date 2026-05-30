@@ -6,3 +6,6 @@ result-*
 
 # OS
 .DS_Store
+
+# Local exploration / vendored sources for reading only (not part of the project)
+/.exploration/

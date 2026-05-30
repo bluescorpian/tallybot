@@ -332,12 +332,16 @@ shipped. Decide the packaging shape deliberately; don't discover these on a rele
    before constructing `Atem`, redirect `console.log`/`info`/`debug` to stderr (or to the
    IPC log channel). This applies however `Atem` is configured.
 
-3. **The default `new Atem()` is multithreaded — it spawns a child process.** Production
-   currently uses the default, which runs the socket in a `threadedclass` child that
-   re-`require`s `atemSocketChild` by path. In a packed binary or a restricted sandbox
-   that spawn/require can fail. Prefer `new Atem({ disableMultithreaded: true })` unless
-   multithreading is actually needed: one process is simpler to package, observe, and
-   keep from leaking child stdout into the IPC stream (see #2).
+3. **The default `new Atem()` is multithreaded — it runs the socket off the main thread**
+   (a `worker_threads` worker, or a forked child on old Node). Production currently uses
+   the default, which loads `atemSocketChild` **by path** at runtime via `threadedclass`.
+   In a packed binary or a restricted sandbox that spawn/require can fail. Single-threaded
+   (`new Atem({ disableMultithreaded: true })`) is simpler to package, observe, and keep
+   from leaking child stdout into the IPC stream (see #2) — but it trades away the
+   library's event-loop isolation and freeze-watchdog, so it's a deliberate choice, **not
+   yet made**. The full trade-off and the open decision live in
+   [`ATEM-CONNECTION-NOTES.md`](ATEM-CONNECTION-NOTES.md) (§1), alongside the library's
+   other runtime sharp edges (lifecycle/leak-safety, stdout logging).
 
 4. **Native modules are per-platform *and* per-ABI.** `@julusian/freetype2` ships prebuilt
    binaries keyed by `platform-arch-napiVersion`. A cross-platform release (win/mac/linux
