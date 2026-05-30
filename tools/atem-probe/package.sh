@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #
-# Build a self-contained, ready-to-run zip of the ATEM probe.
+# Build a source zip of the ATEM probe to carry to another machine.
 #
 #   bash package.sh           # -> dist/tallybot-atem-probe.zip
 #
-# Unzip it on any machine, then double-click run.cmd (Windows) or run ./run.sh. The zip
-# includes a production node_modules, so the target needs no internet for dependencies
-# (run.cmd still auto-installs Node itself if it's missing).
+# The zip is just the source (no node_modules). On the target, double-click run.cmd
+# (Windows) or run ./run.sh: it installs Node if missing, then runs `npm install` on
+# first launch — so the target needs internet once to fetch dependencies.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -21,14 +21,9 @@ STAGE="$WORK/$NAME"
 OUT="$PWD/dist"
 mkdir -p "$STAGE" "$OUT"
 
-echo "==> staging files ..."
+echo "==> staging source files ..."
+# Source only — node_modules is intentionally excluded; run.cmd / run.sh install it.
 cp -r src package.json package-lock.json tsconfig.json run.cmd run.sh README.md "$STAGE"/
-
-echo "==> installing production dependencies into the bundle ..."
-# Prod-only (no typescript/@types) keeps the zip small. atem-connection's
-# @julusian/freetype2 ships prebuilt binaries for every platform incl. win32-x64, so a
-# node_modules built here still runs on Windows. run.cmd skips install when it's present.
-( cd "$STAGE" && npm install --omit=dev --no-audit --no-fund --silent )
 
 echo "==> zipping ..."
 ZIP="$OUT/$NAME.zip"

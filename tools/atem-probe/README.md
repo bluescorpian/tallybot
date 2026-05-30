@@ -58,16 +58,16 @@ If that all tracks, TallyBot can read this switcher. 🎉
 
 ## Packaging a zip to carry to another machine
 
-From a dev machine (with Node), build a ready-to-run zip:
+From a dev machine, build a source zip:
 
 ```bash
 bash package.sh          # -> dist/tallybot-atem-probe.zip
 ```
 
-The zip bundles the source **and** a production `node_modules`, so on the target it
-needs no internet for dependencies — just unzip and double-click `run.cmd` (Node itself
-is still auto-installed by `run.cmd` if missing). On NixOS, run it with `zip` available:
-`nix shell nixpkgs#zip -c bash package.sh`.
+The zip is **source only** (no `node_modules`). On the target, unzip and double-click
+`run.cmd` (or run `./run.sh`): it auto-installs Node if missing, then runs `npm install`
+on first launch — so the target needs internet once to fetch dependencies. On NixOS,
+build the zip with `zip` available: `nix shell nixpkgs#zip -c bash package.sh`.
 
 ## How it runs
 
