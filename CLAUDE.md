@@ -40,9 +40,9 @@ bytes that follow). Full tables in `ARCHITECTURE.md`.
   `[type]`.
 - **Versioning:** HELLO carries the device's protocol version; the server keeps `CURRENT`
   + `MIN_SUPPORTED` and adapts to older devices (warns below `MIN_SUPPORTED`).
-- **Colours:** Live `255,0,0` · Preview `255,180,0` · Idle `0,255,0` ·
+- **Colours:** Live `255,0,0` · Preview `0,255,0` · Idle `30,30,30` (dim white) ·
   Disconnected `0,0,255` (device-local steady blue) · Fault `0,0,255` flashing
-  (server-driven, when the source can't be trusted — never idle-green). Default
+  (server-driven, when the source can't be trusted — never idle). Default
   brightness `128`. See `ARCHITECTURE.md` "Failure signalling".
 - **Identity:** devices are keyed by MAC address.
 

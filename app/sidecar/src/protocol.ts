@@ -66,8 +66,8 @@ export interface Color {
 /** The standard tally state colours (ARCHITECTURE.md "Standard Colours"). */
 export const COLORS = {
   live: { r: 255, g: 0, b: 0 },
-  preview: { r: 255, g: 180, b: 0 },
-  idle: { r: 0, g: 255, b: 0 },
+  preview: { r: 0, g: 255, b: 0 },
+  idle: { r: 30, g: 30, b: 30 },
   disconnected: { r: 0, g: 0, b: 255 },
 } as const satisfies Record<string, Color>;
 

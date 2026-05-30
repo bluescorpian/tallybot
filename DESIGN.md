@@ -45,9 +45,10 @@ single **program-output gate**, where an **override** can block them all at once
 
 The diagram doubles as the at-a-glance monitor:
 
-- **Lights and inputs** carry the tally **state colours** — live (red), preview (yellow),
-  idle (green) — plus the **setup colour** for unassigned devices, and a **greyed** look
-  when disconnected.
+- **Lights and inputs** carry the tally **state colours** — live (red), preview (green),
+  idle (a light, unlit grey) — plus the **setup colour** for unassigned devices, and a
+  **greyed** look when disconnected. These are the *UI* colours; they intentionally differ
+  from the physical device LEDs (see "UI vs. device colours" below).
 - **Traces** show program *flow* in **blue**: a trace lights up when its input is live and
   reaching the lights; idle traces stay debossed.
 - When an **override** is active (once one is configured — e.g. OBS off the ATEM scene),
@@ -106,25 +107,96 @@ It does **not** handle device-to-input assignment — that's the canvas.
 
 ## Visual language
 
-- **White theme** — light background, clean and modern.
-- **Subtle dot-grid** board texture.
-- **Skeuomorphic components** — the source looks like an ATEM Mini, inputs like its
-  physical buttons, lights like real tally units. Realistic, but kept clean and modern.
+### Surface language — neumorphism
+
+The entire canvas is built on a **neumorphic surface language**: components appear to
+be moulded from the same material as the board itself, either extruded up from it or
+pressed into it. This is the governing rendering style for all bespoke canvas elements
+(not shadcn UI, which stays flat/standard).
+
+**How it works** — raised and recessed elements are defined by **two shadows**: a bright
+highlight on the top-left and a deeper shadow on the bottom-right (or inverted for inset
+elements), both derived from the board's background colour. No harsh outlines; the
+surface implies the shape.
+
+The key constraint: the **board background must be off-white**, not pure white — pure
+white eliminates the highlight shadow and kills the effect. Shadow colours are tonal
+siblings of the background, not arbitrary greys.
+
+Which specific elements are raised vs. inset, and by how much, is decided component by
+component as they are built.
+
+### Colour rules
+
+- **White/off-white theme** — the board surface is off-white, not pure white (neumorphism
+  requires it for shadow contrast).
 - **Traces** — at rest, a **debossed line** engraved into the board with a thin **blue
-  accent along the edge**. A trace turns **solid/glowing blue when its path is active**: an
-  input→light trace when that light is **live**, and the override→gate trace when the
-  **override is active**.
-- **Blue means activity, not state.** Blue marks an energised signal path (and accents the
-  source); it is *not* a tally colour. The tally **state colours — live (red), preview
-  (yellow), idle (green) — live on the lights and inputs**, not the traces.
-- **Disconnected** is shown **greyed / dimmed** in the UI (drained of colour, since it
-  isn't reporting) rather than the LED's literal blue — blue is reserved for activity.
+  accent along the edge**. A trace turns **solid/glowing blue when its path is active**.
+- **Blue means activity, not state.** Blue marks an energised signal path (and accents
+  the source); it is *not* a tally colour. The tally **state colours — live (red),
+  preview (green), idle (unlit grey) — live on the lights and inputs**, not the traces.
+- **Disconnected** is shown **greyed / dimmed** (drained of colour) rather than any blue
+  — blue is reserved for activity.
+- **Two-blue activity system** (see Palette section below).
+
+#### UI vs. device colours
+
+**The on-screen colours are not the physical LED colours.** The device LEDs are defined in
+[`ARCHITECTURE.md`](ARCHITECTURE.md); the UI mimics a real ATEM switch *face*, so it tunes
+for skeuomorphic realism and for the off-white board, not for an LED-exact match. Two
+states diverge deliberately:
+
+| State | Device LED (ARCHITECTURE) | UI (this board) | Why they differ |
+|---|---|---|---|
+| Live | red `255,0,0` | red | same |
+| Preview | green `0,255,0` | green | same |
+| Idle | **dim white** `30,30,30` | **light grey** | a dim-white key wouldn't read on an off-white board; grey is the switch's "unlit but present" key |
+| Disconnected | **steady blue** `0,0,255` | **greyed / drained** | in the UI, **blue is reserved for activity** (traces, source) — so a disconnect can't borrow it |
+| Fault | blue `0,0,255` *flashing* | — | device-only signal; no board treatment yet |
+
+The through-line: on the *device*, blue is a fallback/error colour; in the *UI*, blue is
+the live signal path. They must never be conflated — hence disconnection greys out here
+instead of going blue.
+
+---
+
+## Palette & typography
+
+Standard interfaces (settings, the picker popover) are built with **shadcn-svelte** (Luma
+style, Lucide icons) on Tailwind v4; the canvas itself is bespoke. Tokens live in
+`app/src/routes/layout.css`.
+
+- **Type** — **Inter** for all UI; **IBM Plex Mono** (`font-mono`) for fixed-width
+  technical identifiers: the **MAC tails** on lights and the **ATEM IP** in settings.
+- **Neutrals** — a cool **zinc** grey ramp on an off-white background, kept narrow so the
+  status colours read true.
+- **Two-blue activity system** — blue is split into a calm UI accent and a hot signal:
+  - `--primary` **Azure** `oklch(0.585 0.195 250)` — buttons, focus ring (`--ring`), the
+    source chip. Behaves as a normal accent; white text stays legible on it.
+  - `--signal` **Cyan** `oklch(0.7 0.165 209)` — the energised-signal colour for active
+    traces and the override→gate link, exposed as the `signal` utility colour. This is the
+    *colour* only; the trace's visual treatment is still open (see below).
+- **Tally state colours** (live red / preview green / idle grey) *approximate* the device
+  LED values in [`ARCHITECTURE.md`](ARCHITECTURE.md) but don't match them — idle is a light
+  grey here (the LED is dim white) and **disconnected** greys out (the LED goes blue). See
+  "UI vs. device colours" above for the full mapping and rationale. Tokens live in
+  `layout.css`: `--live`, `--preview`, `--idle`.
 
 ---
 
 ## To refine
 
-- Whether **preview** (not just live) also lights its trace, or only live does.
-- A **skeuomorphism reference** to anchor the look (a real ATEM / tally photo to match).
-- **Staging** details in the dock (ordering, how a newly-discovered light appears).
-- Exact **palette** values, typography, dot-grid spacing, minimum window size.
+- **Neumorphic shadow values** — exact `box-shadow` recipe (offset, blur, spread,
+  opacity) decided component by component as they're built.
+- **Trace rendering** — the inset-groove-at-rest and active look (inner-edge accent,
+  glow spread/blur, whether it pulses or is static). Colour is settled (`--signal`);
+  exact form is not. A CSS `inset` shadow + a thin inner-edge pseudo-element is a
+  candidate; a thin SVG overlay is another.
+- Whether **preview** (not just live) lights its trace, or only live does.
+- **Board background token** — the exact off-white oklch value. Needs to be warm
+  enough for neumorphic shadow contrast but still read as "white" to the eye.
+- A **reference image** of a real ATEM Mini + tally puck to anchor the skeuomorphic
+  detail level (how much realism, where it stops).
+- **Staging** in the dock — ordering of newly-discovered lights; whether the puck
+  animates in.
+- **Dot-grid spacing** and **minimum window size**.

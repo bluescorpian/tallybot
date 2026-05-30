@@ -5,8 +5,8 @@
 A wireless camera tally light system for live video production. A desktop application
 on the streaming PC reads the active/preview state from a Blackmagic Design ATEM Mini
 switcher and broadcasts colour commands to ESP32-based LED devices over WiFi. Camera
-operators see red (live), yellow (preview), or green (idle) — the same logic as the
-ATEM Mini's own button LEDs.
+operators see red (live), green (preview), or dim white (idle) — matching the
+ATEM Mini's own button LED conventions.
 
 The project will be open-sourced. All architecture decisions favour simplicity,
 reliability on unknown networks, and cross-platform support.
@@ -165,8 +165,8 @@ eventually retired.
 | State | R | G | B | Driven by | Meaning |
 |---|---|---|---|---|---|
 | Live | 255 | 0 | 0 | server | Input is on Program output |
-| Preview | 255 | 180 | 0 | server | Input is on Preview |
-| Idle | 0 | 255 | 0 | server | Input is not selected *and the source is trustworthy* |
+| Preview | 0 | 255 | 0 | server | Input is on Preview |
+| Idle | 30 | 30 | 30 | server | Input is not selected *and the source is trustworthy* (dim white) |
 | Fault | 0 | 0 | 255 | server | **Flashing.** Source state can't be trusted (see below) |
 | Disconnected | 0 | 0 | 255 | device | **Steady.** The device itself has lost the server |
 | Setup | 255 | 0 | 255 | server | Connected but not yet assigned to an input (`GOALS.md`; provisional) |
@@ -175,9 +175,9 @@ Brightness default: 128. Configurable per device in the UI.
 
 ### Failure signalling
 
-A tally light's most dangerous failure is a **false "clear"**: if it goes green (or dark)
+A tally light's most dangerous failure is a **false "clear"**: if it goes dim white
 when the truth is unknown, an operator reads "you're off air" and relaxes — possibly while
-live. So idle-green is only ever shown when the sidecar genuinely knows the input is *not*
+live. So idle (dim white) is only ever shown when the sidecar genuinely knows the input is *not*
 selected. When it **can't trust the source**, an assigned device shows the **Fault** state —
 **flashing blue** — never idle.
 

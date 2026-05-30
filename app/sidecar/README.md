@@ -27,7 +27,7 @@ discovery, tracking devices by MAC with heartbeat timeouts), an **ATEM adapter**
 sends a `SET_COLOR` only to devices whose colour actually changed. When the source
 can't be trusted (ATEM disconnected, reconnecting, or not yet reporting program), an
 assigned device is driven to a **flashing-blue fault** rather than a misleading
-idle-green — the orchestrator owns that blink, since the engine is pure (see
+idle (off) — the orchestrator owns that blink, since the engine is pure (see
 `ARCHITECTURE.md` "Failure signalling").
 
 The ATEM seam (`AtemLike`) is why hardware-free testing works: the Phase 1 `FakeAtem`
