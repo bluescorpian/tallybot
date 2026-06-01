@@ -15,6 +15,8 @@ Contents:
 1. [Threading model (multithreaded by default)](#1-threading-model-multithreaded-by-default) — and the open decision about disabling it
 2. [Lifecycle & avoiding memory leaks](#2-lifecycle--avoiding-memory-leaks)
 3. [The library logs to stdout](#3-the-library-logs-to-stdout)
+4. [Transition tally: both sources are live during a mix](#4-transition-tally-both-sources-are-live-during-a-mix) — field-confirmed, needs engine change
+5. [Program/preview can be a non-camera source](#5-programpreview-can-be-a-non-camera-source) — black, stills, media players; an invariant to preserve
 
 ---
 
@@ -226,6 +228,236 @@ happening in your app" ([#125]); safety is load-dependent with no single safe ti
 shape; they'd only return if we went the single-binary (`pkg`/SEA) route. The real
 `disableMultithreaded` question remains the ~20 ms event-loop budget (§1), and our loop is
 well within it.
+
+---
+
+## 4. Transition tally: both sources are live during a mix
+
+Confirmed on real hardware (ATEM Mini, `tallybot-atem-probe.log`, 2026-05-31). The
+**current engine (`tallyFor`) does not handle this case** — it marks only `programInput`
+as live during a transition. The findings and the required fix are documented here so
+Phase 5 can implement it correctly.
+
+### What the log shows
+
+**Hard cuts** (CUT button or direct cut): a single `stateChanged` event where both
+`programInput` and `previewInput` update atomically. There is no in-between state.
+
+**Auto transitions** (AUTO button): three-phase event sequence:
+
+1. **Transition start** — one event that changes *both* `previewInput` and
+   `transitionPosition` together. `previewInput` jumps immediately to whatever source will
+   be on preview *after* the cut completes. `programInput` is unchanged — it still shows the
+   outgoing source.
+
+2. **Mid-transition** — ~25 `stateChanged` events over ~960 ms, each carrying only
+   `transitionPosition`. Interval ≈ 40 ms (≈25 Hz). The 30-frame ATEM Mini default at 30 fps
+   gives ~1 s, consistent with this.
+
+3. **Transition end** — one event carrying `transitionPosition`, `programInput`,
+   `previewInput`, and `transitionPosition` again (see [library quirk](#library-quirk) below).
+   `programInput` now holds the incoming source; `previewInput` may change again for the next
+   queued source.
+
+### What `transitionPosition` looks like
+
+The library type is:
+
+```typescript
+interface TransitionPosition {
+  readonly inTransition: boolean;   // true while the mix is in progress
+  readonly remainingFrames: number; // frames left in the transition
+  handlePosition: number;           // 0–10000 (0 = idle, 10000 = complete)
+}
+```
+
+`mixEffects[0].transitionPosition.inTransition` is the canonical "is a transition in
+progress?" flag. `handlePosition > 0` is not sufficient — the library might briefly report a
+non-zero position after the flag has cleared on the completion frame.
+
+### Tally implication
+
+During a transition (`inTransition = true`) both camera sources are being mixed together
+on the output. An operator watching either source needs to see **live** (red), not preview
+(green) or idle. The current `tallyFor` only marks `programInput` live:
+
+```typescript
+if (inputId === source.programInput) return "live";
+if (inputId === source.previewInput) return "preview"; // ← wrong during transition
+```
+
+During `inTransition`:
+- `programInput` = the **outgoing** source → live (being mixed out)
+- the **incoming** source (being mixed in) → also live
+- `previewInput` (current, after the phase-1 jump) = the **next queued** source → preview
+
+The engine must mark both as live.
+
+### The incoming-source tracking problem
+
+The awkward part: `previewInput` changes at the *start* of the transition, before the mix
+finishes. So at any point mid-transition, the current `snapshot.previewInput` is already the
+next-queued source — not the incoming one. The incoming source is what `previewInput` was
+*before* the phase-1 event.
+
+`AtemSource` must therefore snapshot the previous preview value and hold it as
+`incomingInput` for the duration of the transition:
+
+- When `stateChanged` arrives with both `previewInput` and `transitionPosition` in the same
+  paths list and `inTransition` is now `true`: capture the old `previewInput` as
+  `incomingInput`.
+- When `inTransition` becomes `false`: clear `incomingInput`.
+
+### Required changes (Phase 5)
+
+1. **`AtemMixEffect` interface** (`atem.ts`): add the transition slice:
+
+   ```typescript
+   export interface AtemTransitionPosition {
+     inTransition?: boolean;
+     handlePosition?: number;
+     remainingFrames?: number;
+   }
+   export interface AtemMixEffect {
+     programInput?: number;
+     previewInput?: number;
+     transitionPosition?: AtemTransitionPosition;
+   }
+   ```
+
+2. **`SourceSnapshot`** (`engine.ts`): expose the transition state the engine needs:
+
+   ```typescript
+   export interface SourceSnapshot {
+     // … existing fields …
+     inTransition: boolean;
+     /** The source being mixed in during a transition, or null when not in transition. */
+     incomingInput: number | null;
+   }
+   ```
+
+3. **`AtemSource`** (`atem.ts`): track previous preview on transition start and clear on end.
+   Detection: in `#refresh()`, when `transitionPosition.inTransition` flips to `true`, record
+   the *previous* `#previewInput` as the incoming source. When it flips back to `false`,
+   clear it.
+
+4. **`tallyFor`** (`engine.ts`): mark both outgoing and incoming sources live during a
+   transition:
+
+   ```typescript
+   if (source.inTransition) {
+     if (inputId === source.programInput) return "live";   // outgoing
+     if (inputId === source.incomingInput) return "live";  // incoming
+     if (inputId === source.previewInput) return "preview"; // next queued
+     return "idle";
+   }
+   ```
+
+5. **`engine.test.ts`**: add transition cases — `inTransition: true` with
+   `programInput ≠ incomingInput`, both should return `"live"`, neither should return
+   `"preview"`.
+
+### Library quirk
+
+On the transition-completion event, `transitionPosition` appears **twice** in the
+`pathsChanged` array (confirmed on lines 61, 86, 111, and 136 of the probe log):
+
+```
+stateChanged: video.mixEffects.0.transitionPosition,
+              video.mixEffects.0.programInput,
+              video.mixEffects.0.previewInput,
+              video.mixEffects.0.transitionPosition   ← duplicate
+```
+
+**These are genuine duplicates of one property — not a per-camera split.** Confirmed by
+reading the library source:
+
+- `TrPs` (`TransitionPositionUpdateCommand`) carries no input dimension — only
+  `{ mixEffect, inTransition, remainingFrames, handlePosition }`
+  (`TransitionPositionCommand.js`, `deserialize`). The ATEM models a transition as a single
+  mix between program and preview with one 0–10000 handle; there is no separate
+  program/preview transition position.
+- `applyToState` returns a path keyed *only* by ME index:
+  `` `video.mixEffects.${mixEffect}.transitionPosition` ``. Both entries in the log are the
+  identical `video.mixEffects.0.transitionPosition` string — same ME, same property.
+- The library concatenates each command's path with **no dedup**
+  (`atem.js`: `allChangedPaths.push(...)` per command). Two identical entries therefore mean
+  **two `TrPs` commands in the same UDP packet** — and only `TrPs` produces that path.
+
+Why two only at completion: the final packet coalesces two animation frames' worth of `TrPs`
+(the last movement frame + the reset-to-0 / `inTransition: false` frame — the same packet
+that carries the program/preview swap, which is why mid-transition events show a *single*
+`transitionPosition` and only the completion event doubles). Each `TrPs` is a full state
+replacement (`mixEffect.transitionPosition = this.properties`), so the last one wins and the
+emitted state object holds the correct final `inTransition: false`.
+
+**Impact:** any code that checks `pathsChanged.includes('…transitionPosition')` or reads the
+final `state` object is safe — duplicates don't cause double-processing. But logic that
+*counts* paths or assumes unique entries would break. Treat `pathsChanged` as a set.
+
+### Network scan confirmed working
+
+The probe scanned 253 addresses across one subnet and found the ATEM Mini at 192.168.0.180
+in 16 seconds. The connection handshake itself took ~15 ms. The full-app ATEM discovery
+should reuse the same scan logic (it lives in the probe's `src/scanner.ts`).
+
+---
+
+## 5. Program/preview can be a non-camera source
+
+`programInput` / `previewInput` (and, per §4, the transition `incomingInput`) can hold
+**any ATEM source ID — not just the four HDMI cameras.** The director can put black, a
+still, a media player, colour bars, or an ME output on program or preview. Observed in the
+field when selecting **Still** or **Black** on the ATEM Mini.
+
+ATEM Mini source IDs (the ones that aren't cameras 1–4):
+
+| ID | Source |
+|---|---|
+| `0` | Black |
+| `1000` | Colour Bars |
+| `2001`, `2002` | Colour Generators 1–2 |
+| `3010`, `3020` | Media Players 1–2 (**stills**) |
+| `7001`, `7002` | ME 1 Program / Preview |
+
+### Current code is already correct — this is an invariant to *preserve*, not a bug to fix
+
+Verified end-to-end; nothing crashes today. Documented so it stays that way (the §4
+transition work adds a new source-ID path — `incomingInput` — that must keep this property).
+
+- **Input list filters non-cameras out.** `DEFAULT_INPUT_FILTER = id >= 1 && id < 1000`
+  (`atem.ts`) excludes black (0) and every internal source (≥ 1000), so none of the above
+  ever appears as a tally-able input row.
+- **The engine treats program/preview as opaque numbers.** `tallyFor` is pure numeric
+  comparison. Black/still on program is a valid **non-null** ID, so it is *not* the `unknown`
+  fault state — and since no camera ID matches it, every camera correctly reads `idle`. This
+  is the right, safety-aligned answer: cut to black or a still and no physical camera is on
+  air, so all lights go dim-white "you're clear" — no false "live", and a *known* clear, not
+  a fault.
+- **Production never resolves these IDs in the UI.** `AppState` (`ipc.ts`) carries
+  per-input precomputed `tally` and `source.connection`, **not** the raw program/preview IDs,
+  so the SvelteKit UI has no source→camera lookup to fail on.
+- **The probe guards its one lookup.** `setTile` (`tools/atem-probe/src/ui.ts`) does
+  `byId[inputId] ? inp.label : "Input " + inputId`, so black shows "Input 0" and a still
+  shows "Input 3010" rather than throwing. (This is the "non-standard source" seen in the
+  program/preview tile during the field test.)
+
+### Rule for any new code
+
+Never assume `programInput` / `previewInput` / `incomingInput` resolves to a known camera
+input. Treat them as opaque source IDs: compare numerically, and guard every label lookup
+with a fallback. Do **not** use the fault/`unknown` path for "program is a source I don't
+recognise" — an unrecognised but *reported* source is a confident "no camera live" (idle),
+not an untrustworthy source.
+
+### Test to lock it in (Phase 5)
+
+`engine.test.ts`: `programInput` set to `0`, `3010`, and `7001` with cameras 1–4 assigned —
+every camera must read `idle` (never `live`, `preview`, or `unknown`). Combined with §4:
+a transition whose `incomingInput` is `0`/a still must still leave the non-involved cameras
+`idle` and not crash.
+
+---
 
 [#106]: https://github.com/Sofie-Automation/sofie-atem-connection/issues/106
 [#125]: https://github.com/Sofie-Automation/sofie-atem-connection/issues/125

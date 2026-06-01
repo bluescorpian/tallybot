@@ -1,0 +1,136 @@
+2026-05-31T08:30:41.396Z [INFO] TallyBot ATEM Probe starting (pid 22788)
+2026-05-31T08:30:41.414Z [INFO] probe ready on http://127.0.0.1:4848/
+2026-05-31T08:30:50.207Z [INFO] scanning 253 address(es) across 1 subnet(s) for ATEMs …
+2026-05-31T08:31:00.817Z [INFO] found ATEM at 192.168.0.180 — ATEM Mini
+2026-05-31T08:31:06.838Z [INFO] scan complete — 1 switcher(s) found
+2026-05-31T08:31:08.707Z [INFO] connecting to 192.168.0.180 …
+2026-05-31T08:31:08.722Z [INFO] ATEM connected — ATEM Mini
+2026-05-31T08:31:10.684Z [DEBUG] stateChanged: video.mixEffects.0.previewInput
+2026-05-31T08:31:11.039Z [DEBUG] stateChanged: video.mixEffects.0.previewInput
+2026-05-31T08:31:11.405Z [DEBUG] stateChanged: video.mixEffects.0.previewInput
+2026-05-31T08:31:11.679Z [DEBUG] stateChanged: video.mixEffects.0.previewInput
+2026-05-31T08:31:12.160Z [DEBUG] stateChanged: video.mixEffects.0.previewInput
+2026-05-31T08:31:12.719Z [DEBUG] stateChanged: video.mixEffects.0.previewInput
+2026-05-31T08:31:13.119Z [DEBUG] stateChanged: video.mixEffects.0.previewInput
+2026-05-31T08:31:26.240Z [DEBUG] stateChanged: video.mixEffects.0.previewInput
+2026-05-31T08:31:29.200Z [DEBUG] stateChanged: video.mixEffects.0.previewInput
+2026-05-31T08:31:33.520Z [DEBUG] stateChanged: video.mixEffects.0.programInput, video.mixEffects.0.previewInput
+2026-05-31T08:31:35.960Z [DEBUG] stateChanged: video.mixEffects.0.previewInput
+2026-05-31T08:31:41.361Z [DEBUG] stateChanged: video.mixEffects.0.previewInput
+2026-05-31T08:31:41.880Z [DEBUG] stateChanged: video.mixEffects.0.previewInput
+2026-05-31T08:31:42.200Z [DEBUG] stateChanged: video.mixEffects.0.previewInput
+2026-05-31T08:31:42.520Z [DEBUG] stateChanged: video.mixEffects.0.previewInput
+2026-05-31T08:31:43.080Z [DEBUG] stateChanged: video.mixEffects.0.previewInput
+2026-05-31T08:31:43.520Z [DEBUG] stateChanged: video.mixEffects.0.previewInput
+2026-05-31T08:31:43.880Z [DEBUG] stateChanged: video.mixEffects.0.previewInput
+2026-05-31T08:31:44.520Z [DEBUG] stateChanged: video.mixEffects.0.previewInput
+2026-05-31T08:32:01.721Z [DEBUG] stateChanged: video.mixEffects.0.programInput, video.mixEffects.0.previewInput
+2026-05-31T08:32:03.440Z [DEBUG] stateChanged: video.mixEffects.0.previewInput
+2026-05-31T08:32:03.840Z [DEBUG] stateChanged: video.mixEffects.0.previewInput
+2026-05-31T08:32:04.121Z [DEBUG] stateChanged: video.mixEffects.0.previewInput
+2026-05-31T08:32:05.040Z [DEBUG] stateChanged: video.mixEffects.0.previewInput
+2026-05-31T08:32:05.881Z [DEBUG] stateChanged: video.mixEffects.0.previewInput
+2026-05-31T08:32:06.280Z [DEBUG] stateChanged: video.mixEffects.0.previewInput
+2026-05-31T08:32:06.680Z [DEBUG] stateChanged: video.mixEffects.0.previewInput
+2026-05-31T08:32:07.961Z [DEBUG] stateChanged: video.mixEffects.0.programInput, video.mixEffects.0.previewInput
+2026-05-31T08:32:10.440Z [DEBUG] stateChanged: video.mixEffects.0.programInput, video.mixEffects.0.previewInput
+2026-05-31T08:32:13.200Z [DEBUG] stateChanged: video.mixEffects.0.previewInput, video.mixEffects.0.transitionPosition
+2026-05-31T08:32:13.243Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:13.280Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:13.327Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:13.361Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:13.404Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:13.440Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:13.485Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:13.520Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:13.561Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:13.600Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:13.640Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:13.680Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:13.720Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:13.761Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:13.804Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:13.840Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:13.880Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:13.920Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:13.962Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:14.000Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:14.040Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:14.080Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:14.120Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:14.161Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition, video.mixEffects.0.programInput, video.mixEffects.0.previewInput, video.mixEffects.0.transitionPosition
+2026-05-31T08:32:15.480Z [DEBUG] stateChanged: video.mixEffects.0.previewInput, video.mixEffects.0.transitionPosition
+2026-05-31T08:32:15.520Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:15.561Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:15.600Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:15.640Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:15.680Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:15.721Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:15.762Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:15.800Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:15.840Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:15.880Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:15.920Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:15.962Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:16.000Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:16.040Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:16.080Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:16.120Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:16.161Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:16.200Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:16.240Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:16.280Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:16.320Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:16.361Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:16.400Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:16.440Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition, video.mixEffects.0.programInput, video.mixEffects.0.previewInput, video.mixEffects.0.transitionPosition
+2026-05-31T08:32:19.520Z [DEBUG] stateChanged: video.mixEffects.0.previewInput, video.mixEffects.0.transitionPosition
+2026-05-31T08:32:19.561Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:19.600Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:19.640Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:19.680Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:19.720Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:19.761Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:19.800Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:19.840Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:19.880Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:19.920Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:19.961Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:20.000Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:20.040Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:20.080Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:20.120Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:20.161Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:20.200Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:20.240Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:20.280Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:20.320Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:20.361Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:20.400Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:20.440Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:20.480Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition, video.mixEffects.0.programInput, video.mixEffects.0.previewInput, video.mixEffects.0.transitionPosition
+2026-05-31T08:32:21.361Z [DEBUG] stateChanged: video.mixEffects.0.previewInput, video.mixEffects.0.transitionPosition
+2026-05-31T08:32:21.400Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:21.440Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:21.480Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:21.520Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:21.561Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:21.600Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:21.640Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:21.680Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:21.720Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:21.761Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:21.800Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:21.840Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:21.882Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:21.920Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:21.961Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:22.000Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:22.043Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:22.080Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:22.120Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:22.161Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:22.200Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:22.240Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:22.280Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition
+2026-05-31T08:32:22.320Z [DEBUG] stateChanged: video.mixEffects.0.transitionPosition, video.mixEffects.0.programInput, video.mixEffects.0.previewInput, video.mixEffects.0.transitionPosition
