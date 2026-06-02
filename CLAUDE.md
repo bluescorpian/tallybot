@@ -109,6 +109,23 @@ cd app/sidecar && pnpm install
 - This will be open-sourced: favour simplicity and clarity, and explain tradeoffs
   when introducing a new pattern.
 
+## Reference documents — what they cover and when to load them
+
+These docs sit at the repo root (or near it). Load them on demand; don't bulk-load.
+
+| File | Covers | Load when… |
+|------|--------|------------|
+| **`ARCHITECTURE.md`** | Source-of-truth: protocol spec, IPC schema, network topology, failure modes, design rationale. | Touching the binary protocol, TCP/UDP server, ATEM adapter, IPC bridge, or any structural decision. Always read before a structural change. |
+| **`GOALS.md`** | Product intent and user-facing decisions (what we're building and why). | Evaluating whether a feature belongs in the product, or reconciling a tradeoff against user intent. |
+| **`PHASES.md`** | Build phases — scope and sequencing of each phase. | Planning what to build next, checking what's in-scope for the current phase, or understanding what a phase depends on. |
+| **`DESIGN.md`** | UI visual and interaction design: house style, locked primitives, IPC UI schema, open design questions. | Any frontend / Svelte UI work. Not needed for backend, protocol, or firmware work. |
+| **`ATEM-CONNECTION-NOTES.md`** | Sharp edges and gotchas with the `atem-connection` library; field-test findings. | Debugging ATEM connectivity, extending the ATEM adapter, or integrating new ATEM state. |
+| **`app/sidecar/SIDECAR.md`** | How the Node.js sidecar process works alongside Tauri: lifecycle, IPC transport, why this pattern. | Working on Tauri ↔ sidecar integration, the sidecar launch/shutdown flow, or IPC transport internals. |
+| **`app/sidecar/README.md`** | Day-to-day sidecar dev guide: how to run, test, and iterate on the sidecar in isolation. | Running or debugging the sidecar standalone, onboarding to sidecar development. |
+| **`tools/README.md`** | Hardware simulators: FakeAtem, fake ESP32 TCP client, sidecar-dev REPL, end-to-end test. | Using or extending the dev tools; hardware-free testing. |
+
+The `.exploration/` subtree holds vendored source snapshots for research only — don't load it unless reverse-engineering a specific `atem-connection` or `threadedClass` behaviour.
+
 ## Status
 
 - **app/** — Tauri 2 + SvelteKit scaffolded via `create-tauri-app`. Frontend and
