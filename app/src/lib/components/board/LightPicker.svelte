@@ -82,16 +82,16 @@
 		{/snippet}
 	</PopoverTrigger>
 
-	<PopoverContent align="center" sideOffset={10} class="w-64 gap-0 p-0">
+	<PopoverContent align="center" sideOffset={10} class="w-[12.8rem] gap-0 overflow-hidden p-0">
 		<!-- Header: which light, plus flash-to-identify -->
-		<div class="flex items-center justify-between gap-2 px-3 pt-3 pb-2">
+		<div class="bg-muted/70 flex items-center justify-between gap-2 px-3 pt-3 pb-2.5">
 			<div class="flex flex-col">
 				<span class="text-muted-foreground text-[0.68rem] leading-tight">Tally light</span>
 				<span class="font-mono text-sm font-medium tracking-wide">{mac}</span>
 			</div>
 			<button
 				type="button"
-				class="text-muted-foreground hover:text-foreground hover:bg-accent focus-visible:ring-ring inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors outline-none focus-visible:ring-2"
+				class="text-foreground border-border bg-background hover:bg-accent focus-visible:ring-ring inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium shadow-sm transition-colors outline-none focus-visible:ring-2"
 				onclick={() => onflash?.()}
 			>
 				<Zap class="size-3.5" />
@@ -128,10 +128,10 @@
 
 		{#if currentInputId !== null}
 			<div class="bg-border h-px"></div>
-			<div class="p-1.5">
+			<div class="bg-muted/70 p-1.5">
 				<button
 					type="button"
-					class="text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm outline-none transition-colors"
+					class="text-destructive/85 hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm outline-none transition-colors"
 					onclick={unassign}
 				>
 					<Unplug class="size-4 shrink-0" />
