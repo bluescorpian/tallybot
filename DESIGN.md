@@ -89,8 +89,8 @@ the canvas.
 | Flash-to-identify | Global / app preferences |
 | Live tally state | — |
 
-The **content and structure below are settled**; the **visual execution is open** (being
-re-prototyped). Treat this as the brief, not a finished layout.
+The **content and structure below are settled**. The **visual execution is now locked** —
+prototyped and built at `app/src/routes/settings/+page.svelte` (see "Execution" below).
 
 ### Content — the full v1 settings list
 
@@ -123,38 +123,38 @@ Three groups, in this order:
 - The **same-subnet limitation** explainer.
 - **Documentation / GitHub / license** links (this is open-source).
 
-### Structure
-
-A **single grouped, scrollable pane** — the three groups stacked and separated by rules —
-with a **sticky footer** carrying one primary `Save` (plus `Cancel`). Chosen over the two
-alternatives because the real settings count is small:
-
-- *Sidebar + category panes* — rejected: three short groups behind nav read emptier than
-  they are.
-- *Flat ungrouped list* — rejected: it blurs the three distinct concerns (point at the
-  switcher / app behaviour / info).
-
-The single pane reads finished while lean and absorbs future settings by growing a group
-rather than restructuring.
 
 ### Behaviour decisions
 
 - **Save starts the connection.** There are **no connect / disconnect / forget buttons**
   in settings — saving commits the IP and the engine begins connecting. **Reconnect lives
   on the board's `SourceChip`**, not here.
-- **Save is dirty-gated** — disabled until something changes.
 - **Scan fills, doesn't connect.** Picking a scanned switcher only populates the IP field;
   `Save` is still what connects. (This differs from the probe, which connects on click.)
 - **Scan states to handle:** idle (field + button only) · scanning (spinner in button +
   status line, button disabled, "~20s" hint) · results (inline select list, "found N —
   select one") · none/failed ("no switchers found on the local subnet").
 
-### Components & surface
+### Execution (locked)
 
-Standard **flat shadcn-svelte** (Luma style, Lucide icons) — **not** the neumorphic board
-language. Components used in the prototype: `input`, `label`, `switch`, `separator`,
-`badge`, `radio-group`, `button` (all installed under `app/src/lib/components/ui/`). The
-inline scan list used a `radio-group`; the picker presentation is open to revisit.
+Built at `app/src/routes/settings/+page.svelte` — a flat **shadcn-svelte** (Luma) surface,
+*not* the neumorphic board language (standard interfaces stay flat). A **single grouped,
+scrollable pane**: the three groups stacked as bordered cards (Source / General / About) on
+an off-white page, Inter throughout, IBM Plex Mono for the ATEM IP and the version values.
+
+- **One shared, dirty-gated `Save` in a sticky footer** — *not* a per-field/per-group Save,
+  so it scales as more savable settings arrive (e.g. OBS) without each growing its own
+  button. Setting *values* (IP, launch-on-startup, future OBS) are **pending until Save**;
+  `Cancel` reverts. The footer reads "Unsaved changes · Cancel · Save" when dirty, "All
+  changes saved" when clean. Actions stay immediate (Scan-pick fills the field, Restart,
+  links). Save commits all pending values and starts the connection if the IP changed.
+- **Scan** results render inline as a hand-rolled single-select list (`ip · product` rows);
+  picking fills the field as a pending change. Invalid IP shows an inline error and keeps
+  `Save` disabled.
+- **Polish:** chrome text is `user-select: none` (inputs opt back in); `cursor: pointer`
+  was added to the shadcn `Button`/`Switch` base (Tailwind v4 drops it by default).
+- shadcn components live under `app/src/lib/components/ui/`: `button`, `input`, `label`,
+  `switch`, `separator`, `badge` (the scan list is bespoke, not `radio-group`).
 
 ### Deliberately left out of v1 (considered, deferred)
 
@@ -170,12 +170,6 @@ could return later:
 - **Notifications** — firmware-outdated warning, device-disconnect alert.
 - **Advanced** — network-interface selection, fault-debounce window, heartbeat/offline
   timeout, open config/log location, reset to defaults, export/import config.
-
-### Reference
-
-A first prototype of all four scan states lives at `app/src/routes/preview/+page.svelte`
-(the throwaway design canvas; supports `?scan=idle|scanning|results|none`). It's one
-execution of this brief, not the locked design.
 
 ---
 
@@ -306,9 +300,10 @@ style, Lucide icons) on Tailwind v4; the canvas itself is bespoke. Tokens live i
 
 ### Independent — doesn't block layout
 
-- [ ] **Settings window** — content + structure settled (see "Settings" above: Source /
-  General / About single grouped pane, scan feature, Save-starts-connection); **visual
-  execution being re-prototyped**. Separate Tauri window, opened by corner gear
+- [x] **Settings window** — built at `app/src/routes/settings/+page.svelte`: Source /
+  General / About single grouped pane, scan feature, shared footer Save-starts-connection
+  (see "Settings → Execution" above). Still to wire: the real Tauri window + corner-gear
+  entry point and live IPC (currently mocked)
 - [ ] **Dock** — unassigned-lights tray at the bottom; re-prototype with TallyLightPcb (prior sketch used the rejected puck)
 
 ### Minor — resolve alongside build
