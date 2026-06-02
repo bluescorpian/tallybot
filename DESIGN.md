@@ -123,38 +123,17 @@ Three groups, in this order:
 - The **same-subnet limitation** explainer.
 - **Documentation / GitHub / license** links (this is open-source).
 
-### Structure
-
-A **single grouped, scrollable pane** — the three groups stacked and separated by rules —
-with a **sticky footer** carrying one primary `Save` (plus `Cancel`). Chosen over the two
-alternatives because the real settings count is small:
-
-- *Sidebar + category panes* — rejected: three short groups behind nav read emptier than
-  they are.
-- *Flat ungrouped list* — rejected: it blurs the three distinct concerns (point at the
-  switcher / app behaviour / info).
-
-The single pane reads finished while lean and absorbs future settings by growing a group
-rather than restructuring.
 
 ### Behaviour decisions
 
 - **Save starts the connection.** There are **no connect / disconnect / forget buttons**
   in settings — saving commits the IP and the engine begins connecting. **Reconnect lives
   on the board's `SourceChip`**, not here.
-- **Save is dirty-gated** — disabled until something changes.
 - **Scan fills, doesn't connect.** Picking a scanned switcher only populates the IP field;
   `Save` is still what connects. (This differs from the probe, which connects on click.)
 - **Scan states to handle:** idle (field + button only) · scanning (spinner in button +
   status line, button disabled, "~20s" hint) · results (inline select list, "found N —
   select one") · none/failed ("no switchers found on the local subnet").
-
-### Components & surface
-
-Standard **flat shadcn-svelte** (Luma style, Lucide icons) — **not** the neumorphic board
-language. Components used in the prototype: `input`, `label`, `switch`, `separator`,
-`badge`, `radio-group`, `button` (all installed under `app/src/lib/components/ui/`). The
-inline scan list used a `radio-group`; the picker presentation is open to revisit.
 
 ### Deliberately left out of v1 (considered, deferred)
 
@@ -170,12 +149,6 @@ could return later:
 - **Notifications** — firmware-outdated warning, device-disconnect alert.
 - **Advanced** — network-interface selection, fault-debounce window, heartbeat/offline
   timeout, open config/log location, reset to defaults, export/import config.
-
-### Reference
-
-A first prototype of all four scan states lives at `app/src/routes/preview/+page.svelte`
-(the throwaway design canvas; supports `?scan=idle|scanning|results|none`). It's one
-execution of this brief, not the locked design.
 
 ---
 
