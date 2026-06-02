@@ -91,7 +91,7 @@
 			</div>
 			<button
 				type="button"
-				class="text-foreground border-border bg-background hover:bg-accent focus-visible:ring-ring inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium shadow-sm transition-colors outline-none focus-visible:ring-2"
+				class="text-foreground border-border bg-background hover:bg-accent focus-visible:ring-ring inline-flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium shadow-sm transition-colors outline-none focus-visible:ring-2"
 				onclick={() => onflash?.()}
 			>
 				<Zap class="size-3.5" />
@@ -109,7 +109,7 @@
 					{@const current = input.id === currentInputId}
 					<button
 						type="button"
-						class="hover:bg-accent focus-visible:bg-accent flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm outline-none transition-colors"
+						class="hover:bg-accent focus-visible:bg-accent flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm outline-none transition-colors"
 						aria-current={current}
 						onclick={() => assign(input.id)}
 					>
@@ -131,7 +131,7 @@
 			<div class="bg-muted/70 p-1.5">
 				<button
 					type="button"
-					class="text-destructive/85 hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm outline-none transition-colors"
+					class="text-destructive/85 hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm outline-none transition-colors"
 					onclick={unassign}
 				>
 					<Unplug class="size-4 shrink-0" />
