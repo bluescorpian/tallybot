@@ -1,61 +1,72 @@
 <script lang="ts">
-	// Design surface: the simplified ESP32-C3 PCB tally light, dialled to the real
-	// board photos — portrait 138×163, clean protruding USB-C, 5 gold pads/side,
-	// 45° SoC, WS2812 at its true lower-left spot. Shown across every state.
-	// /preview — throwaway canvas, not shipped UI.
-	import TallyLightPcb, {
-		type LightState,
-	} from "$lib/components/board/TallyLightPcb.svelte";
+	// /preview — throwaway canvas. Exercises the locked Trace primitive across a few
+	// specimen paths, with an active toggle + width slider.
+	import Trace from "$lib/components/board/Trace.svelte";
 
-	const states: LightState[] = [
-		"live",
-		"preview",
-		"idle",
-		"setup",
-		"offline",
-		"fault",
+	type Pt = { x: number; y: number };
+
+	const SPECIMENS: { name: string; points: Pt[] }[] = [
+		{ name: "straight", points: [{ x: 70, y: 22 }, { x: 70, y: 158 }] },
+		{
+			name: "45° jog",
+			points: [
+				{ x: 48, y: 22 },
+				{ x: 48, y: 66 },
+				{ x: 92, y: 110 },
+				{ x: 92, y: 158 },
+			],
+		},
+		{
+			name: "45° elbow",
+			points: [
+				{ x: 38, y: 22 },
+				{ x: 38, y: 92 },
+				{ x: 66, y: 120 },
+				{ x: 124, y: 120 },
+			],
+		},
 	];
-	const stateName: Record<LightState, string> = {
-		live: "Live",
-		preview: "Preview",
-		idle: "Idle",
-		setup: "Setup",
-		offline: "Offline",
-		fault: "Fault",
-	};
-	const macs = ["A1:B2", "C3:D4", "E5:F6", "07:8A", "9B:0C", "AA:01"];
+	const dBySpec = SPECIMENS.map((s) =>
+		s.points.map((p, i) => `${i ? "L" : "M"} ${p.x} ${p.y}`).join(" "),
+	);
+
+	let active = $state(true);
+	let width = $state(5);
 </script>
 
 <div class="page">
 	<header class="intro">
-		<h1>Tally light — ESP32-C3 PCB</h1>
-		<p>
-			Simplified board: clean protruding USB-C (no cavity box), 5 gold
-			castellated pads per edge, the SoC rotated 45°, and the onboard WS2812 at
-			its true lower-left spot. Device-true LED colours; a soft board-edge glow
-			keeps the state glanceable.
-		</p>
+		<h1>Trace</h1>
+		<p>Single-colour stroked path. Cyan when active, grey at rest.</p>
+		<div class="controls">
+			<label><input type="checkbox" bind:checked={active} /> active</label>
+			<label class="w">
+				width
+				<input type="range" min="1" max="14" step="0.5" bind:value={width} />
+				<output>{width}</output>
+			</label>
+		</div>
 	</header>
 
-	<div class="board">
-		<div class="row">
-			{#each states as state, si}
-				<div class="cell">
-					<div class="holder">
-						<TallyLightPcb mac={macs[si]} {state} />
-					</div>
-					<span class="cell-label">{stateName[state]}</span>
+	<div class="tiles">
+		{#each SPECIMENS as spec, ti (spec.name)}
+			<figure class="tile">
+				<div class="board">
+					<svg viewBox="0 0 140 180" aria-hidden="true">
+						<Trace d={dBySpec[ti]} {active} {width} />
+					</svg>
 				</div>
-			{/each}
-		</div>
+				<figcaption>{spec.name}</figcaption>
+			</figure>
+		{/each}
 	</div>
 </div>
 
 <style>
 	.page {
-		max-width: 860px;
+		max-width: 940px;
 		margin: 0 auto;
-		padding: 48px 24px 72px;
+		padding: 40px 24px 72px;
 	}
 	.intro h1 {
 		font-size: 1.35rem;
@@ -65,17 +76,51 @@
 	}
 	.intro p {
 		margin-top: 8px;
-		max-width: 64ch;
 		color: var(--muted-foreground);
 		font-size: 0.9rem;
-		line-height: 1.55;
+	}
+	.controls {
+		display: flex;
+		align-items: center;
+		gap: 24px;
+		margin-top: 16px;
+		font-family: var(--font-mono);
+		font-size: 0.78rem;
+		color: var(--foreground);
+	}
+	.controls label {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		cursor: pointer;
+	}
+	.controls output {
+		color: var(--muted-foreground);
+		min-width: 2.5ch;
 	}
 
+	.tiles {
+		margin-top: 28px;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 24px;
+	}
+	.tile {
+		margin: 0;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 10px;
+	}
+	figcaption {
+		font-family: var(--font-mono);
+		font-size: 0.72rem;
+		color: var(--muted-foreground);
+	}
 	.board {
-		margin-top: 32px;
-		padding: 44px 32px 40px;
+		width: 200px;
 		border: 1px solid var(--border);
-		border-radius: 18px;
+		border-radius: 16px;
 		background-color: oklch(0.993 0.001 286);
 		background-image: radial-gradient(
 			oklch(0.55 0.01 286 / 0.18) 1px,
@@ -87,23 +132,9 @@
 			inset 0 1px 0 oklch(1 0 0 / 0.6),
 			0 1px 2px oklch(0 0 0 / 0.04);
 	}
-	.row {
-		display: grid;
-		grid-template-columns: repeat(6, 1fr);
-		gap: 26px;
-		align-items: start;
-	}
-	.cell {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 14px;
-	}
-	.holder {
-		width: 84px;
-	}
-	.cell-label {
-		font-size: 0.74rem;
-		color: var(--muted-foreground);
+	.board svg {
+		display: block;
+		width: 100%;
+		height: auto;
 	}
 </style>
