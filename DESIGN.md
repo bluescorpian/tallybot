@@ -80,19 +80,102 @@ Configuration of **lights and inputs happens here, on the canvas**, never in set
 
 ## Settings (separate window)
 
-Opened by the corner gear. Scope:
-
-- **Define the source** — the ATEM connection (IP). v1 is ATEM-only; other sources are a
-  deferred addition (see `GOALS.md`).
-- Other global / app-level settings.
-
-It does **not** handle device-to-input assignment — that's the canvas.
+Opened by the corner gear. It does **not** handle device-to-input assignment — that's
+the canvas.
 
 | Belongs on the **canvas** | Belongs in **settings** |
 |---|---|
 | Assigning lights to inputs | Defining the source (ATEM IP) |
 | Flash-to-identify | Global / app preferences |
 | Live tally state | — |
+
+The **content and structure below are settled**; the **visual execution is open** (being
+re-prototyped). Treat this as the brief, not a finished layout.
+
+### Content — the full v1 settings list
+
+Three groups, in this order:
+
+**Source**
+- **ATEM IP** — a text field (mono, per the typography rules). This is the only setting
+  that exists in the schema today (`setSource` → `Source { ip, connection }` in
+  `app/sidecar/src/ipc.ts`).
+- **Scan network** — a button beside the field that sweeps the local subnet for ATEMs.
+  Mirrors the working `tools/atem-probe` sweep: there's no ATEM broadcast, so it
+  brute-force probes every host on each local /24 with the real handshake (~20s, runs
+  async). Each hit returns `{ ip, product }` (e.g. `192.168.10.240 · ATEM Mini Pro`).
+  Results show **inline** as a single-select list; picking one **fills the IP field**
+  (it does *not* connect — see Behaviour). Manual entry is the primary path; scan is the
+  assistive secondary one.
+- **OBS override** — shown but **greyed / "Coming soon"**. Designed-for, built-later
+  (the program-gate is in the schema from v1; only the OBS override *source* is deferred —
+  see `GOALS.md`).
+
+**General**
+- **Launch on system startup** — toggle. Serves the "set up once, forget during the
+  show" north star.
+- **Restart TallyBot Engine** — a recovery button (reconnect switcher + devices if
+  something gets stuck). User-facing wording is **"TallyBot Engine"**, never "sidecar".
+
+**About**
+- App **version**, **protocol version** (`CURRENT` / `MIN_SUPPORTED` from
+  `app/sidecar/src/protocol.ts`) — mono values.
+- The **same-subnet limitation** explainer.
+- **Documentation / GitHub / license** links (this is open-source).
+
+### Structure
+
+A **single grouped, scrollable pane** — the three groups stacked and separated by rules —
+with a **sticky footer** carrying one primary `Save` (plus `Cancel`). Chosen over the two
+alternatives because the real settings count is small:
+
+- *Sidebar + category panes* — rejected: three short groups behind nav read emptier than
+  they are.
+- *Flat ungrouped list* — rejected: it blurs the three distinct concerns (point at the
+  switcher / app behaviour / info).
+
+The single pane reads finished while lean and absorbs future settings by growing a group
+rather than restructuring.
+
+### Behaviour decisions
+
+- **Save starts the connection.** There are **no connect / disconnect / forget buttons**
+  in settings — saving commits the IP and the engine begins connecting. **Reconnect lives
+  on the board's `SourceChip`**, not here.
+- **Save is dirty-gated** — disabled until something changes.
+- **Scan fills, doesn't connect.** Picking a scanned switcher only populates the IP field;
+  `Save` is still what connects. (This differs from the probe, which connects on click.)
+- **Scan states to handle:** idle (field + button only) · scanning (spinner in button +
+  status line, button disabled, "~20s" hint) · results (inline select list, "found N —
+  select one") · none/failed ("no switchers found on the local subnet").
+
+### Components & surface
+
+Standard **flat shadcn-svelte** (Luma style, Lucide icons) — **not** the neumorphic board
+language. Components used in the prototype: `input`, `label`, `switch`, `separator`,
+`badge`, `radio-group`, `button` (all installed under `app/src/lib/components/ui/`). The
+inline scan list used a `radio-group`; the picker presentation is open to revisit.
+
+### Deliberately left out of v1 (considered, deferred)
+
+Recorded so a redesign doesn't re-litigate them. All were weighed and cut for v1; several
+could return later:
+
+- **No dark mode / theme toggle** — explicitly cut. Ensure none ships.
+- **Network ports** (TCP 7000 / UDP 7001) — internal implementation detail, never
+  surfaced.
+- **Tally behaviour** — default brightness for new devices, show-preview-vs-live-only.
+- **App lifecycle** beyond startup — close-to-tray, prevent host-PC sleep, confirm-quit,
+  always-on-top.
+- **Notifications** — firmware-outdated warning, device-disconnect alert.
+- **Advanced** — network-interface selection, fault-debounce window, heartbeat/offline
+  timeout, open config/log location, reset to defaults, export/import config.
+
+### Reference
+
+A first prototype of all four scan states lives at `app/src/routes/preview/+page.svelte`
+(the throwaway design canvas; supports `?scan=idle|scanning|results|none`). It's one
+execution of this brief, not the locked design.
 
 ---
 
@@ -223,7 +306,9 @@ style, Lucide icons) on Tailwind v4; the canvas itself is bespoke. Tokens live i
 
 ### Independent — doesn't block layout
 
-- [ ] **Settings window** — separate Tauri window for ATEM IP entry; opened by corner gear
+- [ ] **Settings window** — content + structure settled (see "Settings" above: Source /
+  General / About single grouped pane, scan feature, Save-starts-connection); **visual
+  execution being re-prototyped**. Separate Tauri window, opened by corner gear
 - [ ] **Dock** — unassigned-lights tray at the bottom; re-prototype with TallyLightPcb (prior sketch used the rejected puck)
 
 ### Minor — resolve alongside build
