@@ -200,3 +200,33 @@ style, Lucide icons) on Tailwind v4; the canvas itself is bespoke. Tokens live i
 - **Staging** in the dock — ordering of newly-discovered lights; whether the puck
   animates in.
 - **Dot-grid spacing** and **minimum window size**.
+
+---
+
+## Design todo
+
+### Primitives (locked)
+
+- [x] **SourceChip** — neumorphic ATEM source chip; connected/disconnected states
+- [x] **InputKey** — skeuomorphic ATEM input button; live/preview/idle states
+- [x] **TallyLightPcb** — ESP32-C3 PCB unit; all six LED states (live, preview, idle, setup, disconnected, fault)
+
+### Blocking — must be designed before layout assembly
+
+- [ ] **Board background token** — exact off-white `oklch(…)` value; warm enough for neumorphic shadow contrast, still reads as white
+- [ ] **Program-output gate** — visual form of the converge-then-diverge "X" in the gutter between inputs and lights; override-source wire-in (hidden in v1)
+- [ ] **Trace rendering** — debossed-at-rest recipe; active glow form (CSS inset + pseudo-element vs SVG overlay); whether preview lights the trace or only live does
+
+### Interaction — can overlap with layout build
+
+- [ ] **Assign / flash picker popover** — opens on plain click of any light; lists inputs with current marked; unassign + flash actions; shadcn-based
+
+### Independent — doesn't block layout
+
+- [ ] **Settings window** — separate Tauri window for ATEM IP entry; opened by corner gear
+- [ ] **Dock** — unassigned-lights tray at the bottom; re-prototype with TallyLightPcb (prior sketch used the rejected puck)
+
+### Minor — resolve alongside build
+
+- [ ] Dot-grid spacing and minimum window size
+- [ ] Dock staging order and whether a newly-discovered light animates in
