@@ -39,6 +39,8 @@
 		/** Source (ATEM) reachable — drives gate-inert + trace dimming. */
 		sourceConnected?: boolean;
 		sourceIp?: string | null;
+		/** Whether lights can be wired to inputs; false hides the picker's assign list. */
+		assignable?: boolean;
 		/** "Set up your ATEM →" link target (opens Settings). */
 		onsetup?: () => void;
 		/** Program-output override (OBS) active — gate cuts, lights idle. */
@@ -55,6 +57,7 @@
 		sourceStatus = "connected",
 		sourceConnected = true,
 		sourceIp = null,
+		assignable = true,
 		override = false,
 		overrideSource = null,
 		onassign,
@@ -69,6 +72,13 @@
 	const pickerInputs = $derived<PickerInput[]>(
 		inputs.map((i) => ({ id: i.id, label: i.label, state: i.state })),
 	);
+	// What the pickers offer as assign targets — empty when assignment is off
+	// (no real source), which flips LightPicker into its flash-only mode.
+	const offerInputs = $derived<PickerInput[]>(assignable ? pickerInputs : []);
+	// No inputs at all → a connected source reporting none (anomaly): Board shows
+	// an honest notice instead of the schematic. (The no-source case is scaffolded
+	// upstream in boardState.ts, so it arrives here with 4 keys, not zero.)
+	const hasInputs = $derived(inputs.length > 0);
 
 	// ── Geometry (computed → deterministic, 45°-clean trace anchors) ──────────
 	const GAPT = 9; // gap between a trace end and the thing it connects to
@@ -99,7 +109,9 @@
 		PADBOTTOM = 36;
 
 	const COLS = $derived(inputs.length);
-	const contentW = $derived(COLS * CW + (COLS - 1) * GAP);
+	// Floor the width at the source chip when there are no columns, so the empty
+	// board stays valid (no negative width, no colCx(-1) garbage geometry).
+	const contentW = $derived(hasInputs ? COLS * CW + (COLS - 1) * GAP : SRC_W);
 	const boardW = $derived(contentW + 2 * PADX);
 	const boardCx = $derived(boardW / 2);
 	const colCx = (i: number) => PADX + i * (CW + GAP) + CW / 2;
@@ -128,7 +140,13 @@
 	);
 	const laneH = $derived(columnsBottom - lightsY + 2 * SLOT_PAD);
 	const dockH = DOCK_TOP + DOCK_HEADER + DOCK_HEAD_GAP + LT_H + DOCK_BOTTOM;
-	const dockY = $derived(columnsBottom + DOCK_GAP);
+	// Empty-state notice (connected source, no inputs): a panel where the
+	// schematic would be. The dock hangs off whichever body is shown.
+	const NOTICE_TOP = srcBottom + 60;
+	const NOTICE_H = 92;
+	const noticeBottom = NOTICE_TOP + NOTICE_H;
+	const bodyBottom = $derived(hasInputs ? columnsBottom : noticeBottom);
+	const dockY = $derived(bodyBottom + DOCK_GAP);
 	const boardH = $derived(dockY + dockH + PADBOTTOM);
 
 	const place = (cx: number, y: number, w: number) =>
@@ -239,90 +257,102 @@
      adds dot-grid breathing room to the right. -->
 <div class="board" class:src-down={!sourceConnected}>
 	<div class="board-content" style="width:{boardW}px; height:{boardH}px;">
-		<!-- Recessed slot lanes (one per input column) so lights read as seated -->
-		{#each inputs as _inp, i (inputs[i].id)}
-			<div
-				class="lane"
-				style={place(colCx(i), lightsY - SLOT_PAD, LT_W + 2 * SLOT_PAD) +
-					`height:${laneH}px;`}
-			></div>
-		{/each}
+		{#if hasInputs}
+			<!-- Recessed slot lanes (one per input column) so lights read as seated -->
+			{#each inputs as _inp, i (inputs[i].id)}
+				<div
+					class="lane"
+					style={place(colCx(i), lightsY - SLOT_PAD, LT_W + 2 * SLOT_PAD) +
+						`height:${laneH}px;`}
+				></div>
+			{/each}
 
-		<!-- Trace overlay: one SVG, behind components, in board coordinates -->
-		<svg
-			class="traces"
-			viewBox="0 0 {boardW} {boardH}"
-			width={boardW}
-			height={boardH}
-			aria-hidden="true"
-		>
-			<!-- source bus: structural, rest grey -->
-			<Trace d={srcDrop} />
-			<Trace d={busMain} />
-			{#each inputs as _, i (i)}<Trace d={tap(i)} />{/each}
-			<!-- converge: inputs collect onto a bus, trunk into the gate -->
-			{#each inputs as _, i (i)}<Trace d={convDrop(i)} active={convActive(i)} />{/each}
-			<Trace d={convBusL} active={leftLive} />
-			<Trace d={convBusR} active={rightLive} />
-			<Trace d={convTrunk} active={anyLive} />
-			<!-- diverge: trunk out of the gate, bus, drop into every column -->
-			<Trace d={divTrunk} active={anyLive && !override} />
-			<Trace d={divBusL} active={leftLive && !override} />
-			<Trace d={divBusR} active={rightLive && !override} />
-			{#each inputs as _, i (i)}<Trace d={divTap(i)} active={divActive(i)} />{/each}
-			<!-- override wire-in (v1: only when active) -->
-			{#if override}<Trace d={overrideWire} active={true} />{/if}
-		</svg>
+			<!-- Trace overlay: one SVG, behind components, in board coordinates -->
+			<svg
+				class="traces"
+				viewBox="0 0 {boardW} {boardH}"
+				width={boardW}
+				height={boardH}
+				aria-hidden="true"
+			>
+				<!-- source bus: structural, rest grey -->
+				<Trace d={srcDrop} />
+				<Trace d={busMain} />
+				{#each inputs as _, i (i)}<Trace d={tap(i)} />{/each}
+				<!-- converge: inputs collect onto a bus, trunk into the gate -->
+				{#each inputs as _, i (i)}<Trace d={convDrop(i)} active={convActive(i)} />{/each}
+				<Trace d={convBusL} active={leftLive} />
+				<Trace d={convBusR} active={rightLive} />
+				<Trace d={convTrunk} active={anyLive} />
+				<!-- diverge: trunk out of the gate, bus, drop into every column -->
+				<Trace d={divTrunk} active={anyLive && !override} />
+				<Trace d={divBusL} active={leftLive && !override} />
+				<Trace d={divBusR} active={rightLive && !override} />
+				{#each inputs as _, i (i)}<Trace d={divTap(i)} active={divActive(i)} />{/each}
+				<!-- override wire-in (v1: only when active) -->
+				{#if override}<Trace d={overrideWire} active={true} />{/if}
+			</svg>
+		{/if}
 
-		<!-- Source -->
+		<!-- Source (always present) -->
 		<div class="abs" style={place(boardCx, srcY, SRC_W)}>
 			<SourceChip status={sourceStatus} ip={sourceIp ?? ""} {onsetup} />
 		</div>
 
-		<!-- Inputs -->
-		{#each inputs as inp, i (inp.id)}
-			<div class="abs" style={place(colCx(i), inY, IN_W)}>
-				<InputKey
-					n={inp.n}
-					state={inp.state}
-					ariaLabel={`Input ${inp.n}: ${inp.label}`}
-				/>
-			</div>
-		{/each}
-
-		<!-- Program-output gate: a circular node on the trace path -->
-		<div class="abs" style={place(boardCx, gateTop, 2 * GATE_R)}>
-			<ProgramGate mode={gateMode} ariaLabel="Program output gate" />
-		</div>
-
-		<!-- Light columns -->
-		{#each inputs as inp, i (inp.id)}
-			{#each lightsFor(inp.id) as light, r (light.mac)}
-				<div
-					class="abs"
-					style={place(colCx(i), lightsY + r * (LT_H + ROW_GAP), LT_W)}
-				>
-					<LightPicker
-						mac={light.mac}
-						state={displayState(light)}
-						inputs={pickerInputs}
-						currentInputId={inp.id}
-						onassign={(id) => onassign?.(light.mac, id)}
-						onunassign={() => onunassign?.(light.mac)}
-						onflash={() => flash(light.mac)}
+		{#if hasInputs}
+			<!-- Inputs -->
+			{#each inputs as inp, i (inp.id)}
+				<div class="abs" style={place(colCx(i), inY, IN_W)}>
+					<InputKey
+						n={inp.n}
+						state={inp.state}
+						ariaLabel={`Input ${inp.n}: ${inp.label}`}
 					/>
 				</div>
 			{/each}
-		{/each}
 
-		<!-- Dock: unassigned lights -->
+			<!-- Program-output gate: a circular node on the trace path -->
+			<div class="abs" style={place(boardCx, gateTop, 2 * GATE_R)}>
+				<ProgramGate mode={gateMode} ariaLabel="Program output gate" />
+			</div>
+
+			<!-- Light columns -->
+			{#each inputs as inp, i (inp.id)}
+				{#each lightsFor(inp.id) as light, r (light.mac)}
+					<div
+						class="abs"
+						style={place(colCx(i), lightsY + r * (LT_H + ROW_GAP), LT_W)}
+					>
+						<LightPicker
+							mac={light.mac}
+							state={displayState(light)}
+							inputs={offerInputs}
+							currentInputId={inp.id}
+							onassign={(id) => onassign?.(light.mac, id)}
+							onunassign={() => onunassign?.(light.mac)}
+							onflash={() => flash(light.mac)}
+						/>
+					</div>
+				{/each}
+			{/each}
+		{:else}
+			<!-- No inputs to show (a connected source reporting none) -->
+			<div class="abs board-empty" style={place(boardCx, NOTICE_TOP, contentW)}>
+				<p class="board-empty-title">No inputs detected</p>
+				<p class="board-empty-sub">
+					The source is connected but reported no inputs.
+				</p>
+			</div>
+		{/if}
+
+		<!-- Dock: unassigned lights (always present) -->
 		<div
 			class="abs"
 			style="left:{PADX}px; top:{dockY}px; width:{contentW}px; height:{dockH}px;"
 		>
 			<BoardDock
 				lights={dockLights}
-				{pickerInputs}
+				pickerInputs={offerInputs}
 				lightWidth={LT_W}
 				onassign={(mac, id) => onassign?.(mac, id)}
 				onflash={(mac) => flash(mac)}
@@ -387,5 +417,27 @@
 			inset 1px 2px 4px oklch(0.5 0.01 286 / 0.16),
 			inset -1px -1px 3px oklch(1 0 0 / 0.8),
 			0 1px 0 oklch(1 0 0 / 0.5);
+	}
+
+	/* Empty-state notice where the schematic would be (connected, no inputs) */
+	.board-empty {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 4px;
+		text-align: center;
+		user-select: none;
+	}
+	.board-empty-title {
+		margin: 0;
+		font-size: 0.92rem;
+		font-weight: 500;
+		color: var(--foreground);
+	}
+	.board-empty-sub {
+		margin: 0;
+		font-size: 0.78rem;
+		color: var(--muted-foreground);
 	}
 </style>

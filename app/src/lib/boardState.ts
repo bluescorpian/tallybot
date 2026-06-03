@@ -29,6 +29,34 @@ export function inputToBoard(i: Input): BoardInput {
 }
 
 /**
+ * No-source scaffold: before the first successful connection there are no real
+ * inputs, so the board falls back to a default ATEM Mini (4 idle keys) rather
+ * than collapsing. Keys are pure context — assignment is disabled (no real
+ * source), so the labels are only cosmetic. Used only when `noSource` (below);
+ * a *connected* source reporting zero inputs is a different case (it keeps its
+ * empty input list, so the board shows an honest "no inputs" notice instead).
+ */
+const DEFAULT_INPUTS: BoardInput[] = [1, 2, 3, 4].map((n) => ({
+	id: String(n),
+	n,
+	label: `Camera ${n}`,
+	state: "idle",
+}));
+
+/**
+ * A light with no source to assign against: it sits in the dock (unassigned),
+ * viewable and — when online — flashable, but cannot be wired to an input.
+ * Offline keeps its device-blue; everything else shows the setup colour.
+ */
+function dockLight(d: Device): BoardLight {
+	return {
+		mac: d.macTail,
+		inputId: null,
+		state: d.state === "offline" ? "offline" : "setup",
+	};
+}
+
+/**
  * Device LED state, resolving every case the primitive can show:
  *   offline               → offline (steady blue, device-local)
  *   unassigned            → setup   (magenta, sits in the dock)
@@ -78,18 +106,35 @@ export interface BoardProps {
 	/** True only when reachable — drives gate-inert + trace dimming. */
 	sourceConnected: boolean;
 	sourceIp: string | null;
+	/** Whether lights can be wired to inputs (false when there are no real inputs). */
+	assignable: boolean;
 	override: boolean;
 	overrideSource: string | null;
 }
 
 export function toBoardProps(state: AppState): BoardProps {
 	const override = state.programGate.active;
+	const connected = state.source.connection === "connected";
+	const real = state.inputs;
+
+	// No real inputs and no live source → scaffold a default ATEM Mini so the
+	// board keeps its shape (the chip says why). A *connected* source with zero
+	// inputs is the anomaly case: keep its empty list so Board shows the notice.
+	const noSource = !connected && real.length === 0;
+	// Assignment needs a real input list to target — true even while a known
+	// source is briefly disconnected (its inputs are retained), false for the
+	// scaffold and the zero-inputs anomaly.
+	const assignable = real.length > 0;
+
 	return {
-		inputs: state.inputs.map(inputToBoard),
-		lights: state.devices.map((d) => deviceToBoard(d, state.inputs, override)),
+		inputs: noSource ? DEFAULT_INPUTS : real.map(inputToBoard),
+		lights: state.devices.map((d) =>
+			assignable ? deviceToBoard(d, real, override) : dockLight(d),
+		),
 		sourceStatus: sourceStatus(state.source),
-		sourceConnected: state.source.connection === "connected",
+		sourceConnected: connected,
 		sourceIp: state.source.ip,
+		assignable,
 		override,
 		overrideSource: state.programGate.source,
 	};

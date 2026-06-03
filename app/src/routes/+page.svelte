@@ -11,7 +11,12 @@
 	import { toBoardProps } from "$lib/boardState";
 
 	// ── Dev toggles (mock only) ───────────────────────────────────────────────
-	type SourceMode = "connected" | "connecting" | "disconnected" | "unconfigured";
+	type SourceMode =
+		| "connected"
+		| "connecting"
+		| "disconnected"
+		| "unconfigured"
+		| "no-inputs";
 	let sourceMode = $state<SourceMode>("connected"); // ATEM source lifecycle
 	let override = $state(false); // OBS override active? (hidden source in v1)
 
@@ -52,17 +57,25 @@
 	// Inputs come from the source. When the source is down the sidecar can't trust
 	// any of them → tally `unknown` (the mapper turns that into idle keys + fault
 	// lights). When up, a representative live / preview / idle spread.
+	// First run (unconfigured) and the connected-but-no-inputs anomaly have NO
+	// inputs; every other mode has the rig's inputs (retained, so connecting /
+	// disconnected keep the layout with tally `unknown` → fault lights).
+	const noInputs = $derived(
+		sourceMode === "unconfigured" || sourceMode === "no-inputs",
+	);
 	const liveTallies: Tally[] = ["live", "preview", "idle", "idle"];
 	const inputs = $derived<Input[]>(
-		[
-			{ id: 1, label: "Cam 1 — Wide" },
-			{ id: 2, label: "Cam 2 — Close" },
-			{ id: 3, label: "Cam 3 — Floor" },
-			{ id: 4, label: "Laptop" },
-		].map((i, idx) => ({
-			...i,
-			tally: connected ? liveTallies[idx] : "unknown",
-		})),
+		noInputs
+			? []
+			: [
+					{ id: 1, label: "Cam 1 — Wide" },
+					{ id: 2, label: "Cam 2 — Close" },
+					{ id: 3, label: "Cam 3 — Floor" },
+					{ id: 4, label: "Laptop" },
+				].map((i, idx) => ({
+					...i,
+					tally: connected ? liveTallies[idx] : "unknown",
+				})),
 	);
 
 	// Unconfigured = no IP saved yet (first run); every other mode keeps the IP so
@@ -72,7 +85,7 @@
 			kind: "atem",
 			ip: sourceMode === "unconfigured" ? null : "192.168.10.240",
 			connection:
-				sourceMode === "connected"
+				sourceMode === "connected" || sourceMode === "no-inputs"
 					? "connected"
 					: sourceMode === "connecting"
 						? "connecting"
@@ -120,6 +133,7 @@
 				<option value="connecting">connecting</option>
 				<option value="disconnected">disconnected</option>
 				<option value="unconfigured">unconfigured</option>
+				<option value="no-inputs">connected · no inputs</option>
 			</select>
 		</label>
 		<label
@@ -134,6 +148,7 @@
 			sourceStatus={props.sourceStatus}
 			sourceConnected={props.sourceConnected}
 			sourceIp={props.sourceIp}
+			assignable={props.assignable}
 			override={props.override}
 			overrideSource={props.overrideSource}
 			onassign={assign}

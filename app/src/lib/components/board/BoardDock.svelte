@@ -90,6 +90,11 @@
 		gap: 18px;
 		/* header → lights breathing room; the PCB reserves its own USB headroom */
 		margin-top: 8px;
+		/* With no source every light lands here, so the row can outrun the tray —
+		   scroll horizontally rather than clip. Padding keeps focus rings off the
+		   edge. (Multi-row staging stays a future refinement.) */
+		overflow-x: auto;
+		padding: 2px 2px 4px;
 	}
 	.dock-slot {
 		flex: none;

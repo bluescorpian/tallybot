@@ -343,9 +343,19 @@ single home for the **state interpretation**:
 | `Device.state = offline` | TallyLight **offline** (steady blue) | device-local; lost the sidecar |
 | `Device.state = unassigned` | TallyLight **setup** (in the dock) | |
 | `programGate.active` (override) | every assigned light **idle**, gate **cut**, diverge traces dark | the single pinch-point makes the global block obvious |
-| `source.connection ≠ connected` | gate **inert**, traces dimmed, keys idle | board keeps its full layout (the disconnected indicator is the `SourceChip`) |
+| `source.connection ≠ connected`, inputs **retained** | gate **inert**, traces dimmed, keys idle | a *remembered* source kept its layout; the disconnect indicator is the `SourceChip` |
+| no source + **empty** inputs (first run / connecting) | **scaffold**: a default ATEM-Mini **4 idle keys** | the board never collapses; the chip ("Set up your ATEM →" / "Connecting…") carries the reason |
+| `connection = connected` but **empty** inputs | **"No inputs detected"** notice (no keys) | anomaly (odd model / lib quirk) — fake keys would lie, so we say it plainly |
+| any state with **no real inputs** | every light drops to the **dock**, flash-but-no-assign | viewable + flashable (online); the picker swaps its assign list for "connect a source to assign" |
+
+**Empty-inputs handling is gated on `source.connection`, not `inputs.length`** (the two empty
+cases above are genuinely different). The no-source scaffold + dock-routing live in the mapper,
+so `Board` only meets truly-empty inputs in the anomaly case (its small, defensive empty
+branch). **Assignments are global, not per-source** (`store.ts`: one `sourceIp` + a flat
+MAC→`{inputId, brightness}` map), so a light's wiring survives source changes; reworking that to
+per-source would be a separate change.
 
 The assembled board lives on the **main route** (`app/src/routes/+page.svelte`), currently
-driven by **mock data + two dev toggles** (source connected · override) so the whole state
-matrix is visible without a running sidecar. **Phase 5** swaps the mock for the real
+driven by **mock data + dev toggles** (a 5-way source-mode select · override) so the whole
+state matrix is visible without a running sidecar. **Phase 5** swaps the mock for the real
 Tauri/IPC snapshot stream and drops the toggles.

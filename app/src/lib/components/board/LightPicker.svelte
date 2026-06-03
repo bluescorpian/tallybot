@@ -101,30 +101,39 @@
 
 		<div class="bg-border h-px"></div>
 
-		<!-- Input list: current marked; click to (re)assign -->
-		<div class="px-1.5 py-1.5">
-			<p class="text-muted-foreground px-1.5 pt-1 pb-1.5 text-[0.68rem]">Assign to input</p>
-			<div class="-mx-0.5 max-h-60 overflow-y-auto px-0.5">
-				{#each inputs as input (input.id)}
-					{@const current = input.id === currentInputId}
-					<button
-						type="button"
-						class="hover:bg-accent focus-visible:bg-accent flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm outline-none transition-colors"
-						aria-current={current}
-						onclick={() => assign(input.id)}
-					>
-						<span
-							class="size-2.5 shrink-0 rounded-full ring-1 ring-black/5"
-							style:background-color={dotColor[input.state]}
-						></span>
-						<span class="flex-1 truncate {current ? 'font-medium' : ''}">{input.label}</span>
-						{#if current}
-							<Check class="text-primary size-4 shrink-0" />
-						{/if}
-					</button>
-				{/each}
+		<!-- Input list: current marked; click to (re)assign. With no inputs to offer
+		     (no source connected) the list gives way to a note — flash still works. -->
+		{#if inputs.length === 0}
+			<div class="px-3 py-3">
+				<p class="text-muted-foreground text-[0.72rem] leading-snug">
+					Connect a source to assign this light to an input.
+				</p>
 			</div>
-		</div>
+		{:else}
+			<div class="px-1.5 py-1.5">
+				<p class="text-muted-foreground px-1.5 pt-1 pb-1.5 text-[0.68rem]">Assign to input</p>
+					<div class="-mx-0.5 max-h-60 overflow-y-auto px-0.5">
+					{#each inputs as input (input.id)}
+						{@const current = input.id === currentInputId}
+						<button
+							type="button"
+							class="hover:bg-accent focus-visible:bg-accent flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm outline-none transition-colors"
+							aria-current={current}
+							onclick={() => assign(input.id)}
+						>
+							<span
+								class="size-2.5 shrink-0 rounded-full ring-1 ring-black/5"
+								style:background-color={dotColor[input.state]}
+							></span>
+							<span class="flex-1 truncate {current ? 'font-medium' : ''}">{input.label}</span>
+							{#if current}
+								<Check class="text-primary size-4 shrink-0" />
+							{/if}
+						</button>
+					{/each}
+				</div>
+			</div>
+		{/if}
 
 		{#if currentInputId !== null}
 			<div class="bg-border h-px"></div>
