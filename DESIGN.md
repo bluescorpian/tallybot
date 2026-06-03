@@ -292,11 +292,11 @@ style, Lucide icons) on Tailwind v4; the canvas itself is bespoke. Tokens live i
 
 - [ ] **Board background token** — exact off-white `oklch(…)` value; warm enough for neumorphic shadow contrast, still reads as white
 - [ ] **Program-output gate** — visual form of the converge-then-diverge "X" in the gutter between inputs and lights; override-source wire-in (hidden in v1)
-- [ ] **Trace rendering** — debossed-at-rest recipe; active glow form (CSS inset + pseudo-element vs SVG overlay); whether preview lights the trace or only live does
+- [x] **Trace rendering** — debossed-at-rest recipe; active glow form (CSS inset + pseudo-element vs SVG overlay); whether preview lights the trace or only live does
 
 ### Interaction — can overlap with layout build
 
-- [ ] **Assign / flash picker popover** — opens on plain click of any light; lists inputs with current marked; unassign + flash actions; shadcn-based
+- [x] **Assign / flash picker popover** — opens on plain click of any light; lists inputs with current marked; unassign + flash actions; shadcn-based
 
 ### Independent — doesn't block layout
 
