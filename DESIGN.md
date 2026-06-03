@@ -37,7 +37,8 @@ single **program-output gate**, where an **override** can block them all at once
   by flashing). Position encodes the assignment, so traces stay short and static.
 - **Dock** for **unassigned** lights runs along the bottom, just below the connected
   lights.
-- A **settings gear in a corner** opens a **separate window** (not a panel).
+- A **settings gear in a corner** opens the **settings drawer** — a panel that slides out
+  from the right, *over* the board (which stays visible behind it).
 
 ---
 
@@ -78,10 +79,20 @@ Configuration of **lights and inputs happens here, on the canvas**, never in set
 
 ---
 
-## Settings (separate window)
+## Settings (slide-out drawer)
 
-Opened by the corner gear. It does **not** handle device-to-input assignment — that's
-the canvas.
+A **right-side slide-out drawer** (shadcn `Sheet`) over the board — *not* a separate OS
+window. Opened by the corner gear, and by the `SourceChip`'s "Set up your ATEM →" link
+(which lands on **Source**). It does **not** handle device-to-input assignment — that's the
+canvas.
+
+**Why a drawer (decided 2026-06-04):** keeping the board visible behind the panel preserves
+context — you type the ATEM IP, hit Save, and watch the `SourceChip` go connecting →
+connected and the lights come alive, without leaving the screen (a full-page/separate window
+throws that live feedback away). It matches the flat shadcn language settings already use and
+re-hosts the built content rather than rebuilding it. The current list is a tidy handful of
+groups, which a scrolling drawer handles well; **if it later outgrows comfortable scrolling,
+promote the group headers into an in-sheet nav rail** (additive, not a rewrite).
 
 | Belongs on the **canvas** | Belongs in **settings** |
 |---|---|
@@ -89,8 +100,9 @@ the canvas.
 | Flash-to-identify | Global / app preferences |
 | Live tally state | — |
 
-The **content and structure below are settled**. The **visual execution is now locked** —
-prototyped and built at `app/src/routes/settings/+page.svelte` (see "Execution" below).
+The **content and structure below are settled** and the grouped-card content is **built**
+(at `app/src/routes/settings/+page.svelte`). Only the **shell** changes — from the current
+standalone full-page route to the drawer (see "Execution" below).
 
 ### Content — the full v1 settings list
 
@@ -135,12 +147,18 @@ Three groups, in this order:
   status line, button disabled, "~20s" hint) · results (inline select list, "found N —
   select one") · none/failed ("no switchers found on the local subnet").
 
-### Execution (locked)
+### Execution
 
-Built at `app/src/routes/settings/+page.svelte` — a flat **shadcn-svelte** (Luma) surface,
-*not* the neumorphic board language (standard interfaces stay flat). A **single grouped,
-scrollable pane**: the three groups stacked as bordered cards (Source / General / About) on
-an off-white page, Inter throughout, IBM Plex Mono for the ATEM IP and the version values.
+The settings **content is locked** — a flat **shadcn-svelte** (Luma) surface, *not* the
+neumorphic board language (standard interfaces stay flat): the three groups stacked as
+bordered cards (Source / General / About), Inter throughout, IBM Plex Mono for the ATEM IP
+and the version values, over the shared dirty-gated footer.
+
+**Shell — a right-side slide-out drawer.** Those cards + footer are hosted in a shadcn
+**`Sheet`** that slides in from the right over the board (board visible behind), ~400px wide,
+the group cards scrolling within it; the sheet's own header carries the "Settings" title +
+gear icon + close. This **replaces** the earlier separate-window plan: the standalone
+full-page shell currently in `+page.svelte` is **re-hosted** in the drawer, not rebuilt.
 
 - **One shared, dirty-gated `Save` in a sticky footer** — *not* a per-field/per-group Save,
   so it scales as more savable settings arrive (e.g. OBS) without each growing its own
@@ -312,10 +330,14 @@ style, Lucide icons) on Tailwind v4; the canvas itself is bespoke. Tokens live i
 
 ### Independent — doesn't block layout
 
-- [x] **Settings window** — built at `app/src/routes/settings/+page.svelte`: Source /
-  General / About single grouped pane, scan feature, shared footer Save-starts-connection
-  (see "Settings → Execution" above). Still to wire: the real Tauri window + corner-gear
-  entry point and live IPC (currently mocked)
+- [x] **Settings content** — built at `app/src/routes/settings/+page.svelte`: Source /
+  General / About grouped cards, scan feature, shared footer Save-starts-connection
+  (see "Settings → Execution" above).
+- [ ] **Settings drawer + entry points** — re-host that content in a **right-side slide-out
+  drawer** (shadcn `Sheet`) over the board; add the **corner gear** and wire the
+  `SourceChip` "Set up your ATEM →" `onsetup` (lands on **Source**) to open it. Mock first
+  (operates on local state — `Save` nudges the mock source mode); **live IPC** (real
+  `setSource` / scan / restart) lands with Phase 5.
 - [x] **Dock** — built as `BoardDock.svelte`: a recessed bottom tray of the unassigned
   lights (`TallyLightPcb` in the setup colour) with an "Unassigned" header + count; clicking
   one opens the same picker to wire it into a column.
