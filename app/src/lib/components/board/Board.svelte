@@ -18,6 +18,7 @@
 	// bends are 45° chamfers, and every run stops short of its endpoint by GAPT so
 	// a small gap reads between a trace and the thing it connects to.
 	import SourceChip from "$lib/components/board/SourceChip.svelte";
+	import type { SourceStatus } from "$lib/components/board/SourceChip.svelte";
 	import InputKey from "$lib/components/board/InputKey.svelte";
 	import LightPicker from "$lib/components/board/LightPicker.svelte";
 	import Trace from "$lib/components/board/Trace.svelte";
@@ -33,9 +34,13 @@
 	interface Props {
 		inputs: BoardInput[];
 		lights: BoardLight[];
-		/** Source (ATEM) connection — drives the chip, gate-inert, trace dimming. */
+		/** Source lifecycle for the chip (connected / connecting / reconnecting / setup). */
+		sourceStatus?: SourceStatus;
+		/** Source (ATEM) reachable — drives gate-inert + trace dimming. */
 		sourceConnected?: boolean;
 		sourceIp?: string | null;
+		/** "Set up your ATEM →" link target (opens Settings). */
+		onsetup?: () => void;
 		/** Program-output override (OBS) active — gate cuts, lights idle. */
 		override?: boolean;
 		/** Override-source label; null in v1 (the source element stays hidden). */
@@ -47,6 +52,7 @@
 	let {
 		inputs,
 		lights,
+		sourceStatus = "connected",
 		sourceConnected = true,
 		sourceIp = null,
 		override = false,
@@ -54,6 +60,7 @@
 		onassign,
 		onunassign,
 		onflash,
+		onsetup,
 	}: Props = $props();
 
 	const lightsFor = (id: string) => lights.filter((l) => l.inputId === id);
@@ -269,7 +276,7 @@
 
 		<!-- Source -->
 		<div class="abs" style={place(boardCx, srcY, SRC_W)}>
-			<SourceChip connected={sourceConnected} ip={sourceIp ?? ""} />
+			<SourceChip status={sourceStatus} ip={sourceIp ?? ""} {onsetup} />
 		</div>
 
 		<!-- Inputs -->

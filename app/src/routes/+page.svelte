@@ -11,8 +11,13 @@
 	import { toBoardProps } from "$lib/boardState";
 
 	// ── Dev toggles (mock only) ───────────────────────────────────────────────
-	let connected = $state(true); // ATEM source reachable?
+	type SourceMode = "connected" | "connecting" | "disconnected" | "unconfigured";
+	let sourceMode = $state<SourceMode>("connected"); // ATEM source lifecycle
 	let override = $state(false); // OBS override active? (hidden source in v1)
+
+	// Only a fully connected source can be trusted; everything else greys the
+	// board (keys idle, gate inert, assigned lights flash fault).
+	const connected = $derived(sourceMode === "connected");
 
 	// Mock devices — mutable so assign / unassign stay interactive. Covers every
 	// light state: assigned-to-live, assigned-to-preview, assigned-to-idle,
@@ -60,11 +65,18 @@
 		})),
 	);
 
+	// Unconfigured = no IP saved yet (first run); every other mode keeps the IP so
+	// the chip can show "Reconnecting…" against a known source.
 	const appState = $derived<AppState>({
 		source: {
 			kind: "atem",
-			ip: "192.168.10.240",
-			connection: connected ? "connected" : "disconnected",
+			ip: sourceMode === "unconfigured" ? null : "192.168.10.240",
+			connection:
+				sourceMode === "connected"
+					? "connected"
+					: sourceMode === "connecting"
+						? "connecting"
+						: "disconnected",
 		},
 		inputs,
 		devices,
@@ -92,12 +104,24 @@
 		// real path sends IDENTIFY; the board echoes with a local blink already
 		void mac;
 	}
+	function setup() {
+		// real path opens the Settings window (Phase 5); mock just nudges the toggle
+		sourceMode = "connecting";
+	}
 </script>
 
 <div class="page">
 	<!-- PHASE-4 MOCK dev strip — remove when real IPC lands (Phase 5) -->
 	<div class="mock-controls">
-		<label><input type="checkbox" bind:checked={connected} /> source connected</label>
+		<label>
+			source
+			<select bind:value={sourceMode}>
+				<option value="connected">connected</option>
+				<option value="connecting">connecting</option>
+				<option value="disconnected">disconnected</option>
+				<option value="unconfigured">unconfigured</option>
+			</select>
+		</label>
 		<label
 			><input type="checkbox" bind:checked={override} /> OBS override (demo — hidden in v1)</label
 		>
@@ -107,6 +131,7 @@
 		<Board
 			inputs={props.inputs}
 			lights={props.lights}
+			sourceStatus={props.sourceStatus}
 			sourceConnected={props.sourceConnected}
 			sourceIp={props.sourceIp}
 			override={props.override}
@@ -114,6 +139,7 @@
 			onassign={assign}
 			onunassign={unassign}
 			onflash={flash}
+			onsetup={setup}
 		/>
 	</div>
 </div>

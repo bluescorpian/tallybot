@@ -11,6 +11,7 @@ import type {
 	LightState,
 } from "$lib/components/board/types";
 import type { PickerInput } from "$lib/components/board/LightPicker.svelte";
+import type { SourceStatus } from "$lib/components/board/SourceChip.svelte";
 
 /**
  * Input key state. `unknown` (the source can't be trusted) maps to `idle`: an
@@ -53,9 +54,28 @@ export function deviceToBoard(
 	return { mac: d.macTail, inputId, state };
 }
 
+/**
+ * Source lifecycle for the chip. The schema carries more than a boolean:
+ * `connection` is three-valued and `ip === null` means *never configured*. We
+ * keep all four apart so the chip can spin while reconnecting and prompt setup
+ * when there's nothing to connect to yet:
+ *   connected               → connected
+ *   connecting              → connecting
+ *   disconnected + ip set   → disconnected (lost a known source; auto-reconnect)
+ *   disconnected + ip null  → unconfigured (first run — go set one up)
+ */
+function sourceStatus(source: AppState["source"]): SourceStatus {
+	if (source.connection === "connected") return "connected";
+	if (source.connection === "connecting") return "connecting";
+	return source.ip === null ? "unconfigured" : "disconnected";
+}
+
 export interface BoardProps {
 	inputs: BoardInput[];
 	lights: BoardLight[];
+	/** Full source lifecycle for the chip (spinner / IP / setup link). */
+	sourceStatus: SourceStatus;
+	/** True only when reachable — drives gate-inert + trace dimming. */
 	sourceConnected: boolean;
 	sourceIp: string | null;
 	override: boolean;
@@ -67,6 +87,7 @@ export function toBoardProps(state: AppState): BoardProps {
 	return {
 		inputs: state.inputs.map(inputToBoard),
 		lights: state.devices.map((d) => deviceToBoard(d, state.inputs, override)),
+		sourceStatus: sourceStatus(state.source),
 		sourceConnected: state.source.connection === "connected",
 		sourceIp: state.source.ip,
 		override,

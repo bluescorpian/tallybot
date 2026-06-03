@@ -289,7 +289,14 @@ style, Lucide icons) on Tailwind v4; the canvas itself is bespoke. Tokens live i
 
 ### Primitives (locked)
 
-- [x] **SourceChip** — neumorphic ATEM source chip; connected/disconnected states
+- [x] **SourceChip** — neumorphic ATEM source chip. Four lifecycle states off the
+  schema (`Source.connection` × `ip`): **connected** (lit LED + IP in mono),
+  **connecting** / **disconnected** (status dot becomes a neutral spinner — the engine
+  auto-reconnects, so "Connecting…" / "Reconnecting…"), and **unconfigured** (no IP yet
+  → the status area is a muted "Set up your ATEM →" link into Settings, using the shared
+  `ArrowLink` affordance: animated colour-lighten + arrow nudge mark it as a link). The
+  three-valued connection + the `ip === null` "never configured" case are kept distinct in
+  `boardState.ts` (not collapsed to a boolean).
 - [x] **InputKey** — skeuomorphic ATEM input button; live/preview/idle states
 - [x] **TallyLightPcb** — ESP32-C3 PCB unit; all six LED states (live, preview, idle, setup, disconnected, fault)
 
