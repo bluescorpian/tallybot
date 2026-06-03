@@ -26,6 +26,16 @@
 	--live: oklch(61.797% 0.24643 23.602);
 	--preview: oklch(77.167% 0.24613 144.546);
 	--idle: oklch(0.74 0.003 286);
+	/* ── Board canvas (bespoke PCB-schematic surface) ─────────────────────────
+	   Warm off-white "greige" + a tonal dot-grid. Single home for the board look:
+	   retune here. Board surfaces (lanes / dock / gate) derive from --board via
+	   color-mix, so changing --board (or its hue) warms the whole board at once. */
+	--board: oklch(0.966 0.004 74); /* greige surface */
+	--board-dot-hue: 74; /* dot + surface tint hue */
+	--board-dot-space: 32px; /* dot-grid pitch */
+	--board-dot-size: 1.5px; /* dot radius */
+	--board-dot-alpha: 0.12; /* dot strength */
+	--board-dot: oklch(0.5 0.014 var(--board-dot-hue) / var(--board-dot-alpha));
 	--primary-foreground: oklch(0.97 0.014 254.604);
 	--secondary: oklch(0.967 0.001 286.375);
 	--secondary-foreground: oklch(0.21 0.006 285.885);

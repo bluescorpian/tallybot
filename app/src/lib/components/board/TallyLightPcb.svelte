@@ -42,24 +42,28 @@
 	role={!onclick && ariaLabel ? "img" : undefined}
 	aria-label={ariaLabel ?? `Light ${mac}`}
 >
-	<span class="usb" aria-hidden="true"></span>
+	<!-- .board is the soldermask body; .pcb is the bounding box, taller by the
+	     USB-C headroom so the protruding port stays inside the component bounds. -->
+	<span class="board">
+		<span class="usb" aria-hidden="true"></span>
 
-	<span class="pads left" aria-hidden="true">
-		{#each pads as _}<span class="pad"></span>{/each}
-	</span>
-	<span class="pads right" aria-hidden="true">
-		{#each pads as _}<span class="pad"></span>{/each}
-	</span>
+		<span class="pads left" aria-hidden="true">
+			{#each pads as _}<span class="pad"></span>{/each}
+		</span>
+		<span class="pads right" aria-hidden="true">
+			{#each pads as _}<span class="pad"></span>{/each}
+		</span>
 
-	<span class="ic" aria-hidden="true">
-		<span class="legs top"></span>
-		<span class="legs bottom"></span>
-		<span class="legs left"></span>
-		<span class="legs right"></span>
-		<span class="body"></span>
+		<span class="ic" aria-hidden="true">
+			<span class="legs top"></span>
+			<span class="legs bottom"></span>
+			<span class="legs left"></span>
+			<span class="legs right"></span>
+			<span class="body"></span>
+		</span>
+		<span class="led" aria-hidden="true"></span>
+		<span class="mac">{mac}</span>
 	</span>
-	<span class="led" aria-hidden="true"></span>
-	<span class="mac">{mac}</span>
 </svelte:element>
 
 <style>
@@ -68,11 +72,26 @@
 		--bloom: 50%;
 		position: relative;
 		width: 100%;
-		aspect-ratio: 138 / 163;
+		/* 138×185 = board (138×163) + the USB-C headroom that protrudes off the
+		   top, so the port stays within the component's box and never overlaps
+		   what sits above it. */
+		aspect-ratio: 138 / 185;
 		border: none;
 		padding: 0;
-		border-radius: 12px;
+		background: none;
 		font: inherit;
+		transition: transform 0.08s ease;
+	}
+
+	/* the soldermask body — pinned to the bottom of the box, leaving the top
+	   headroom for the USB. All inner detail positions relative to this. */
+	.board {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		aspect-ratio: 138 / 163;
+		border-radius: 12px;
 		/* true-black soldermask, faint top-left sheen */
 		background: linear-gradient(
 			150deg,
@@ -90,9 +109,7 @@
 					var(--led) calc(var(--bloom) * 0.5),
 					transparent
 				);
-		transition:
-			transform 0.08s ease,
-			box-shadow 0.25s ease;
+		transition: box-shadow 0.25s ease;
 	}
 	button.pcb {
 		cursor: pointer;

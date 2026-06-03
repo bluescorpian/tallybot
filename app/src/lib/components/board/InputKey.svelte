@@ -52,7 +52,11 @@
 		width: 100%;
 		aspect-ratio: 16 / 10;
 		border: none;
-		border-radius: 20px;
+		/* Radius scales with the key so it reads the same at any size. The
+		   asymmetric % keeps the corners visually circular on the 16:10 box
+		   (h% · width ≈ v% · height). container-type lets the numeral scale too. */
+		container-type: size;
+		border-radius: 16% / 26%;
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -123,7 +127,7 @@
 
 	.key-num {
 		font-family: var(--font-mono);
-		font-size: 1.7rem;
+		font-size: 46cqh; /* scales with the key height (container-driven) */
 		font-weight: 500;
 		line-height: 1;
 		letter-spacing: -0.02em;

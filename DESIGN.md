@@ -245,8 +245,14 @@ style, Lucide icons) on Tailwind v4; the canvas itself is bespoke. Tokens live i
 
 - **Type** — **Inter** for all UI; **IBM Plex Mono** (`font-mono`) for fixed-width
   technical identifiers: the **MAC tails** on lights and the **ATEM IP** in settings.
-- **Neutrals** — a cool **zinc** grey ramp on an off-white background, kept narrow so the
-  status colours read true.
+- **Neutrals** — a cool **zinc** grey ramp for the shadcn UI, kept narrow so the status
+  colours read true.
+- **Board canvas surface** — the bespoke board is a **warm off-white "greige"**
+  (`--board: oklch(0.966 0.004 74)`), deliberately warmer than the cool zinc UI so the
+  neumorphic shadows have contrast without reading cold. Its recessed surfaces (slot
+  lanes, dock) are `color-mix(--board, black N%)` so they track the hue, and a tonal
+  **dot-grid** (`--board-dot`, hue-matched, low-alpha) overlays it. Retune the whole
+  board from the `--board` / `--board-dot-*` block in `layout.css`.
 - **Two-blue activity system** — blue is split into a calm UI accent and a hot signal:
   - `--primary` **Azure** `oklch(0.585 0.195 250)` — buttons, focus ring (`--ring`), the
     source chip. Behaves as a normal accent; white text stays legible on it.
@@ -270,13 +276,12 @@ style, Lucide icons) on Tailwind v4; the canvas itself is bespoke. Tokens live i
   exact form is not. A CSS `inset` shadow + a thin inner-edge pseudo-element is a
   candidate; a thin SVG overlay is another.
 - Whether **preview** (not just live) lights its trace, or only live does.
-- **Board background token** — the exact off-white oklch value. Needs to be warm
-  enough for neumorphic shadow contrast but still read as "white" to the eye.
 - A **reference image** of a real ATEM Mini + tally puck to anchor the skeuomorphic
   detail level (how much realism, where it stops).
 - **Staging** in the dock — ordering of newly-discovered lights; whether the puck
   animates in.
-- **Dot-grid spacing** and **minimum window size**.
+- **Minimum window size** — the board fills the window width with the content
+  left-aligned (extra width becomes dot-grid margin); the floor is still TBD.
 
 ---
 
@@ -290,8 +295,8 @@ style, Lucide icons) on Tailwind v4; the canvas itself is bespoke. Tokens live i
 
 ### Blocking — must be designed before layout assembly
 
-- [ ] **Board background token** — exact off-white `oklch(…)` value; warm enough for neumorphic shadow contrast, still reads as white
-- [ ] **Program-output gate** — visual form of the converge-then-diverge "X" in the gutter between inputs and lights; override-source wire-in (hidden in v1)
+- [x] **Board background token** — warm off-white "greige" `--board: oklch(0.966 0.004 74)`; the board surfaces (lanes/dock/gate) derive from it via `color-mix`, and a tonal dot-grid (`--board-dot-*`: 32px pitch, 1.5px radius, 0.12 alpha, hue-matched) sits on top. All in `layout.css` under one block.
+- [x] **Program-output gate** — built as `ProgramGate.svelte`: a circular node on the trace path, trace-coloured (grey `rest` / cyan `hot` / muted-red `cut` / dimmed `inert`). The override-source wire-in into the gate's right exists in the board but is shown only when an override is active (v1 has none).
 - [x] **Trace rendering** — debossed-at-rest recipe; active glow form (CSS inset + pseudo-element vs SVG overlay); whether preview lights the trace or only live does
 
 ### Interaction — can overlap with layout build
@@ -304,9 +309,36 @@ style, Lucide icons) on Tailwind v4; the canvas itself is bespoke. Tokens live i
   General / About single grouped pane, scan feature, shared footer Save-starts-connection
   (see "Settings → Execution" above). Still to wire: the real Tauri window + corner-gear
   entry point and live IPC (currently mocked)
-- [ ] **Dock** — unassigned-lights tray at the bottom; re-prototype with TallyLightPcb (prior sketch used the rejected puck)
+- [x] **Dock** — built as `BoardDock.svelte`: a recessed bottom tray of the unassigned
+  lights (`TallyLightPcb` in the setup colour) with an "Unassigned" header + count; clicking
+  one opens the same picker to wire it into a column.
 
 ### Minor — resolve alongside build
 
-- [ ] Dot-grid spacing and minimum window size
+- [ ] Minimum window size (dot-grid spacing is locked: 32px pitch in `layout.css`)
 - [ ] Dock staging order and whether a newly-discovered light animates in
+
+### Layout assembly (built)
+
+The board is assembled as a locked, presentational `Board.svelte` (in
+`$lib/components/board/`) composed of the locked primitives — `SourceChip`, `InputKey`,
+`Trace`, `ProgramGate`, `TallyLightPcb`/`LightPicker`, `BoardDock` — over the computed
+trace geometry. It is **decoupled from the backend**: it takes a small view-model
+(`types.ts`: `BoardInput` / `BoardLight`, already resolved to primitive states), and the
+app-layer mapper `$lib/boardState.ts` (`toBoardProps`) turns the sidecar `AppState`
+(`app/sidecar/src/ipc.ts`, imported type-only via `$ipc`) into it. That mapper is the
+single home for the **state interpretation**:
+
+| Source of truth (`ipc.ts`) | UI result | Notes |
+|---|---|---|
+| `Input.tally = unknown` | InputKey **idle** | a powered-off ATEM is just an unlit button — no separate "unknown" look on the key |
+| assigned light, its input `tally = unknown` | TallyLight **fault** (flashing blue) | a connected light must not be shown a confident idle when the source can't be trusted |
+| `Device.state = offline` | TallyLight **offline** (steady blue) | device-local; lost the sidecar |
+| `Device.state = unassigned` | TallyLight **setup** (in the dock) | |
+| `programGate.active` (override) | every assigned light **idle**, gate **cut**, diverge traces dark | the single pinch-point makes the global block obvious |
+| `source.connection ≠ connected` | gate **inert**, traces dimmed, keys idle | board keeps its full layout (the disconnected indicator is the `SourceChip`) |
+
+The assembled board lives on the **main route** (`app/src/routes/+page.svelte`), currently
+driven by **mock data + two dev toggles** (source connected · override) so the whole state
+matrix is visible without a running sidecar. **Phase 5** swaps the mock for the real
+Tauri/IPC snapshot stream and drops the toggles.
