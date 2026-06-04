@@ -128,17 +128,25 @@ The `.exploration/` subtree holds vendored source snapshots for research only �
 
 ## Status
 
-- **app/** — Tauri 2 + SvelteKit scaffolded via `create-tauri-app`. Frontend and
-  Rust shell both build cleanly in the nix dev shell. UI is still the default
-  template (Phase 4). `app/sidecar/` is **Phase 2 done**: the tally engine, device
-  server (TCP/UDP), ATEM adapter (real `atem-connection` behind an `AtemLike` seam),
-  config store, IPC bridge, and the orchestrator that wires them — built and tested
-  (`pnpm start` runs it). Phase 5 wires it into the Tauri shell.
-- **firmware/** — empty; not yet scaffolded (`platformio.ini` + `src/main.cpp`).
-- **tools/** — Phase 1 simulators + the Phase 2 dev runner: ATEM simulator
-  (`FakeAtem`) and tally-client simulator (a fake ESP32 over TCP), plus `sidecar-dev`
-  (drive the real sidecar against the `FakeAtem` from a REPL) and an end-to-end test
-  of the whole path. See `tools/README.md`.
+Per-phase status and acceptance criteria live in [`PHASES.md`](PHASES.md); the
+outstanding worklist (what to build next, in order) is in [`TODO.md`](TODO.md). Summary:
+
+- **app/sidecar/** — **Phase 2 done**: tally engine, device server (TCP/UDP), ATEM
+  adapter (real `atem-connection` behind an `AtemLike` seam), config store, IPC bridge,
+  and the orchestrator that wires them — built and tested (`pnpm start` runs it).
+- **app/ UI** — **Phase 4 mostly done**: the board, settings drawer, and frameless
+  chrome are built, but driven by **mock data with stub handlers**. Remaining: per-device
+  brightness control, then the live IPC wiring (Phase 5).
+- **app/ shell** — **Phase 5 not started**: `src-tauri/src/lib.rs` is still the
+  `create-tauri-app` `greet` template. Needs the sidecar↔UI bridge (spawn + stdio↔IPC),
+  config (shell capability, `externalBin`), and a packaging strategy (open decision —
+  single-binary proved impractical for `atem-connection`; see `TODO.md`).
+- **firmware/** — **Phase 3 not started**; empty (`platformio.ini` + `src/main.cpp` +
+  `protocol.h` to scaffold). Independent of the app — testable against the standalone
+  sidecar; can proceed in parallel.
+- **tools/** — Phase 1 simulators + the Phase 2 dev runner: ATEM simulator (`FakeAtem`)
+  and tally-client simulator (a fake ESP32 over TCP), plus `sidecar-dev` (drive the real
+  sidecar against the `FakeAtem` from a REPL) and an end-to-end test. See `tools/README.md`.
 
 Roadmap items (OTA, web UI, multi-switcher, OBS integration, simulators) are in
 `ARCHITECTURE.md`.
