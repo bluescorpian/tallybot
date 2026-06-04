@@ -1,9 +1,14 @@
 # TallyBot — Build Phases
 
-This document scopes the build into phases: *what* each phase covers and *what it
-depends on* — not how to build it, and not any design decisions. Design rationale, the
-binary protocol, and the IPC schema specifics live in
+This document scopes the build into phases: *what* each phase covers, *what it depends
+on*, and *what "done" looks like* — not how to build it, and not any design decisions.
+Design rationale, the binary protocol, and the IPC schema specifics live in
 [`ARCHITECTURE.md`](ARCHITECTURE.md); keep the two consistent.
+
+Each phase carries a coarse **Status** (✅ done · 🔄 in progress · ⬜ not started) and
+**Acceptance criteria** — the checks that decide the phase is complete. The detailed,
+prose live-status narrative stays in `CLAUDE.md` ("## Status"); the marker here is just
+the at-a-glance roll-up.
 
 ## How the phases relate
 
@@ -28,7 +33,7 @@ Phase 0  shared contracts
 
 ---
 
-## Phase 0 — Shared contracts
+## Phase 0 — Shared contracts · ✅ done
 
 The interfaces every other phase builds against. Until these exist, the islands cannot
 be developed independently.
@@ -40,9 +45,19 @@ be developed independently.
 
 **Depends on:** nothing.
 
+**Acceptance criteria**
+- Binary codec exists with constants matching `ARCHITECTURE.md`: framing `[len][payload…]`,
+  message types, ports (TCP 7000 / UDP 7001), versioning (`CURRENT` / `MIN_SUPPORTED`),
+  and the standard colours. → `app/sidecar/src/protocol.ts`.
+- IPC schema (`AppState`, `SidecarEvent`, `UiCommand`) defined as the single shared *type*
+  contract, imported type-only by the UI. → `app/sidecar/src/ipc.ts`.
+- A `FrameDecoder` reassembles length-prefixed frames across split/coalesced TCP chunks;
+  encode→decode round-trips as identity; malformed/short payloads are rejected.
+- Tests cover the above (`protocol.test.ts`, `ipc.test.ts`).
+
 ---
 
-## Phase 1 — Simulators (`tools/`)
+## Phase 1 — Simulators (`tools/`) · ✅ done
 
 Hardware-free stand-ins so the rest of the system can be exercised without an ATEM or an
 ESP32 on the bench.
@@ -55,9 +70,18 @@ ESP32 on the bench.
 
 **Depends on:** Phase 0.
 
+**Acceptance criteria**
+- A `FakeAtem` satisfies the sidecar's `AtemLike` seam and exposes controls to set
+  program/preview, emitting the state changes the sidecar consumes.
+- A tally-client simulator performs UDP discovery, opens a TCP connection with a
+  configurable MAC/version, sends HELLO + heartbeats, and logs received SET_COLOR /
+  IDENTIFY (the device side of the protocol — `tools/src/tally-client.ts`).
+- The two compose into an end-to-end run with no hardware (`tools/src/sidecar-e2e.test.ts`,
+  the `sidecar-dev` REPL), and this is the harness used to test Phases 2–4.
+
 ---
 
-## Phase 2 — Sidecar (the brain)
+## Phase 2 — Sidecar (the brain) · ✅ done
 
 The Node.js backend. Built against the Phase 0 contracts and tested against the Phase 1
 simulators.
@@ -75,9 +99,24 @@ simulators.
 
 **Depends on:** Phase 0; Phase 1 for end-to-end testing.
 
+**Acceptance criteria**
+- Engine maps switcher state + assignments to the correct per-device colour, including the
+  fault rule: an untrusted source (ATEM disconnected/reconnecting, or connected but no
+  program reported) drives assigned devices to flashing-blue **Fault**, never idle
+  (`ARCHITECTURE.md` "Failure signalling").
+- Device server: TCP on 7000; UDP discovery on 7001 (unicasts a reply to `TALLY_FIND`,
+  broadcasts presence every 5s); tracks devices by MAC; a device silent for 30s is timed
+  out and its socket closed (`HEARTBEAT_TIMEOUT_MS`, `ANNOUNCE_INTERVAL_MS`).
+- ATEM adapter behind the `AtemLike` seam turns `stateChanged` into engine input; the real
+  `atem-connection` lives only at that edge (`main.ts`).
+- Assignments (MAC → input) persist to disk and survive a restart.
+- IPC bridge emits whole `AppState` snapshots and applies every `UiCommand`; a device
+  HELLO below `MIN_SUPPORTED` surfaces an "update firmware" notice.
+- `pnpm start` runs the wired process; the suite passes against `FakeAtem` + fake device.
+
 ---
 
-## Phase 3 — Firmware (`firmware/`)
+## Phase 3 — Firmware (`firmware/`) · ⬜ not started
 
 The ESP32-C3 device firmware. Fully independent of the app once the protocol is fixed.
 
@@ -89,10 +128,28 @@ The ESP32-C3 device firmware. Fully independent of the app once the protocol is 
 - Driving the onboard LED.
 
 **Depends on:** Phase 0 (protocol + discovery). Runs in parallel with Phases 2 and 4.
+Testable end-to-end against the Phase 2 sidecar + Phase 1 `FakeAtem` — no ATEM required.
+
+**Acceptance criteria**
+- First boot (or failed credentials) raises a WiFiManager SoftAP captive portal
+  (`TallyLight-XXXXXX`); credentials persist to NVS; AP re-arms only on later connect
+  failure (`ARCHITECTURE.md` "WiFi Provisioning").
+- Device broadcasts `TALLY_FIND` every 2s until it gets `TALLY_HERE:<port>`, opens TCP to
+  that server, and reconnects on drop — re-sending HELLO each time.
+- Wire protocol: sends HELLO `[version][MAC×6]` on connect and HEARTBEAT every 10s; decodes
+  SET_COLOR / IDENTIFY via length-prefix framing. `firmware/src/protocol.h` `#define`s
+  mirror `app/sidecar/src/protocol.ts` (kept in lockstep).
+- LED: WS2812 driven via FastLED on **GPIO8**; renders every server colour; IDENTIFY
+  flashes; loss of the server shows **device-local steady blue** (`ARCHITECTURE.md`
+  "Failure signalling"). Honors the firmware gotchas (GPIO8 addressable, never sleep,
+  TX-power fallback).
+- End-to-end: a physical board provisions, appears in the UI by MAC, tracks
+  live/preview/idle as program changes, flashes on IDENTIFY, and goes steady blue when the
+  sidecar is killed.
 
 ---
 
-## Phase 4 — Svelte UI (`app/src/`)
+## Phase 4 — Svelte UI (`app/src/`) · 🔄 in progress
 
 The desktop interface. Talks only to the sidecar over IPC; carries all the visual and
 interaction design.
@@ -105,9 +162,22 @@ interaction design.
 **Depends on:** Phase 0 (IPC schema). Can be developed against mocked events ahead of a
 finished sidecar; runs in parallel with Phases 2 and 3.
 
+**Acceptance criteria**
+- The board renders every `AppState` case from a `SidecarEvent` stream via the
+  `boardState.ts` mapper: source lifecycle (connected / connecting / disconnected /
+  unconfigured / connected-no-inputs) and every light state (assigned-live / preview /
+  idle, unassigned/setup, offline, and flashing fault).
+- Each user action maps to the right `UiCommand`: assign / unassign, identify, set
+  brightness, set source IP. `NoticeEvent`s (e.g. firmware-outdated) are surfaced.
+
+**Status detail:** board primitives are built and assembled, driven through the real
+`boardState.ts` mapper — but against **mock** `AppState` (the `+page.svelte` dev strip),
+not live IPC. Outstanding before ✅: per-device **brightness** control (not yet present)
+and wiring the settings IP field to `setSource`. Live IPC wiring itself is Phase 5.
+
 ---
 
-## Phase 5 — Shell & packaging
+## Phase 5 — Shell & packaging · ⬜ not started
 
 Wiring the islands into a shippable application.
 
@@ -118,17 +188,37 @@ Wiring the islands into a shippable application.
 
 **Depends on:** Phases 2 and 4.
 
+**Acceptance criteria**
+- The Tauri shell spawns the sidecar as a child, bridges its stdout → UI (`emit`/`listen`
+  on a `"sidecar"` channel) and `UiCommand` → its stdin (a `#[tauri::command]` the UI
+  `invoke`s), and ties the child's lifecycle to the window (`SIDECAR.md` "The Rust bridge").
+- A packaging strategy that ships the sidecar with the app. **⚠️ Open decision — needs
+  research.** Single-binary (`pkg`/SEA) was **tested and found impractical** for
+  `atem-connection` (it loads a native module and its socket worker *by file path*, which
+  a bundle breaks — `ARCHITECTURE.md` warning 1). The documented alternative is shipping
+  JS + `node_modules` + a Node runtime as `externalBin`, but the final approach is not yet
+  chosen. Whatever the shape, the `atem-connection` warnings must be handled:
+  `console.log`/`info`/`debug` redirected to stderr **before** constructing `Atem` so no
+  library line corrupts the NDJSON IPC stream (warning 2); the
+  multithreaded-vs-`disableMultithreaded` choice made deliberately (warning 3);
+  per-platform/ABI native deps and the runtime Node version pinned (warnings 4–5).
+- The shipped binary sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` (NVIDIA + Wayland workaround,
+  `CLAUDE.md`).
+- End-to-end: a built, packaged app launches, spawns its sidecar, shows live state, and
+  drives real devices against a real ATEM — and runs on the dev NixOS box.
+
 ---
 
-## Phase 6 — Roadmap (deferred)
+## Phase 6 — Roadmap (deferred) · ⬜ not started
 
 Out of scope for the initial build; tracked here so the phases above stay focused.
+Acceptance criteria for each item are defined when (and if) it's scheduled.
 
 **Scope**
 - Firmware OTA updates.
 - Web UI accessible from other devices on the network.
 - Multi-switcher support.
-- Per-device brightness and colour customisation.
+- Per-device colour customisation. (Per-device **brightness** is v1 — see Phase 4.)
 - OBS integration (obs-websocket).
 
 **Depends on:** a working baseline from Phases 2–5.
