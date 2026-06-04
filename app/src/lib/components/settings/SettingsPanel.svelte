@@ -5,8 +5,8 @@
 	// shared dirty-gated SAVE footer.
 	//
 	// This is the re-hostable PANEL: scrolling cards + footer, no title bar — the
-	// host supplies the chrome (the standalone /settings route wraps it in a title
-	// bar; SettingsSheet hosts it in a slide-out drawer with its own header).
+	// host supplies the chrome (SettingsSheet hosts it in the slide-out drawer with
+	// its own header).
 	//
 	// Commit model: one shared, dirty-gated SAVE (not per-field) — so it scales as
 	// more savable settings arrive (e.g. OBS) without each growing its own button.

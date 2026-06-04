@@ -37,8 +37,39 @@ single **program-output gate**, where an **override** can block them all at once
   by flashing). Position encodes the assignment, so traces stay short and static.
 - **Dock** for **unassigned** lights runs along the bottom, just below the connected
   lights.
-- A **settings gear in a corner** opens the **settings drawer** — a panel that slides out
-  from the right, *over* the board (which stays visible behind it).
+- A **settings gear** lives in the titlebar (see "App chrome" below) and opens the
+  **settings drawer** — a panel that slides out from the right, *over* the board (which
+  stays visible behind it).
+
+---
+
+## App chrome (window frame)
+
+The board fills the window — the chrome around it is deliberately thin, because the board
+*is* the monitor (the `SourceChip` carries source status, the dock the unassigned lights,
+the keys/lights the tally). So there is no header status summary, no status bar, and no
+counts duplicating the canvas.
+
+- **Custom frameless titlebar** (`$lib/components/chrome/TitleBar.svelte`). The native OS
+  titlebar is off (`decorations: false` in `tauri.conf.json`); our own bar replaces it: the
+  **TallyBot wordmark** on the left, and on the right the **settings gear** followed by the
+  **window controls** (minimize · maximize/restore · close). The bar is the drag region
+  (`data-tauri-drag-region`); the button cluster is excluded so it stays clickable. Window
+  ops go through `@tauri-apps/api/window`, guarded by an `isTauri` check so the bar still
+  renders (and the buttons no-op) under `pnpm dev` in a plain browser.
+- **The board fills the whole area** beneath the titlebar with only a small uniform margin gap.
+- **A subtle credit** (`Credit.svelte`) — "Made with ♥ by Harry" — is **absolutely
+  positioned and non-interactive**, floating low-emphasis over the board's bottom margin so
+  it doesn't claim a row; the board fills the stage behind it. Not a bordered status strip.
+- The titlebar and credit use the **flat UI language** (zinc / Inter / shadcn tokens), not
+  the neumorphic board surface.
+
+**Known v1 limitation — no edge-resize on Wayland.** `decorations: false` drops the native
+resize frame on every platform, and `startResizeDragging` is unreliable on Wayland/WebKitGTK
+on the dev box, so v1 ships without custom resize handles: rely on the default window size
+and the maximize button. (Add custom handles later if needed.) The window controls also sit
+on the **right** (Windows/Linux convention); macOS would expect them on the left — a later
+platform branch, not a v1 concern since the target is Linux.
 
 ---
 
@@ -101,8 +132,8 @@ promote the group headers into an in-sheet nav rail** (additive, not a rewrite).
 | Live tally state | — |
 
 The **content and structure below are settled** and the grouped-card content is **built**
-(at `app/src/routes/settings/+page.svelte`). Only the **shell** changes — from the current
-standalone full-page route to the drawer (see "Execution" below).
+(as `$lib/components/settings/SettingsPanel.svelte`, hosted by the drawer
+`SettingsSheet.svelte` — see "Execution" below).
 
 ### Content — the full v1 settings list
 
@@ -160,11 +191,13 @@ neumorphic board language (standard interfaces stay flat): the three groups stac
 bordered cards (Source / General / About), Inter throughout, IBM Plex Mono for the ATEM IP
 and the version values, over the shared dirty-gated footer.
 
-**Shell — a right-side slide-out drawer.** Those cards + footer are hosted in a shadcn
-**`Sheet`** that slides in from the right over the board (board visible behind), ~400px wide,
-the group cards scrolling within it; the sheet's own header carries the "Settings" title +
-gear icon + close. This **replaces** the earlier separate-window plan: the standalone
-full-page shell currently in `+page.svelte` is **re-hosted** in the drawer, not rebuilt.
+**Shell — a right-side slide-out drawer.** The cards + footer live in
+`SettingsPanel.svelte`, hosted by `SettingsSheet.svelte` — a shadcn **`Sheet`** that slides in
+from the right over the board (board visible behind), ~400px wide, the group cards scrolling
+within it; the sheet's own header carries a gear icon + the "Settings" title. This **replaces**
+the earlier separate-window plan. **Dismissal** has no X button — `Cancel` (always enabled =
+*discard & close*) and the backdrop are the exits, and backdrop-click / Escape are **blocked
+while there are unsaved edits** so a stray click can't silently discard them.
 
 - **One shared, dirty-gated `Save` in a sticky footer** — *not* a per-field/per-group Save,
   so it scales as more savable settings arrive (e.g. OBS) without each growing its own
@@ -336,14 +369,13 @@ style, Lucide icons) on Tailwind v4; the canvas itself is bespoke. Tokens live i
 
 ### Independent — doesn't block layout
 
-- [x] **Settings content** — built at `app/src/routes/settings/+page.svelte`: Source /
+- [x] **Settings content** — built as `$lib/components/settings/SettingsPanel.svelte`: Source /
   General / About grouped cards, scan feature, shared footer Save-starts-connection
   (see "Settings → Execution" above).
 - [x] **Settings drawer + entry points** — built. The locked content is extracted into
-  `$lib/components/settings/SettingsPanel.svelte` (cards + footer + form logic) and hosted
-  two ways: `SettingsSheet.svelte` (a right-side shadcn `Sheet` over the board, ~400px) and
-  the standalone `/settings` route (a preview wrapper around the same panel). The **corner
-  gear** on the main route and the `SourceChip` "Set up your ATEM →" `onsetup` both open the
+  `$lib/components/settings/SettingsPanel.svelte` (cards + footer + form logic) and hosted by
+  `SettingsSheet.svelte` (a right-side shadcn `Sheet` over the board, ~400px). The **corner
+  gear** on the titlebar and the `SourceChip` "Set up your ATEM →" `onsetup` both open the
   drawer. Mock first — `Save` calls `onsave(ip)`, which nudges the mock source mode so the
   `SourceChip` animates connecting → connected behind the open panel; **live IPC** (real
   `setSource` / scan / restart) lands with Phase 5.
