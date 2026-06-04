@@ -8,6 +8,7 @@
 	// the interactive cluster is excluded so its buttons stay clickable.
 	import { getCurrentWindow } from "@tauri-apps/api/window";
 	import { onMount, onDestroy } from "svelte";
+	import Wordmark from "./Wordmark.svelte";
 	import SettingsIcon from "@lucide/svelte/icons/settings";
 	import MinusIcon from "@lucide/svelte/icons/minus";
 	import SquareIcon from "@lucide/svelte/icons/square";
@@ -43,7 +44,7 @@
 </script>
 
 <div class="titlebar" data-tauri-drag-region>
-	<div class="brand">TallyBot</div>
+	<Wordmark />
 
 	<div class="controls">
 		<button
@@ -88,28 +89,22 @@
 <style>
 	.titlebar {
 		/* Always on top: the settings sheet (z-50) and everything else stay behind it,
-		   so the window controls are never covered (it's also opaque). */
+		   so the window controls are never covered. No bottom border and no cream band:
+		   the large wordmark + the top-anchored controls float over the board so the bar
+		   doesn't read as a chunky header (DESIGN.md "deliberately thin chrome"). */
 		position: relative;
 		z-index: 60;
 		display: flex;
-		align-items: center;
+		/* anchor both clusters to the true top edge so the controls sit in the window
+		   corner, not vertically centred in a tall band */
+		align-items: flex-start;
 		justify-content: space-between;
 		flex-shrink: 0;
 		height: var(--titlebar-h, 36px);
-		padding: 0 6px 0 14px;
-		border-bottom: 1px solid color-mix(in oklch, var(--chrome), black 10%);
-		background: var(--chrome);
+		padding: 4px 6px 0 14px;
+		background: transparent;
 		user-select: none;
 		-webkit-user-select: none;
-	}
-
-	.brand {
-		font-size: 0.8rem;
-		font-weight: 600;
-		letter-spacing: 0.01em;
-		color: var(--foreground);
-		/* let pointer events fall through to the drag region */
-		pointer-events: none;
 	}
 
 	.controls {

@@ -2,18 +2,20 @@
 @import "tw-animate-css";
 @import "shadcn-svelte/tailwind.css";
 @import "@fontsource-variable/inter";
+@import "@fontsource/dm-serif-display/400-italic.css"; /* wordmark only — "Tally" italic display serif */
+@import "@fontsource-variable/space-grotesk"; /* wordmark only — "BOT" segment */
 @import "@fontsource/ibm-plex-mono"; /* 400 — MAC tails, ATEM IP, technical IDs */
 @import "@fontsource/ibm-plex-mono/500.css";
 
 @custom-variant dark (&:is(.dark *));
 
 :root {
-	--titlebar-h: 36px; /* custom frameless titlebar; the settings sheet sits below it */
+	--titlebar-h: 56px; /* custom frameless titlebar; sized to seat the large wordmark. The settings sheet sits below it */
 	/* App-chrome surfaces (warm family, so the board reads as the brightest, lit panel):
 	   --chrome = the cream titlebar; --workspace = the warm taupe desk around the board.
 	   Board itself is --board (oklch 0.966 0.004 74), the brightest of the three. */
-	--chrome: oklch(0.957 0.011 85); /* soft cream titlebar (gently warm, not yellow) */
-	--workspace: oklch(0.93 0.003 286); /* light cool grey desk around the board */
+	--chrome: oklch(0.957 0.011 85); /* soft cream (gently warm, not yellow) — the app's warm surface */
+	--workspace: var(--chrome); /* desk around the board = the same warm cream as the chrome */
 	--background: oklch(1 0 0);
 	--foreground: oklch(0.141 0.005 285.823);
 	--card: oklch(1 0 0);
