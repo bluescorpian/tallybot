@@ -3,16 +3,18 @@
 	// a view-model produced from an IPC `AppState` (sidecar/src/ipc.ts) via the
 	// $lib/boardState.ts mapper, exactly as the real engine will feed it.
 	//
-	// PHASE-4 MOCK: the AppState here is local mock data + two dev toggles, so the
-	// whole state matrix is visible without a running sidecar. Phase 5 replaces the
-	// mock with the real Tauri/IPC snapshot stream (and drops the toggles).
+	// PHASE-4 MOCK: the AppState here is local mock data, so the board renders
+	// without a running sidecar. It defaults to the connected case; `onSettingsSave`
+	// still nudges `sourceMode` to animate connecting → connected behind the drawer.
+	// Phase 5 replaces the mock with the real Tauri/IPC snapshot stream.
 	import type { AppState, Device, Input, Tally } from "$ipc";
 	import Board from "$lib/components/board/Board.svelte";
 	import { toBoardProps } from "$lib/boardState";
 	import SettingsSheet from "$lib/components/settings/SettingsSheet.svelte";
-	import SettingsIcon from "@lucide/svelte/icons/settings";
+	import TitleBar from "$lib/components/chrome/TitleBar.svelte";
+	import Credit from "$lib/components/chrome/Credit.svelte";
 
-	// ── Dev toggles (mock only) ───────────────────────────────────────────────
+	// ── Mock source state ─────────────────────────────────────────────────────
 	type SourceMode =
 		| "connected"
 		| "connecting"
@@ -138,34 +140,10 @@
 </script>
 
 <div class="page">
-	<!-- settings gear — opens the slide-out drawer over the board (DESIGN.md) -->
-	<button
-		class="gear"
-		onclick={() => (settingsOpen = true)}
-		aria-label="Settings"
-		title="Settings"
-	>
-		<SettingsIcon class="size-[18px]" />
-	</button>
+	<!-- custom frameless titlebar — the gear opens the settings drawer (DESIGN.md) -->
+	<TitleBar onsettings={() => (settingsOpen = true)} />
 
 	<SettingsSheet bind:open={settingsOpen} onsave={onSettingsSave} />
-
-	<!-- PHASE-4 MOCK dev strip — remove when real IPC lands (Phase 5) -->
-	<div class="mock-controls">
-		<label>
-			source
-			<select bind:value={sourceMode}>
-				<option value="connected">connected</option>
-				<option value="connecting">connecting</option>
-				<option value="disconnected">disconnected</option>
-				<option value="unconfigured">unconfigured</option>
-				<option value="no-inputs">connected · no inputs</option>
-			</select>
-		</label>
-		<label
-			><input type="checkbox" bind:checked={override} /> OBS override (demo — hidden in v1)</label
-		>
-	</div>
 
 	<div class="stage">
 		<Board
@@ -183,71 +161,30 @@
 			onsetup={setup}
 		/>
 	</div>
+
+	<Credit />
 </div>
 
 <style>
+	/* Full-height column: titlebar (fixed) above a board that fills the rest. The
+	   credit is absolutely positioned over the board's bottom margin (see Credit). */
 	.page {
-		min-height: 100%;
+		height: 100%;
 		display: flex;
 		flex-direction: column;
 		position: relative;
+		/* warm taupe desk; the titlebar paints its own cream over the top band */
+		background: var(--workspace);
 	}
 
-	/* corner settings gear — opens the drawer */
-	.gear {
-		position: absolute;
-		top: 12px;
-		right: 14px;
-		z-index: 10;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 34px;
-		height: 34px;
-		border-radius: var(--radius-md);
-		border: 1px solid transparent;
-		background: transparent;
-		color: var(--muted-foreground);
-		cursor: pointer;
-		transition:
-			color 0.14s ease,
-			background 0.14s ease,
-			border-color 0.14s ease;
-	}
-	.gear:hover {
-		color: var(--foreground);
-		background: color-mix(in oklch, var(--foreground), transparent 94%);
-		border-color: var(--border);
-	}
-	.gear:focus-visible {
-		outline: 2px solid var(--primary);
-		outline-offset: 2px;
-	}
-
-	/* mock-only; not part of the real chrome */
-	.mock-controls {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 22px;
-		padding: 12px 20px;
-		font-family: var(--font-mono);
-		font-size: 0.76rem;
-		color: var(--foreground);
-	}
-	.mock-controls label {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		cursor: pointer;
-		user-select: none;
-	}
-
-	/* Canvas behaviour (DESIGN.md): no zoom; scroll when content exceeds the window. */
+	/* Canvas behaviour (DESIGN.md): no zoom; scroll when content exceeds the window.
+	   The board surface fills the window with a small uniform margin all round; the
+	   schematic content stays left-aligned and extra width becomes dot-grid margin. */
 	.stage {
 		flex: 1 1 auto;
 		min-height: 0;
 		overflow: auto;
 		display: flex;
-		padding: 8px 8px 24px;
+		padding: 10px;
 	}
 </style>

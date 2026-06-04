@@ -57,6 +57,9 @@ counts duplicating the canvas.
   (`data-tauri-drag-region`); the button cluster is excluded so it stays clickable. Window
   ops go through `@tauri-apps/api/window`, guarded by an `isTauri` check so the bar still
   renders (and the buttons no-op) under `pnpm dev` in a plain browser.
+- **The titlebar stays on top of everything**, including the settings drawer: the drawer's
+  overlay and panel are anchored *below* the titlebar (a shared `--titlebar-h` token), so the
+  window controls are never covered or dimmed.
 - **The board fills the whole area** beneath the titlebar with only a small uniform margin gap.
 - **A subtle credit** (`Credit.svelte`) — "Made with ♥ by Harry" — is **absolutely
   positioned and non-interactive**, floating low-emphasis over the board's bottom margin so

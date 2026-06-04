@@ -8,6 +8,12 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
+	--titlebar-h: 36px; /* custom frameless titlebar; the settings sheet sits below it */
+	/* App-chrome surfaces (warm family, so the board reads as the brightest, lit panel):
+	   --chrome = the cream titlebar; --workspace = the warm taupe desk around the board.
+	   Board itself is --board (oklch 0.966 0.004 74), the brightest of the three. */
+	--chrome: oklch(0.957 0.011 85); /* soft cream titlebar (gently warm, not yellow) */
+	--workspace: oklch(0.93 0.003 286); /* light cool grey desk around the board */
 	--background: oklch(1 0 0);
 	--foreground: oklch(0.141 0.005 285.823);
 	--card: oklch(1 0 0);
@@ -154,5 +160,12 @@
 	}
 	html {
 		@apply font-sans;
+	}
+	/* Full-height chain so the board view (.page → .stage) can fill the window;
+	   without this, percentage heights collapse to content height and the board
+	   stops growing at its content size, leaving a gap at the bottom. */
+	html,
+	body {
+		height: 100%;
 	}
 }
