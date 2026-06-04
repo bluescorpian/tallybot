@@ -146,6 +146,12 @@ Three groups, in this order:
 - **Scan states to handle:** idle (field + button only) · scanning (spinner in button +
   status line, button disabled, "~20s" hint) · results (inline select list, "found N —
   select one") · none/failed ("no switchers found on the local subnet").
+- **Drawer dismissal protects unsaved edits.** There is **no X** in the header — `Cancel`
+  and the backdrop are the exits. `Cancel` is **always enabled** and means *discard & close*
+  (revert pending values, then dismiss). When **clean**, clicking the backdrop / pressing
+  Escape closes the drawer (nothing to lose); when **dirty**, both are **blocked** so a stray
+  click can't silently throw away edits — you leave deliberately via `Cancel` (discard) or
+  `Save` (commit).
 
 ### Execution
 
@@ -333,10 +339,13 @@ style, Lucide icons) on Tailwind v4; the canvas itself is bespoke. Tokens live i
 - [x] **Settings content** — built at `app/src/routes/settings/+page.svelte`: Source /
   General / About grouped cards, scan feature, shared footer Save-starts-connection
   (see "Settings → Execution" above).
-- [ ] **Settings drawer + entry points** — re-host that content in a **right-side slide-out
-  drawer** (shadcn `Sheet`) over the board; add the **corner gear** and wire the
-  `SourceChip` "Set up your ATEM →" `onsetup` (lands on **Source**) to open it. Mock first
-  (operates on local state — `Save` nudges the mock source mode); **live IPC** (real
+- [x] **Settings drawer + entry points** — built. The locked content is extracted into
+  `$lib/components/settings/SettingsPanel.svelte` (cards + footer + form logic) and hosted
+  two ways: `SettingsSheet.svelte` (a right-side shadcn `Sheet` over the board, ~400px) and
+  the standalone `/settings` route (a preview wrapper around the same panel). The **corner
+  gear** on the main route and the `SourceChip` "Set up your ATEM →" `onsetup` both open the
+  drawer. Mock first — `Save` calls `onsave(ip)`, which nudges the mock source mode so the
+  `SourceChip` animates connecting → connected behind the open panel; **live IPC** (real
   `setSource` / scan / restart) lands with Phase 5.
 - [x] **Dock** — built as `BoardDock.svelte`: a recessed bottom tray of the unassigned
   lights (`TallyLightPcb` in the setup colour) with an "Unassigned" header + count; clicking

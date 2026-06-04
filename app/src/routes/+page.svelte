@@ -9,6 +9,8 @@
 	import type { AppState, Device, Input, Tally } from "$ipc";
 	import Board from "$lib/components/board/Board.svelte";
 	import { toBoardProps } from "$lib/boardState";
+	import SettingsSheet from "$lib/components/settings/SettingsSheet.svelte";
+	import SettingsIcon from "@lucide/svelte/icons/settings";
 
 	// ── Dev toggles (mock only) ───────────────────────────────────────────────
 	type SourceMode =
@@ -19,6 +21,7 @@
 		| "no-inputs";
 	let sourceMode = $state<SourceMode>("connected"); // ATEM source lifecycle
 	let override = $state(false); // OBS override active? (hidden source in v1)
+	let settingsOpen = $state(false); // settings drawer (Sheet) open?
 
 	// Only a fully connected source can be trusted; everything else greys the
 	// board (keys idle, gate inert, assigned lights flash fault).
@@ -118,12 +121,35 @@
 		void mac;
 	}
 	function setup() {
-		// real path opens the Settings window (Phase 5); mock just nudges the toggle
+		// the SourceChip "Set up your ATEM →" link — opens the settings drawer on
+		// Source (the first group). Real IPC stays Phase 5.
+		settingsOpen = true;
+	}
+
+	// Mock: Save in the drawer nudges the board's source mode so the SourceChip
+	// animates connecting → connected behind the open panel. Phase 5 replaces this
+	// with the real IPC snapshot stream reacting to the committed source.
+	let connectTimer: ReturnType<typeof setTimeout> | undefined;
+	function onSettingsSave(_ip: string) {
 		sourceMode = "connecting";
+		clearTimeout(connectTimer);
+		connectTimer = setTimeout(() => (sourceMode = "connected"), 1600);
 	}
 </script>
 
 <div class="page">
+	<!-- settings gear — opens the slide-out drawer over the board (DESIGN.md) -->
+	<button
+		class="gear"
+		onclick={() => (settingsOpen = true)}
+		aria-label="Settings"
+		title="Settings"
+	>
+		<SettingsIcon class="size-[18px]" />
+	</button>
+
+	<SettingsSheet bind:open={settingsOpen} onsave={onSettingsSave} />
+
 	<!-- PHASE-4 MOCK dev strip — remove when real IPC lands (Phase 5) -->
 	<div class="mock-controls">
 		<label>
@@ -164,6 +190,38 @@
 		min-height: 100%;
 		display: flex;
 		flex-direction: column;
+		position: relative;
+	}
+
+	/* corner settings gear — opens the drawer */
+	.gear {
+		position: absolute;
+		top: 12px;
+		right: 14px;
+		z-index: 10;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 34px;
+		height: 34px;
+		border-radius: var(--radius-md);
+		border: 1px solid transparent;
+		background: transparent;
+		color: var(--muted-foreground);
+		cursor: pointer;
+		transition:
+			color 0.14s ease,
+			background 0.14s ease,
+			border-color 0.14s ease;
+	}
+	.gear:hover {
+		color: var(--foreground);
+		background: color-mix(in oklch, var(--foreground), transparent 94%);
+		border-color: var(--border);
+	}
+	.gear:focus-visible {
+		outline: 2px solid var(--primary);
+		outline-offset: 2px;
 	}
 
 	/* mock-only; not part of the real chrome */
