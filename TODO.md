@@ -4,13 +4,10 @@ The actionable remaining work to ship v1, in suggested order. This is the outsta
 *subset* — each phase's full scope and "done" criteria live in [`PHASES.md`](PHASES.md);
 design rationale and the protocol live in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
-The **app** and **firmware** are independent tracks that can be built **in parallel** —
-firmware tests against the standalone sidecar (`pnpm start`), not the app, so neither
-blocks the other (see the Firmware section).
-
-Where things stand: the UI is built (board, settings drawer, chrome) but runs on **mock
-data with stub handlers**, and the sidecar↔UI bridge (Phase 5) isn't started yet. So the
-app is ~90% built but disconnected.
+Where things stand: the **firmware is done and hardware-verified** (Phase 3 — see below),
+so the remaining v1 work is all in the **app**. The UI is built (board, settings drawer,
+chrome) but runs on **mock data with stub handlers**, and the sidecar↔UI bridge (Phase 5)
+isn't started yet. So the app is ~90% built but disconnected.
 
 ## UI (Phase 4 tail)
 
@@ -49,43 +46,24 @@ app is ~90% built but disconnected.
   test) can spawn `node` on the sidecar source; packaging only blocks a shippable build.
   See `PHASES.md` Phase 5 and `ARCHITECTURE.md` "Packaging the Sidecar".
 
-## Firmware (Phase 3 — runs in parallel with the app)
+## Firmware (Phase 3) — ✅ done
 
-Not started (`firmware/` is empty). **Independent of the app** — develop and test it
-against the standalone sidecar (`cd app/sidecar && pnpm start`) plus the `sidecar-dev`
-REPL to drive tally state; no app bridge and no ATEM required. Full acceptance criteria
-are in `PHASES.md` Phase 3; `tools/src/tally-client.ts` + `device-protocol.ts` are a
-line-by-line reference for the device side of the wire.
+The full tally client is built (`firmware/`: `platformio.ini`, `src/protocol.h`,
+`src/main.cpp`, `README.md`) and **verified on a physical ESP32-C3**: WiFiManager
+captive-portal provisioning, UDP discovery, the TCP binary protocol (HELLO / heartbeat /
+SET_COLOR / IDENTIFY via length-prefix framing), and the LED state machine — provision →
+discover → connect → live/preview/idle tally → identify → per-device brightness, all
+against the standalone `sidecar-dev` runner. `protocol.h` mirrors `app/sidecar/src/protocol.ts`,
+and the perceptual brightness byte is **gamma-corrected on the device** (FastLED
+`applyGamma_video`, γ≈2.5) — the single home for that correction, per `ARCHITECTURE.md`.
 
-- [ ] **Scaffold** the PlatformIO project: `firmware/platformio.ini` (ESP32-C3, Arduino,
-  `fastled/FastLED` + `tzapu/WiFiManager`) and `firmware/src/main.cpp`.
-- [ ] **`firmware/src/protocol.h`** — `#define`s mirroring `app/sidecar/src/protocol.ts`
-  (ports, message types, version, colours, framing). Keep the two in lockstep.
-- [ ] **WiFi provisioning** — WiFiManager SoftAP captive portal (`TallyLight-XXXXXX`),
-  credentials in NVS, AP re-arms only on connect failure.
-- [ ] **Discovery + TCP** — broadcast `TALLY_FIND` until `TALLY_HERE:<port>`, connect,
-  reconnect on drop (re-sending HELLO).
-- [ ] **Protocol** — send HELLO `[version][MAC×6]` + HEARTBEAT every 10s; decode
-  SET_COLOR / IDENTIFY via length-prefix framing.
-- [ ] **LED** — WS2812 via FastLED on **GPIO8**; render every server colour; IDENTIFY
-  flash; device-local **steady blue** when the server is lost. Mind the firmware gotchas
-  (GPIO8 addressable, never sleep, TX-power fallback — `CLAUDE.md`).
-  - **Gamma-correct the brightness byte.** It's a *perceptual* value (`ARCHITECTURE.md` →
-    SET_COLOR), so apply a gamma LUT (FastLED `dim8_video` / `applyGamma_video`, γ≈2.2–2.8)
-    to it before driving the strip — otherwise the UI's even 0–10 levels look bunched at
-    the dim end. This is the single home for the linearity correction; the sidecar and UI
-    deliberately leave the byte uncorrected.
-- [ ] **`firmware/README.md`** — the one new doc: build/flash/monitor on NixOS (PlatformIO
-  via `nix run nixpkgs#platformio`) + the gotchas. Mirrors `app/sidecar/README.md`.
+Only two live checks remain optional (behaviour is coded, just not yet exercised on the
+bench): killing the server → device-local **steady blue**, and a multi-minute run off a USB
+power bank → never sleeps.
 
 ---
 
-**Suggested order.** Two parallel tracks:
-- **App:** brightness (quick — closes Phase 4) → build the bridge → wire the board +
-  settings to real data → packaging research (later). Once the bridge is in,
-  `cargo tauri dev` gives you the real app driving the real sidecar.
-- **Firmware:** scaffold + `protocol.h` → WiFi/discovery/TCP → LED + failure states,
-  tested against the standalone sidecar throughout.
-
-Both converge for the hardware test: real app + real boards, then swap `FakeAtem` for the
-real ATEM.
+**Suggested order (app only — firmware is done).** Build the bridge → wire the board +
+settings to real data → packaging research (later). Once the bridge is in, `cargo tauri dev`
+gives you the real app driving the real sidecar. Then the full hardware test: real app +
+real boards, then swap `FakeAtem` for the real ATEM.

@@ -116,7 +116,7 @@ simulators.
 
 ---
 
-## Phase 3 — Firmware (`firmware/`) · ⬜ not started
+## Phase 3 — Firmware (`firmware/`) · ✅ done
 
 The ESP32-C3 device firmware. Fully independent of the app once the protocol is fixed.
 

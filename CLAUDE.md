@@ -141,9 +141,11 @@ outstanding worklist (what to build next, in order) is in [`TODO.md`](TODO.md). 
   `create-tauri-app` `greet` template. Needs the sidecar↔UI bridge (spawn + stdio↔IPC),
   config (shell capability, `externalBin`), and a packaging strategy (open decision —
   single-binary proved impractical for `atem-connection`; see `TODO.md`).
-- **firmware/** — **Phase 3 not started**; empty (`platformio.ini` + `src/main.cpp` +
-  `protocol.h` to scaffold). Independent of the app — testable against the standalone
-  sidecar; can proceed in parallel.
+- **firmware/** — **Phase 3 done**: the full tally client (`platformio.ini`, `src/main.cpp`,
+  `src/protocol.h`) — WiFiManager captive-portal provisioning, UDP discovery, the TCP binary
+  protocol, and the LED state machine. Builds with `pio run` and **verified on a physical
+  ESP32-C3**: provision → discover → connect → live/preview/idle tally → identify → per-device
+  brightness, all against the standalone sidecar. `protocol.h` mirrors `protocol.ts`.
 - **tools/** — Phase 1 simulators + the Phase 2 dev runner: ATEM simulator (`FakeAtem`)
   and tally-client simulator (a fake ESP32 over TCP), plus `sidecar-dev` (drive the real
   sidecar against the `FakeAtem` from a REPL) and an end-to-end test. See `tools/README.md`.
