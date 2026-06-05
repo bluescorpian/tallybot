@@ -40,6 +40,7 @@
 			<div class="dock-slot" style="width:{lightWidth}px">
 				<LightPicker
 					mac={light.mac}
+					label={light.label}
 					state={light.state}
 					inputs={pickerInputs}
 					currentInputId={null}

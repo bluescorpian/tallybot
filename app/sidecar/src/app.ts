@@ -216,7 +216,7 @@ export class SidecarApp {
         break;
       case "identifyDevice":
         if (!this.#server.identify(command.mac)) {
-          this.#ipc.notice("info", `Tally ${macTail(command.mac)} is offline — can't flash it.`);
+          this.#ipc.notice("info", `Tally ${macTail(command.mac, 2)} is offline — can't flash it.`);
         }
         break;
       case "setBrightness":

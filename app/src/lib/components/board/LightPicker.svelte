@@ -37,6 +37,8 @@
 
 	interface Props {
 		mac: string;
+		/** Short 2-octet form shown on the light and in the header. */
+		label: string;
 		state?: LightState;
 		/** All selectable inputs, in switcher order. */
 		inputs: PickerInput[];
@@ -53,6 +55,7 @@
 	}
 	let {
 		mac,
+		label,
 		state = "idle",
 		inputs,
 		currentInputId = null,
@@ -84,7 +87,7 @@
 	<PopoverTrigger>
 		{#snippet child({ props })}
 			<button {...props} class="light-trigger" aria-label={`Light ${mac} — assign or flash`}>
-				<TallyLightPcb {mac} {state} />
+				<TallyLightPcb {mac} {label} {state} />
 			</button>
 		{/snippet}
 	</PopoverTrigger>
@@ -94,7 +97,7 @@
 		<div class="bg-muted/70 flex items-center justify-between gap-2 px-3 pt-3 pb-2.5">
 			<div class="flex flex-col">
 				<span class="text-muted-foreground text-[0.68rem] leading-tight">Tally light</span>
-				<span class="font-mono text-sm font-medium tracking-wide">{mac}</span>
+				<span class="font-mono text-sm font-medium tracking-wide">{label}</span>
 			</div>
 			<button
 				type="button"

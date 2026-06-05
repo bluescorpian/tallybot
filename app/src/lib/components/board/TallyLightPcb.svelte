@@ -18,6 +18,8 @@
 	// the state glanceable.
 	interface Props {
 		mac: string;
+		/** Short 2-octet form shown on the board silkscreen. */
+		label: string;
 		state?: LightState;
 		onclick?: (event: MouseEvent) => void;
 		class?: string;
@@ -25,6 +27,7 @@
 	}
 	let {
 		mac,
+		label,
 		state = "idle",
 		onclick,
 		class: className = "",
@@ -62,7 +65,7 @@
 			<span class="body"></span>
 		</span>
 		<span class="led" aria-hidden="true"></span>
-		<span class="mac">{mac}</span>
+		<span class="mac">{label}</span>
 	</span>
 </svelte:element>
 

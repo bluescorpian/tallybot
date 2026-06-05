@@ -24,6 +24,11 @@ function inputState(tally: Input["tally"]): InputState {
 	return tally === "unknown" ? "idle" : tally;
 }
 
+/** Concise on-board label: the last two octets of the full MAC (e.g. `dc:6c`). */
+function shortMac(mac: string): string {
+	return mac.split(":").slice(-2).join(":");
+}
+
 export function inputToBoard(i: Input): BoardInput {
 	return { id: String(i.id), n: i.id, label: i.label, state: inputState(i.tally) };
 }
@@ -50,7 +55,8 @@ const DEFAULT_INPUTS: BoardInput[] = [1, 2, 3, 4].map((n) => ({
  */
 function dockLight(d: Device): BoardLight {
 	return {
-		mac: d.macTail,
+		mac: d.mac,
+		label: shortMac(d.mac),
 		inputId: null,
 		state: d.state === "offline" ? "offline" : "setup",
 		brightness: d.brightness,
@@ -60,27 +66,36 @@ function dockLight(d: Device): BoardLight {
 /**
  * Device LED state, resolving every case the primitive can show:
  *   offline               → offline (steady blue, device-local)
- *   unassigned            → setup   (magenta, sits in the dock)
+ *   unassigned / orphan   → setup   (magenta, sits in the dock)
  *   assigned + override   → idle    (the gate blocks program — every light idles)
  *   assigned + tally      → that tally, with `unknown` → fault (flashing blue:
  *                           the sidecar drives connected lights to fault when it
  *                           can't trust the source — never a confident idle)
+ *
+ * A device is only *seated* when its `inputId` is actually present in the current
+ * input list. An assignment to a now-missing input (e.g. a bigger switcher's input
+ * this source doesn't report) is an *orphan*: assignments are global and survive
+ * source changes (DESIGN.md / store.ts), so we don't drop it — we route it to the
+ * dock (inputId null → setup) so it stays visible and re-seats if the input
+ * returns. A disconnect that *retains* its inputs keeps them in the list, so those
+ * lights stay seated and fault (per DESIGN.md) — this only catches absent inputs.
  */
 export function deviceToBoard(
 	d: Device,
 	inputs: Input[],
 	override: boolean,
 ): BoardLight {
-	const inputId = d.inputId === null ? null : String(d.inputId);
+	const seated = d.inputId !== null && inputs.some((i) => i.id === d.inputId);
+	const inputId = seated ? String(d.inputId) : null;
 	let state: LightState;
 	if (d.state === "offline") state = "offline";
-	else if (d.state === "unassigned" || d.inputId === null) state = "setup";
+	else if (d.state === "unassigned" || !seated) state = "setup";
 	else if (override) state = "idle";
 	else {
 		const tally = inputs.find((i) => i.id === d.inputId)?.tally ?? "unknown";
 		state = tally === "unknown" ? "fault" : tally;
 	}
-	return { mac: d.macTail, inputId, state, brightness: d.brightness };
+	return { mac: d.mac, label: shortMac(d.mac), inputId, state, brightness: d.brightness };
 }
 
 /**

@@ -75,8 +75,16 @@
 		oninputclick,
 	}: Props = $props();
 
+	// Partition lights so the union of columns + dock covers EVERY light — none can
+	// fall through. A light seats in its column when its inputId matches a real
+	// input; otherwise (unassigned, or an orphan assigned to a now-missing input) it
+	// drops to the dock. (The mapper already nulls orphans; this is the structural
+	// guarantee for the locked primitive, including hand-built /preview props.)
+	const inputIds = $derived(new Set(inputs.map((i) => i.id)));
 	const lightsFor = (id: string) => lights.filter((l) => l.inputId === id);
-	const unassigned = $derived(lights.filter((l) => l.inputId === null));
+	const unassigned = $derived(
+		lights.filter((l) => l.inputId === null || !inputIds.has(l.inputId)),
+	);
 
 	const pickerInputs = $derived<PickerInput[]>(
 		inputs.map((i) => ({ id: i.id, label: i.label, state: i.state })),
@@ -335,6 +343,7 @@
 					>
 						<LightPicker
 							mac={light.mac}
+							label={light.label}
 							state={displayState(light)}
 							inputs={offerInputs}
 							currentInputId={inp.id}

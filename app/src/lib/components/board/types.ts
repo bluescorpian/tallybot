@@ -23,8 +23,10 @@ export interface BoardInput {
 
 /** A tally light — already resolved to a device LED state by the mapper. */
 export interface BoardLight {
-	/** Short MAC tail shown on the light. */
+	/** Full MAC — identity for commands & keys. */
 	mac: string;
+	/** Short 2-octet MAC shown on the light. */
+	label: string;
 	/** The input column this light sits in, or null when unassigned (dock). */
 	inputId: string | null;
 	/** Resolved LED state (live / preview / idle / setup / offline / fault). */

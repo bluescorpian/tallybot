@@ -51,6 +51,11 @@ function coerceDevice(value: unknown): DeviceConfig | null {
   return { inputId, brightness };
 }
 
+/** A full MAC: six colon-separated two-hex-digit octets, e.g. `e8:3d:c1:85:dc:6c`. */
+function isFullMac(mac: string): boolean {
+  return /^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$/.test(mac);
+}
+
 /** Salvage whatever is recognisable from a parsed file; unknown shapes → defaults. */
 function coerceShape(value: unknown): { sourceIp: string | null; devices: Map<string, DeviceConfig> } {
   const devices = new Map<string, DeviceConfig>();
@@ -59,6 +64,10 @@ function coerceShape(value: unknown): { sourceIp: string | null; devices: Map<st
   const sourceIp = typeof raw.sourceIp === "string" ? raw.sourceIp : null;
   if (typeof raw.devices === "object" && raw.devices !== null) {
     for (const [mac, entry] of Object.entries(raw.devices)) {
+      // Drop keys that aren't a full MAC. Devices are keyed by their 6-octet MAC;
+      // a short key (e.g. a 3-octet tail) is legacy garbage that would surface as a
+      // phantom offline device, so it self-heals on load rather than persisting.
+      if (!isFullMac(mac)) continue;
       const device = coerceDevice(entry);
       if (device) devices.set(mac, device);
     }
