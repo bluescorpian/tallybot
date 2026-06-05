@@ -1,0 +1,7 @@
+# PlatformIO build + tooling artifacts
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# Editor / IDE
+.vscode/
