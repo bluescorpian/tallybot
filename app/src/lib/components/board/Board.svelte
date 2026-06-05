@@ -163,8 +163,11 @@
 	const NOTICE_H = 92;
 	const noticeBottom = NOTICE_TOP + NOTICE_H;
 	const bodyBottom = $derived(hasInputs ? columnsBottom : noticeBottom);
+	// The dock is shown only when it holds lights; when empty it's hidden and
+	// reserves no height (the board shrinks to fit the body).
+	const hasDock = $derived(unassigned.length > 0);
 	const dockY = $derived(bodyBottom + DOCK_GAP);
-	const boardH = $derived(dockY + dockH + PADBOTTOM);
+	const boardH = $derived((hasDock ? dockY + dockH : bodyBottom) + PADBOTTOM);
 
 	const place = (cx: number, y: number, w: number) =>
 		`left:${cx - w / 2}px; top:${y}px; width:${w}px;`;
@@ -366,20 +369,22 @@
 			</div>
 		{/if}
 
-		<!-- Dock: unassigned lights (always present) -->
-		<div
-			class="abs"
-			style="left:{PADX}px; top:{dockY}px; width:{contentW}px; height:{dockH}px;"
-		>
-			<BoardDock
-				lights={dockLights}
-				pickerInputs={offerInputs}
-				lightWidth={LT_W}
-				onassign={(mac, id) => onassign?.(mac, id)}
-				onflash={(mac) => flash(mac)}
-				onbrightness={(mac, v) => onbrightness?.(mac, v)}
-			/>
-		</div>
+		<!-- Dock: unassigned lights — shown only when it holds lights -->
+		{#if hasDock}
+			<div
+				class="abs"
+				style="left:{PADX}px; top:{dockY}px; width:{contentW}px; height:{dockH}px;"
+			>
+				<BoardDock
+					lights={dockLights}
+					pickerInputs={offerInputs}
+					lightWidth={LT_W}
+					onassign={(mac, id) => onassign?.(mac, id)}
+					onflash={(mac) => flash(mac)}
+					onbrightness={(mac, v) => onbrightness?.(mac, v)}
+				/>
+			</div>
+		{/if}
 	</div>
 </div>
 

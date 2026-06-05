@@ -51,9 +51,6 @@
 				/>
 			</div>
 		{/each}
-		{#if lights.length === 0}
-			<span class="dock-empty">All lights assigned.</span>
-		{/if}
 	</div>
 </div>
 
@@ -110,11 +107,5 @@
 	}
 	.dock-slot {
 		flex: none;
-	}
-	.dock-empty {
-		align-self: center;
-		font-size: 0.8rem;
-		color: var(--muted-foreground);
-		user-select: none;
 	}
 </style>
