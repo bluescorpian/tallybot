@@ -120,6 +120,10 @@
 		isTauri ? (sidecar.state ?? EMPTY_STATE) : mockState,
 	);
 
+	// Dev mode (fake ATEM): the sidecar marks its snapshots `dev`. Only then are the
+	// board's input keys interactive; otherwise they stay plain, non-clickable keys.
+	const devMode = $derived(appState.dev === true);
+
 	const props = $derived(toBoardProps(appState));
 
 	// Command handlers: under Tauri they send the real UiCommand; otherwise they
@@ -153,6 +157,12 @@
 		// the SourceChip "Set up your ATEM →" link — opens the settings drawer on
 		// Source (the first group).
 		settingsOpen = true;
+	}
+
+	// Dev mode (fake ATEM) only: clicking an input key takes it to program. Gated on
+	// the live `dev` flag the sidecar sets, so real-ATEM sessions leave keys inert.
+	function onInputClick(inputId: string) {
+		if (isTauri && sidecar.state?.dev) sidecar.setProgram(Number(inputId));
 	}
 
 	// Save in the drawer commits the source IP. Live: send setSource and let the
@@ -205,6 +215,7 @@
 			onflash={flash}
 			onbrightness={setBrightness}
 			onsetup={setup}
+			oninputclick={devMode ? onInputClick : undefined}
 		/>
 	</div>
 

@@ -52,6 +52,11 @@
 		onflash?: (mac: string) => void;
 		/** Set a device's LED brightness (protocol byte, 0–255). */
 		onbrightness?: (mac: string, value: number) => void;
+		/**
+		 * Dev mode only: clicking an input key takes it to program on the fake ATEM.
+		 * When omitted (production / real ATEM) the keys stay non-interactive.
+		 */
+		oninputclick?: (inputId: string) => void;
 	}
 	let {
 		inputs,
@@ -67,6 +72,7 @@
 		onflash,
 		onbrightness,
 		onsetup,
+		oninputclick,
 	}: Props = $props();
 
 	const lightsFor = (id: string) => lights.filter((l) => l.inputId === id);
@@ -310,6 +316,7 @@
 						n={inp.n}
 						state={inp.state}
 						ariaLabel={`Input ${inp.n}: ${inp.label}`}
+						onclick={oninputclick ? () => oninputclick(inp.id) : undefined}
 					/>
 				</div>
 			{/each}

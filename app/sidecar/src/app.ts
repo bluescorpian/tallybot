@@ -103,6 +103,12 @@ export interface SidecarAppDeps {
   blinkIntervalMs?: number;
   /** The subnet sweep behind the settings "Scan" (injectable so tests don't open sockets). */
   scanNetwork?: (log: (message: string) => void) => Promise<SourceScanHit[]>;
+  /**
+   * Mark every snapshot as dev mode (running against the fake ATEM). The UI reads this
+   * to make the board's input keys clickable. Set only by the fake-ATEM dev entry;
+   * production leaves it false.
+   */
+  dev?: boolean;
 }
 
 function colorsEqual(a: { color: Color; brightness: number }, b: { color: Color; brightness: number }): boolean {
@@ -123,6 +129,7 @@ export class SidecarApp {
   readonly #blinkClock: BlinkClock;
   readonly #blinkIntervalMs: number;
   readonly #scanNetwork: (log: (message: string) => void) => Promise<SourceScanHit[]>;
+  readonly #dev: boolean;
 
   /** True while a subnet sweep is in flight — a second "Scan" is ignored until it ends. */
   #scanning = false;
@@ -150,6 +157,7 @@ export class SidecarApp {
     this.#blinkClock = deps.blinkClock ?? realBlinkClock;
     this.#blinkIntervalMs = deps.blinkIntervalMs ?? BLINK_INTERVAL_MS;
     this.#scanNetwork = deps.scanNetwork ?? scanNetwork;
+    this.#dev = deps.dev ?? false;
     this.#source = deps.atem.snapshot();
 
     this.#ipc.on("command", (command) => void this.#handleCommand(command));
@@ -222,6 +230,12 @@ export class SidecarApp {
       case "scanSources":
         void this.#scan();
         break;
+      case "requestState":
+        // The UI just (re)connected its listener — replay the current snapshot so it
+        // doesn't sit on stale/empty state waiting for the next change. (#sync re-pushes
+        // colours too, but the diff in #pushColor keeps a steady rig quiet.)
+        this.#sync();
+        break;
     }
   }
 
@@ -267,7 +281,7 @@ export class SidecarApp {
   #sync(): void {
     const { state, colors } = computeEngine(this.#source, this.#gate, this.#deviceRecords());
     this.#applyColors(colors);
-    this.#ipc.send({ type: "state", state });
+    this.#ipc.send({ type: "state", state: this.#dev ? { ...state, dev: true } : state });
   }
 
   /**

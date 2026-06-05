@@ -57,6 +57,11 @@ class SidecarStore {
 					break;
 			}
 		});
+		// The listener is live now — ask the sidecar to replay current state. Without
+		// this, any snapshot it emitted during start-up (before this listener existed)
+		// is lost, and the board sits on empty state until the next change. Tauri does
+		// not buffer events for not-yet-registered listeners.
+		this.#send({ type: "requestState" });
 	}
 
 	/** Stop listening (call on destroy). */
@@ -87,6 +92,10 @@ class SidecarStore {
 	}
 	scanSources(): void {
 		this.#send({ type: "scanSources" });
+	}
+	/** Dev mode only: take an input to program on the fake ATEM (see AppState.dev). */
+	setProgram(inputId: number): void {
+		this.#send({ type: "setProgram", inputId });
 	}
 }
 

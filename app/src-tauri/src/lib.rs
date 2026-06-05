@@ -35,13 +35,33 @@ fn send_to_sidecar(state: tauri::State<'_, SidecarState>, line: String) -> Resul
 /// Spawn the sidecar and pump its output to the UI. Stdout lines become `"sidecar"`
 /// events; stderr is mirrored to our own stderr for debugging.
 fn spawn_sidecar(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    // Development mode runs the sidecar against a fake ATEM (no switcher needed); the
+    // board's input keys then drive the simulated program live onto real devices. It's
+    // on by default for debug builds (`cargo tauri dev`) and off for release
+    // (`cargo tauri build`); `TALLYBOT_FAKE_ATEM=1`/`0` overrides either way.
+    let dev = match std::env::var("TALLYBOT_FAKE_ATEM").as_deref() {
+        Ok("1") => true,
+        Ok("0") => false,
+        _ => cfg!(debug_assertions),
+    };
+
     // PACKAGING: in dev we run Node directly on the TypeScript source, resolved relative
-    // to this crate. A shippable build will instead bundle the sidecar as `externalBin`
-    // and spawn it with `app.shell().sidecar("tallybot-sidecar")` — deferred for now.
+    // to this crate. The fake-ATEM entry lives with the other dev tools in `tools/`. A
+    // shippable build will instead bundle the production sidecar as `externalBin` and
+    // spawn it with `app.shell().sidecar("tallybot-sidecar")` — deferred for now.
+    let rel = if dev {
+        "../../tools/src/sidecar-fake-main.ts"
+    } else {
+        "../sidecar/src/main.ts"
+    };
     let entry = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../sidecar/src/main.ts")
+        .join(rel)
         .to_string_lossy()
         .into_owned();
+    eprintln!(
+        "[sidecar] spawning {} ATEM entry: {entry}",
+        if dev { "FAKE (dev)" } else { "real" }
+    );
 
     let (mut rx, child) = app
         .shell()

@@ -86,6 +86,12 @@ export interface AppState {
   inputs: Input[];
   devices: Device[];
   programGate: ProgramGate;
+  /**
+   * True when the sidecar is running against the fake ATEM (the dev entry point,
+   * `tools/src/sidecar-fake-main.ts`). The UI uses it to make the board's input keys
+   * clickable so they can drive the simulated program. Absent/false in production.
+   */
+  dev?: boolean;
 }
 
 // ── Sidecar → UI events ───────────────────────────────────────────────────────
@@ -165,13 +171,37 @@ export interface ScanSourcesCommand {
   type: "scanSources";
 }
 
+/**
+ * Ask the sidecar to re-emit the current {@link AppState} at once. The UI sends this
+ * the moment its event listener is ready, because the sidecar emits state as it
+ * happens and Tauri doesn't buffer events for listeners that aren't registered yet —
+ * so any snapshot produced during start-up (a fast source connect, devices already
+ * online) would otherwise be lost until the next change. Idempotent.
+ */
+export interface RequestStateCommand {
+  type: "requestState";
+}
+
+/**
+ * DEV/SIMULATOR ONLY: put `inputId` on the fake ATEM's program output (the previously
+ * live input drops to preview). The production sidecar ignores this — TallyBot reads
+ * ATEM state and must never drive a real switcher; only the fake-ATEM dev entry
+ * (`tools/src/sidecar-fake-main.ts`) acts on it. Sent only when {@link AppState.dev}.
+ */
+export interface SetProgramCommand {
+  type: "setProgram";
+  inputId: number;
+}
+
 export type UiCommand =
   | AssignDeviceCommand
   | UnassignDeviceCommand
   | IdentifyDeviceCommand
   | SetBrightnessCommand
   | SetSourceCommand
-  | ScanSourcesCommand;
+  | ScanSourcesCommand
+  | RequestStateCommand
+  | SetProgramCommand;
 
 // ── Transport (NDJSON over stdio) ───────────────────────────────────────────────
 
@@ -187,6 +217,8 @@ export const COMMAND_TYPES = [
   "setBrightness",
   "setSource",
   "scanSources",
+  "requestState",
+  "setProgram",
 ] as const satisfies readonly UiCommand["type"][];
 
 const eventTypes = new Set<string>(EVENT_TYPES);

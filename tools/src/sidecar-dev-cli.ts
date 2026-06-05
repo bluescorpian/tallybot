@@ -40,8 +40,12 @@ class ReplIpc extends EventEmitter implements IpcPort {
     if (event.type === "state") {
       this.latest = event.state;
       printBoard(event.state);
-    } else {
+    } else if (event.type === "notice") {
       console.log(`${stamp()} ${event.level.toUpperCase()}: ${event.message}`);
+    } else {
+      // sourceScan — the REPL has no scan UI; summarise progress/results inline.
+      const hits = event.found.map((h) => h.ip).join(", ");
+      console.log(`${stamp()} SCAN ${event.status}${hits ? `: ${hits}` : ""}`);
     }
   }
   notice(level: "info" | "warn" | "error", message: string): void {
