@@ -134,13 +134,16 @@ outstanding worklist (what to build next, in order) is in [`TODO.md`](TODO.md). 
 - **app/sidecar/** — **Phase 2 done**: tally engine, device server (TCP/UDP), ATEM
   adapter (real `atem-connection` behind an `AtemLike` seam), config store, IPC bridge,
   and the orchestrator that wires them — built and tested (`pnpm start` runs it).
-- **app/ UI** — **Phase 4 mostly done**: the board, settings drawer, and frameless
-  chrome are built (including per-device brightness in the light popover), but driven by
-  **mock data with stub handlers**. Remaining: the live IPC wiring (Phase 5).
-- **app/ shell** — **Phase 5 not started**: `src-tauri/src/lib.rs` is still the
-  `create-tauri-app` `greet` template. Needs the sidecar↔UI bridge (spawn + stdio↔IPC),
-  config (shell capability, `externalBin`), and a packaging strategy (open decision —
-  single-binary proved impractical for `atem-connection`; see `TODO.md`).
+- **app/ UI** — **Phase 4 done**: the board, settings drawer, and frameless chrome —
+  including per-device brightness and the settings ATEM **Scan** — now run on the **live
+  sidecar IPC stream** (`src/lib/ipc.svelte.ts`), with a mock fallback when not under Tauri
+  so the `/preview` design workflow still works.
+- **app/ shell** — **Phase 5 bridge built**: `src-tauri/src/lib.rs` spawns the Node sidecar
+  via `tauri-plugin-shell`, forwards its NDJSON stdout to the UI as `"sidecar"` events, and a
+  `send_to_sidecar` command pumps `UiCommand`s to its stdin; the child is killed on exit, so
+  `cargo tauri dev` runs the real app against the real sidecar. **Remaining: packaging** (open
+  decision — single-binary proved impractical for `atem-connection`; the dev spawn runs `node`
+  on the sidecar source, marked `// PACKAGING:` — see `TODO.md`).
 - **firmware/** — **Phase 3 done**: the full tally client (`platformio.ini`, `src/main.cpp`,
   `src/protocol.h`) — WiFiManager captive-portal provisioning, UDP discovery, the TCP binary
   protocol, and the LED state machine. Builds with `pio run` and **verified on a physical

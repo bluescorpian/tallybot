@@ -4,46 +4,38 @@ The actionable remaining work to ship v1, in suggested order. This is the outsta
 *subset* — each phase's full scope and "done" criteria live in [`PHASES.md`](PHASES.md);
 design rationale and the protocol live in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
-Where things stand: the **firmware is done and hardware-verified** (Phase 3 — see below),
-so the remaining v1 work is all in the **app**. The UI is built (board, settings drawer,
-chrome) but runs on **mock data with stub handlers**, and the sidecar↔UI bridge (Phase 5)
-isn't started yet. So the app is ~90% built but disconnected.
+Where things stand: the **firmware is done and hardware-verified** (Phase 3) and the
+**app now runs live** — `cargo tauri dev` drives the real UI against the real sidecar
+(Phase 4 ✅, Phase 5 bridge ✅). The only remaining v1 work is **packaging** (deferred).
 
-## UI (Phase 4 tail)
+## UI (Phase 4) — ✅ done
 
-- [x] **Brightness control** — built as `BrightnessBar.svelte` in the `LightPicker`
-  popover (flat amber bar, 10 levels, 0 = off, −/+ buttons, level centred; maps 0–10 ↔ the
-  0–255 byte). `brightness` is threaded through the board view-model and an `onbrightness`
-  handler runs the full chain `Board` → `BoardDock` → `LightPicker`, mock-wired in
-  `+page.svelte`. **Remaining for Phase 5:** swap the mock for the real `setBrightness`
-  command (already in `ipc.ts`) — see the bridge below; consider debouncing rapid ±/hold.
+- [x] **Brightness control** — `BrightnessBar.svelte` in the `LightPicker` popover (flat
+  amber bar, 10 levels, 0 = off, maps 0–10 ↔ the 0–255 byte), threaded through the board
+  view-model and `onbrightness` (`Board` → `BoardDock` → `LightPicker`), now sending the
+  real `setBrightness` command.
+- [x] **Live IPC wiring** — board + settings run on the live sidecar stream
+  (`src/lib/ipc.svelte.ts`): every action maps to its `UiCommand`, `NoticeEvent`s surface
+  in a banner, and a mock fallback keeps the `/preview` workflow working when not under Tauri.
+- [x] **Settings ATEM Scan** — shipped: `scanSources` command + `sourceScan` event
+  (`ipc.ts`), the real subnet sweep in `app/sidecar/src/scanner.ts` (extracted from
+  `tools/atem-probe`), wired into the Scan button.
 
 ## App (Phase 5 — the sidecar↔UI bridge)
 
-- [ ] **Build the connection (Tauri shell ↔ sidecar ↔ UI).** Three pieces:
-  - `src-tauri/src/lib.rs` (still the `greet` template): add `tauri-plugin-shell`, spawn
-    the sidecar, pump its stdout lines → `emit("sidecar")`, add a `#[tauri::command]` that
-    forwards a `UiCommand` to the child's stdin, tie the child lifecycle to the window,
-    pass `TALLYBOT_STATE_FILE`, and export `WEBKIT_DISABLE_DMABUF_RENDERER=1` for the
-    shipped binary.
-  - Config: `shell:allow-spawn` (scoped to the sidecar) in `capabilities/default.json`;
-    `bundle.externalBin` in `tauri.conf.json`.
-  - New `src/lib/ipc.ts`: `listen("sidecar")` → `parseEvent` → a reactive `AppState`
-    store; plus a sender that `invoke`s the forward command per `UiCommand`. (`@tauri-apps/api`
-    is already a dep — see `TitleBar.svelte`.)
-
-- [ ] **Make the board + settings work on real data.** Replace the mock in `+page.svelte`
-  (mock devices + the stub `assign` / `unassign` / `flash` / `setup` / `onSettingsSave`
-  handlers) with the live store, and wire each handler to the IPC sender — including the
-  settings panel's `onsave(ip)` → `setSource`.
-  - **Decide:** the settings **"Scan"** button has no backend — there's no scan command in
-    the IPC schema (`UiCommand` is only `setSource`). Ship it (needs an ATEM-scan command)
-    or remove/defer it for v1.
+- [x] **The connection (Tauri shell ↔ sidecar ↔ UI).** `src-tauri/src/lib.rs` registers
+  `tauri-plugin-shell`, spawns the Node sidecar, pumps its stdout → `emit("sidecar")`,
+  exposes the `send_to_sidecar` `#[tauri::command]` (UI → stdin), and kills the child on
+  exit. `console.log`/`info`/`debug` → stderr redirect added so no library line corrupts
+  the NDJSON stream. The frontend store + senders live in `src/lib/ipc.svelte.ts`.
+  - *Spawned from Rust, so no frontend shell capability / `externalBin` was needed yet;
+    the dev spawn runs `node` on the sidecar source, marked `// PACKAGING:`.*
 
 - [ ] **Research packaging.** Open decision: single-binary (`pkg`/SEA) was tested and found
   impractical for `atem-connection`. Candidate is shipping JS + `node_modules` + a Node
-  runtime as `externalBin`. **Does not block the Sunday test** — `cargo tauri dev` (and the
-  test) can spawn `node` on the sidecar source; packaging only blocks a shippable build.
+  runtime as `externalBin`, switching the `// PACKAGING:` dev spawn in `lib.rs` to
+  `app.shell().sidecar(...)`. **Does not block the hardware test** — `cargo tauri dev`
+  spawns `node` on the sidecar source; packaging only blocks a shippable build.
   See `PHASES.md` Phase 5 and `ARCHITECTURE.md` "Packaging the Sidecar".
 
 ## Firmware (Phase 3) — ✅ done
@@ -63,7 +55,7 @@ power bank → never sleeps.
 
 ---
 
-**Suggested order (app only — firmware is done).** Build the bridge → wire the board +
-settings to real data → packaging research (later). Once the bridge is in, `cargo tauri dev`
-gives you the real app driving the real sidecar. Then the full hardware test: real app +
-real boards, then swap `FakeAtem` for the real ATEM.
+**What's left for v1.** Only **packaging** remains (deferred). Everything else is built:
+firmware is hardware-verified, and `cargo tauri dev` runs the real app driving the real
+sidecar. Next milestone is the **full hardware test** — real app + real boards against the
+`FakeAtem`, then swap in the real ATEM — followed by packaging research for a shippable build.

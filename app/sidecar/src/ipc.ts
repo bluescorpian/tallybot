@@ -103,7 +103,26 @@ export interface NoticeEvent {
   message: string;
 }
 
-export type SidecarEvent = StateEvent | NoticeEvent;
+/** One switcher found by a {@link ScanSourcesCommand} sweep. */
+export interface SourceScanHit {
+  ip: string;
+  /** The ATEM model string ("ATEM Mini Pro"), or null if it didn't report one. */
+  product: string | null;
+}
+
+/**
+ * Progress/result of a settings "Scan". The sidecar emits `scanning` when a sweep
+ * begins and `done` (with `found` populated, or `error` set) when it finishes — the
+ * scan is fire-and-forget, so the UI keys its own spinner off these two events.
+ */
+export interface SourceScanEvent {
+  type: "sourceScan";
+  status: "scanning" | "done";
+  found: SourceScanHit[];
+  error: string | null;
+}
+
+export type SidecarEvent = StateEvent | NoticeEvent | SourceScanEvent;
 
 // ── UI → sidecar commands ───────────────────────────────────────────────────────
 // Assignment & identify happen on the canvas; setSource is the settings window
@@ -141,12 +160,18 @@ export interface SetSourceCommand {
   ip: string;
 }
 
+/** Sweep the local subnet(s) for ATEM switchers (the settings "Scan" button). */
+export interface ScanSourcesCommand {
+  type: "scanSources";
+}
+
 export type UiCommand =
   | AssignDeviceCommand
   | UnassignDeviceCommand
   | IdentifyDeviceCommand
   | SetBrightnessCommand
-  | SetSourceCommand;
+  | SetSourceCommand
+  | ScanSourcesCommand;
 
 // ── Transport (NDJSON over stdio) ───────────────────────────────────────────────
 
@@ -154,13 +179,14 @@ export type UiCommand =
  * Every message type, kept in sync with the unions above by `satisfies` — adding
  * a message without listing it here (or vice versa) is a type error.
  */
-export const EVENT_TYPES = ["state", "notice"] as const satisfies readonly SidecarEvent["type"][];
+export const EVENT_TYPES = ["state", "notice", "sourceScan"] as const satisfies readonly SidecarEvent["type"][];
 export const COMMAND_TYPES = [
   "assignDevice",
   "unassignDevice",
   "identifyDevice",
   "setBrightness",
   "setSource",
+  "scanSources",
 ] as const satisfies readonly UiCommand["type"][];
 
 const eventTypes = new Set<string>(EVENT_TYPES);

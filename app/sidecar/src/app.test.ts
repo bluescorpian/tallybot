@@ -7,6 +7,7 @@ import {
   type BlinkClock,
   type DeviceServerPort,
   type IpcPort,
+  type SidecarAppDeps,
   type StorePort,
   SidecarApp,
 } from "./app.ts";
@@ -182,13 +183,24 @@ interface Harness {
   blink: FakeBlinkClock;
 }
 
-function setup(source: SourceSnapshot = connectedSource()): Harness {
+function setup(
+  source: SourceSnapshot = connectedSource(),
+  overrides: Partial<Pick<SidecarAppDeps, "scanNetwork">> = {},
+): Harness {
   const server = new FakeDeviceServer();
   const atem = new FakeAtemSource(source);
   const ipc = new FakeIpc();
   const store = new FakeStore();
   const blink = new FakeBlinkClock();
-  const app = new SidecarApp({ atem, deviceServer: server, store, ipc, blinkClock: blink, log: () => {} });
+  const app = new SidecarApp({
+    atem,
+    deviceServer: server,
+    store,
+    ipc,
+    blinkClock: blink,
+    log: () => {},
+    ...overrides,
+  });
   return { app, server, atem, ipc, store, blink };
 }
 
@@ -361,4 +373,35 @@ test("on startup with a saved IP, the ATEM is connected automatically", async ()
   store.sourceIp = "10.0.0.7";
   await app.start();
   assert.deepEqual(atem.connects, ["10.0.0.7"]);
+});
+
+test("scanSources emits a scanning event then a done event with the hits", async () => {
+  const hits = [{ ip: "10.0.0.5", product: "ATEM Mini Pro" }];
+  const { app, ipc } = setup(connectedSource(), { scanNetwork: () => Promise.resolve(hits) });
+  await app.start();
+
+  ipc.command({ type: "scanSources" });
+  await tick();
+
+  const scans = ipc.events.filter((e) => e.type === "sourceScan");
+  assert.deepEqual(
+    scans.map((e) => e.status),
+    ["scanning", "done"],
+  );
+  assert.deepEqual(scans.at(-1), { type: "sourceScan", status: "done", found: hits, error: null });
+});
+
+test("scanSources reports a sweep failure as an error result", async () => {
+  const { app, ipc } = setup(connectedSource(), {
+    scanNetwork: () => Promise.reject(new Error("no interface")),
+  });
+  await app.start();
+
+  ipc.command({ type: "scanSources" });
+  await tick();
+
+  const done = ipc.events.filter((e) => e.type === "sourceScan").at(-1);
+  assert.equal(done?.status, "done");
+  assert.equal(done?.error, "no interface");
+  assert.deepEqual(done?.found, []);
 });

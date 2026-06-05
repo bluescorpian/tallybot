@@ -1,20 +1,34 @@
 <script lang="ts">
 	// Main view — the assembled board (DESIGN.md). The locked <Board> is driven by
 	// a view-model produced from an IPC `AppState` (sidecar/src/ipc.ts) via the
-	// $lib/boardState.ts mapper, exactly as the real engine will feed it.
+	// $lib/boardState.ts mapper, exactly as the real engine feeds it.
 	//
-	// PHASE-4 MOCK: the AppState here is local mock data, so the board renders
-	// without a running sidecar. It defaults to the connected case; `onSettingsSave`
-	// still nudges `sourceMode` to animate connecting → connected behind the drawer.
-	// Phase 5 replaces the mock with the real Tauri/IPC snapshot stream.
+	// Under Tauri the AppState is the LIVE snapshot stream from the sidecar (via
+	// $lib/ipc.svelte); in a plain browser (pnpm dev, the /preview design workflow)
+	// there's no sidecar, so the page falls back to the Phase-4 MOCK below — same
+	// shape, local data — so the board still renders and design iteration works.
+	import { onMount, onDestroy } from "svelte";
 	import type { AppState, Device, Input, Tally } from "$ipc";
 	import Board from "$lib/components/board/Board.svelte";
 	import { toBoardProps } from "$lib/boardState";
+	import { sidecar, isTauri } from "$lib/ipc.svelte";
 	import SettingsSheet from "$lib/components/settings/SettingsSheet.svelte";
 	import TitleBar from "$lib/components/chrome/TitleBar.svelte";
 	import Credit from "$lib/components/chrome/Credit.svelte";
 
-	// ── Mock source state ─────────────────────────────────────────────────────
+	// ── Live wiring (Tauri) ────────────────────────────────────────────────────
+	onMount(() => void sidecar.start());
+	onDestroy(() => sidecar.stop());
+
+	// What the board shows before the first snapshot lands: an unconfigured source.
+	const EMPTY_STATE: AppState = {
+		source: { kind: "atem", ip: null, connection: "disconnected" },
+		inputs: [],
+		devices: [],
+		programGate: { active: false, source: null },
+	};
+
+	// ── Mock source state (non-Tauri fallback) ─────────────────────────────────
 	type SourceMode =
 		| "connected"
 		| "connecting"
@@ -85,7 +99,7 @@
 
 	// Unconfigured = no IP saved yet (first run); every other mode keeps the IP so
 	// the chip can show "Reconnecting…" against a known source.
-	const appState = $derived<AppState>({
+	const mockState = $derived<AppState>({
 		source: {
 			kind: "atem",
 			ip: sourceMode === "unconfigured" ? null : "192.168.10.240",
@@ -101,10 +115,17 @@
 		programGate: { active: override, source: null },
 	});
 
+	// Live snapshot under Tauri (EMPTY_STATE until the first arrives); mock otherwise.
+	const appState = $derived<AppState>(
+		isTauri ? (sidecar.state ?? EMPTY_STATE) : mockState,
+	);
+
 	const props = $derived(toBoardProps(appState));
 
-	// Mock command handlers — mutate the device list the engine would otherwise own.
+	// Command handlers: under Tauri they send the real UiCommand; otherwise they
+	// mutate the mock device list the engine would normally own.
 	function assign(mac: string, inputId: string) {
+		if (isTauri) return sidecar.assignDevice(mac, Number(inputId));
 		const d = devices.find((x) => x.mac === mac || x.macTail === mac);
 		if (d) {
 			d.inputId = Number(inputId);
@@ -112,6 +133,7 @@
 		}
 	}
 	function unassign(mac: string) {
+		if (isTauri) return sidecar.unassignDevice(mac);
 		const d = devices.find((x) => x.mac === mac || x.macTail === mac);
 		if (d) {
 			d.inputId = null;
@@ -119,36 +141,54 @@
 		}
 	}
 	function flash(mac: string) {
-		// real path sends IDENTIFY; the board echoes with a local blink already
-		void mac;
+		// the board already echoes a local blink; this fires the real IDENTIFY too
+		if (isTauri) sidecar.identifyDevice(mac);
 	}
 	function setBrightness(mac: string, brightness: number) {
-		// real path sends SET_COLOR with this byte (Phase 5: setBrightness command)
+		if (isTauri) return sidecar.setBrightness(mac, brightness);
 		const d = devices.find((x) => x.mac === mac || x.macTail === mac);
 		if (d) d.brightness = brightness;
 	}
 	function setup() {
 		// the SourceChip "Set up your ATEM →" link — opens the settings drawer on
-		// Source (the first group). Real IPC stays Phase 5.
+		// Source (the first group).
 		settingsOpen = true;
 	}
 
-	// Mock: Save in the drawer nudges the board's source mode so the SourceChip
-	// animates connecting → connected behind the open panel. Phase 5 replaces this
-	// with the real IPC snapshot stream reacting to the committed source.
+	// Save in the drawer commits the source IP. Live: send setSource and let the
+	// real connecting → connected arrive as snapshots. Mock: animate it locally.
 	let connectTimer: ReturnType<typeof setTimeout> | undefined;
-	function onSettingsSave(_ip: string) {
+	function onSettingsSave(ip: string) {
+		if (isTauri) return sidecar.setSource(ip);
 		sourceMode = "connecting";
 		clearTimeout(connectTimer);
 		connectTimer = setTimeout(() => (sourceMode = "connected"), 1600);
 	}
+
+	// ── Notices (firmware-outdated, offline-flash, …) — a dismissible banner ────
+	let dismissed = $state<unknown>(null);
+	const notice = $derived(
+		isTauri && sidecar.notice !== dismissed ? sidecar.notice : null,
+	);
 </script>
 
 <div class="page">
 	<!-- custom frameless titlebar — the gear opens the settings drawer (DESIGN.md) -->
 	<TitleBar onsettings={() => (settingsOpen = true)} />
 
-	<SettingsSheet bind:open={settingsOpen} onsave={onSettingsSave} />
+	<SettingsSheet
+		bind:open={settingsOpen}
+		onsave={onSettingsSave}
+		onscan={isTauri ? () => sidecar.scanSources() : undefined}
+		scanResult={isTauri ? sidecar.scan : null}
+	/>
+
+	{#if notice}
+		<div class="notice" class:warn={notice.level === "warn"} class:error={notice.level === "error"} role="status">
+			<span>{notice.message}</span>
+			<button type="button" onclick={() => (dismissed = sidecar.notice)} aria-label="Dismiss">×</button>
+		</div>
+	{/if}
 
 	<div class="stage">
 		<Board
@@ -192,5 +232,41 @@
 		overflow: auto;
 		display: flex;
 		padding: 10px;
+	}
+
+	/* Sidecar notice — a thin dismissible banner under the titlebar. Info by default;
+	   warn/error tint it. Non-intrusive: it sits above the board, doesn't cover it. */
+	.notice {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		margin: 0 10px;
+		padding: 8px 12px;
+		font-size: 0.8rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		background: var(--muted);
+		color: var(--foreground);
+	}
+	.notice.warn {
+		border-color: color-mix(in oklch, var(--primary), transparent 50%);
+		background: color-mix(in oklch, var(--primary), transparent 92%);
+	}
+	.notice.error {
+		border-color: color-mix(in oklch, var(--destructive), transparent 40%);
+		background: color-mix(in oklch, var(--destructive), transparent 90%);
+		color: var(--destructive);
+	}
+	.notice button {
+		margin-left: auto;
+		font-size: 1.1rem;
+		line-height: 1;
+		color: var(--muted-foreground);
+		background: none;
+		border: none;
+		cursor: pointer;
+	}
+	.notice button:hover {
+		color: var(--foreground);
 	}
 </style>

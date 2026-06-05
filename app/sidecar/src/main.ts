@@ -23,6 +23,18 @@ import { DeviceServer } from "./device-server.ts";
 import { IpcBridge } from "./ipc-bridge.ts";
 import { ConfigStore } from "./store.ts";
 
+// stdout is the NDJSON IPC channel the Tauri shell parses; one stray library log line on
+// it corrupts the stream. `atem-connection`/`threadedClass` log via console.log/info/debug,
+// so route those to stderr before any Atem is constructed (the adapter below, and the
+// scanner). console.warn/error already go to stderr. (ARCHITECTURE "Packaging the Sidecar",
+// warning 2.)
+const logToStderr = (...args: unknown[]): void => {
+  process.stderr.write(`${args.map(String).join(" ")}\n`);
+};
+console.log = logToStderr;
+console.info = logToStderr;
+console.debug = logToStderr;
+
 /**
  * Where the persisted config lives. `TALLYBOT_STATE_FILE` wins; otherwise an
  * XDG-style per-user path. Phase 5 (the Tauri shell) will pass an explicit

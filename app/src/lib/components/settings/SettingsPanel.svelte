@@ -30,6 +30,7 @@
 	import CircleCheck from "@lucide/svelte/icons/circle-check";
 	import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
 
+	import type { SourceScanEvent } from "$ipc";
 	import { Button } from "$lib/components/ui/button";
 	import { Input } from "$lib/components/ui/input";
 	import { Switch } from "$lib/components/ui/switch";
@@ -47,10 +48,17 @@
 	let {
 		onsave,
 		onclose,
+		onscan,
+		scanResult = null,
 		dirty = $bindable(false),
 	}: {
 		onsave?: (ip: string) => void;
 		onclose?: () => void;
+		// Real scan hookup (Tauri). When `onscan` is set, the Scan button asks the
+		// sidecar to sweep the subnet and results arrive via `scanResult`; when it's
+		// absent (the /preview design workflow) the mock sweep below runs instead.
+		onscan?: () => void;
+		scanResult?: SourceScanEvent | null;
 		dirty?: boolean;
 	} = $props();
 
@@ -109,17 +117,23 @@
 	}
 
 	// ── Scan (assistive secondary path) ──────────────────────────────────────────
-	type Hit = { ip: string; product: string };
+	type Hit = { ip: string; product: string | null };
 	let scan = $state<"idle" | "scanning" | "results" | "none">("idle");
 	let hits = $state<Hit[]>([]);
 	let picked = $state<string | null>(null);
 	let scanTimer: ReturnType<typeof setTimeout> | undefined;
 
 	function runScan() {
-		scan = "scanning";
 		picked = null;
+		scan = "scanning";
+		if (onscan) {
+			// real sweep: the sidecar probes every host on each local /24 (~20s);
+			// results land in `scanResult`, handled by the effect below.
+			onscan();
+			return;
+		}
+		// mock sweep (no sidecar — the /preview workflow)
 		clearTimeout(scanTimer);
-		// real scan brute-force probes every host on each local /24 (~20s, async)
 		scanTimer = setTimeout(() => {
 			hits = [
 				{ ip: "192.168.10.240", product: "ATEM Mini Pro" },
@@ -128,6 +142,20 @@
 			scan = hits.length ? "results" : "none";
 		}, 1800);
 	}
+
+	// Drive the scan state machine from the sidecar's events (real mode only). Only
+	// applies a "done" result to a sweep we actually started (scan === "scanning"),
+	// so a stale result from a prior session doesn't pop up when the drawer reopens.
+	$effect(() => {
+		if (!onscan || !scanResult) return;
+		if (scanResult.status === "scanning") {
+			scan = "scanning";
+			return;
+		}
+		if (scan !== "scanning") return;
+		hits = scanResult.found.map((h) => ({ ip: h.ip, product: h.product }));
+		scan = !scanResult.error && hits.length ? "results" : "none";
+	});
 
 	function pick(hit: Hit) {
 		// fills the field only — a pending change; Save still connects
@@ -230,10 +258,12 @@
 												<span class="hit-ip"
 													>{hit.ip}</span
 												>
-												<span class="hit-sep">·</span>
-												<span class="hit-product"
-													>{hit.product}</span
-												>
+												{#if hit.product}
+													<span class="hit-sep">·</span>
+													<span class="hit-product"
+														>{hit.product}</span
+													>
+												{/if}
 											</button>
 										</li>
 									{/each}

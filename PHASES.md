@@ -149,7 +149,7 @@ Testable end-to-end against the Phase 2 sidecar + Phase 1 `FakeAtem` — no ATEM
 
 ---
 
-## Phase 4 — Svelte UI (`app/src/`) · 🔄 in progress
+## Phase 4 — Svelte UI (`app/src/`) · ✅ done
 
 The desktop interface. Talks only to the sidecar over IPC; carries all the visual and
 interaction design.
@@ -170,14 +170,15 @@ finished sidecar; runs in parallel with Phases 2 and 3.
 - Each user action maps to the right `UiCommand`: assign / unassign, identify, set
   brightness, set source IP. `NoticeEvent`s (e.g. firmware-outdated) are surfaced.
 
-**Status detail:** board primitives are built and assembled, driven through the real
-`boardState.ts` mapper — but against **mock** `AppState` (the `+page.svelte` dev strip),
-not live IPC. Outstanding before ✅: per-device **brightness** control (not yet present)
-and wiring the settings IP field to `setSource`. Live IPC wiring itself is Phase 5.
+**Status detail:** complete. The board renders through `boardState.ts` from the **live
+sidecar IPC stream** (`src/lib/ipc.svelte.ts`), with a mock `AppState` kept as a non-Tauri
+fallback so the `/preview` design workflow still works. Every action maps to its `UiCommand`
+(assign / unassign / identify / setBrightness / setSource), the settings ATEM **Scan** runs
+the real subnet sweep (`scanSources` → `sourceScan`), and `NoticeEvent`s surface in a banner.
 
 ---
 
-## Phase 5 — Shell & packaging · ⬜ not started
+## Phase 5 — Shell & packaging · 🔄 in progress (bridge done; packaging deferred)
 
 Wiring the islands into a shippable application.
 
@@ -189,10 +190,15 @@ Wiring the islands into a shippable application.
 **Depends on:** Phases 2 and 4.
 
 **Acceptance criteria**
-- The Tauri shell spawns the sidecar as a child, bridges its stdout → UI (`emit`/`listen`
-  on a `"sidecar"` channel) and `UiCommand` → its stdin (a `#[tauri::command]` the UI
-  `invoke`s), and ties the child's lifecycle to the window (`SIDECAR.md` "The Rust bridge").
-- A packaging strategy that ships the sidecar with the app. **⚠️ Open decision — needs
+- ✅ The Tauri shell spawns the sidecar as a child, bridges its stdout → UI (`emit`/`listen`
+  on a `"sidecar"` channel) and `UiCommand` → its stdin (the `send_to_sidecar`
+  `#[tauri::command]` the UI `invoke`s), and ties the child's lifecycle to the app
+  (killed on exit) — `lib.rs`, `SIDECAR.md` "The Rust bridge". The `console.log`/`info`/`debug`
+  → stderr redirect is in place (warning 2) so no library line corrupts the IPC stream.
+  Spawned from Rust via `tauri-plugin-shell`, so no frontend shell capability is needed; the
+  dev spawn runs `node` on the sidecar source (`// PACKAGING:` marks where it becomes
+  `externalBin` + `sidecar()`).
+- ⬜ A packaging strategy that ships the sidecar with the app. **⚠️ Open decision — needs
   research.** Single-binary (`pkg`/SEA) was **tested and found impractical** for
   `atem-connection` (it loads a native module and its socket worker *by file path*, which
   a bundle breaks — `ARCHITECTURE.md` warning 1). The documented alternative is shipping

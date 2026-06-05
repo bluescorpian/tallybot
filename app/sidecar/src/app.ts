@@ -23,7 +23,8 @@ import {
   computeEngine,
 } from "./engine.ts";
 import type { DeviceConfig } from "./store.ts";
-import type { SidecarEvent, UiCommand } from "./ipc.ts";
+import type { SidecarEvent, SourceScanHit, UiCommand } from "./ipc.ts";
+import { scanNetwork } from "./scanner.ts";
 import { type Color, DEFAULT_BRIGHTNESS, macTail } from "./protocol.ts";
 
 // ── Collaborator ports (the concrete classes satisfy these structurally) ─────────
@@ -100,6 +101,8 @@ export interface SidecarAppDeps {
   blinkClock?: BlinkClock;
   /** Override the blink half-cycle in ms (default {@link BLINK_INTERVAL_MS}). */
   blinkIntervalMs?: number;
+  /** The subnet sweep behind the settings "Scan" (injectable so tests don't open sockets). */
+  scanNetwork?: (log: (message: string) => void) => Promise<SourceScanHit[]>;
 }
 
 function colorsEqual(a: { color: Color; brightness: number }, b: { color: Color; brightness: number }): boolean {
@@ -119,6 +122,10 @@ export class SidecarApp {
   readonly #log: (message: string) => void;
   readonly #blinkClock: BlinkClock;
   readonly #blinkIntervalMs: number;
+  readonly #scanNetwork: (log: (message: string) => void) => Promise<SourceScanHit[]>;
+
+  /** True while a subnet sweep is in flight — a second "Scan" is ignored until it ends. */
+  #scanning = false;
 
   /** Connected devices → their reported protocol version (present only while online). */
   readonly #online = new Map<string, number>();
@@ -142,6 +149,7 @@ export class SidecarApp {
     this.#log = deps.log ?? ((message) => process.stderr.write(`${message}\n`));
     this.#blinkClock = deps.blinkClock ?? realBlinkClock;
     this.#blinkIntervalMs = deps.blinkIntervalMs ?? BLINK_INTERVAL_MS;
+    this.#scanNetwork = deps.scanNetwork ?? scanNetwork;
     this.#source = deps.atem.snapshot();
 
     this.#ipc.on("command", (command) => void this.#handleCommand(command));
@@ -211,6 +219,28 @@ export class SidecarApp {
         await this.#store.setSourceIp(command.ip);
         this.#atem.connect(command.ip); // change event publishes the new connecting state
         break;
+      case "scanSources":
+        void this.#scan();
+        break;
+    }
+  }
+
+  /**
+   * Run the subnet sweep behind the settings "Scan". Fire-and-forget: emits a
+   * `scanning` event up front and a `done` event with the results (or an `error`)
+   * when it finishes. Overlapping scans are dropped so a double-click can't run two.
+   */
+  async #scan(): Promise<void> {
+    if (this.#scanning) return;
+    this.#scanning = true;
+    this.#ipc.send({ type: "sourceScan", status: "scanning", found: [], error: null });
+    try {
+      const found = await this.#scanNetwork(this.#log);
+      this.#ipc.send({ type: "sourceScan", status: "done", found, error: null });
+    } catch (err) {
+      this.#ipc.send({ type: "sourceScan", status: "done", found: [], error: (err as Error).message });
+    } finally {
+      this.#scanning = false;
     }
   }
 
