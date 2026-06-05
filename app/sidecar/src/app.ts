@@ -164,6 +164,7 @@ export class SidecarApp {
 
     this.#server.on("deviceConnected", ({ mac, version }) => {
       this.#online.set(mac, version);
+      this.#lastColor.delete(mac); // reconnect may skip the disconnect event; always re-push
       this.#log(`device connected: ${mac} (protocol v${version})`);
       this.#sync();
     });
