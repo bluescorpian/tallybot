@@ -63,7 +63,7 @@ test("decodeServerMessage reads a SET_COLOR the sidecar encoded", () => {
   const wire = encodeSetColor(COLORS.preview, 64);
   assert.deepEqual(decodeServerMessage(unframe(wire)), {
     kind: "setColor",
-    color: { r: 255, g: 180, b: 0 },
+    color: { r: 0, g: 255, b: 0 },
     brightness: 64,
   });
 });

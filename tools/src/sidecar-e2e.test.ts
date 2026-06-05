@@ -210,10 +210,10 @@ test("two devices on different inputs show different colours", async () => {
       await Promise.all([once(live, "connected"), once(preview, "connected")]);
 
       const liveRed = nextColor(live, is(COLORS.live));
-      const previewYellow = nextColor(preview, is(COLORS.preview));
+      const previewGreen = nextColor(preview, is(COLORS.preview));
       stack.command({ type: "assignDevice", mac: "aa:bb:cc:dd:ee:03", inputId: 1 });
       stack.command({ type: "assignDevice", mac: "aa:bb:cc:dd:ee:04", inputId: 2 });
-      await Promise.all([liveRed, previewYellow]);
+      await Promise.all([liveRed, previewGreen]);
     } finally {
       live.close();
       preview.close();
