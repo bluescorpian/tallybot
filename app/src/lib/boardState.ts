@@ -53,6 +53,7 @@ function dockLight(d: Device): BoardLight {
 		mac: d.macTail,
 		inputId: null,
 		state: d.state === "offline" ? "offline" : "setup",
+		brightness: d.brightness,
 	};
 }
 
@@ -79,7 +80,7 @@ export function deviceToBoard(
 		const tally = inputs.find((i) => i.id === d.inputId)?.tally ?? "unknown";
 		state = tally === "unknown" ? "fault" : tally;
 	}
-	return { mac: d.macTail, inputId, state };
+	return { mac: d.macTail, inputId, state, brightness: d.brightness };
 }
 
 /**

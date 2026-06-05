@@ -122,6 +122,11 @@
 		// real path sends IDENTIFY; the board echoes with a local blink already
 		void mac;
 	}
+	function setBrightness(mac: string, brightness: number) {
+		// real path sends SET_COLOR with this byte (Phase 5: setBrightness command)
+		const d = devices.find((x) => x.mac === mac || x.macTail === mac);
+		if (d) d.brightness = brightness;
+	}
 	function setup() {
 		// the SourceChip "Set up your ATEM →" link — opens the settings drawer on
 		// Source (the first group). Real IPC stays Phase 5.
@@ -158,6 +163,7 @@
 			onassign={assign}
 			onunassign={unassign}
 			onflash={flash}
+			onbrightness={setBrightness}
 			onsetup={setup}
 		/>
 	</div>

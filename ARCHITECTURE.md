@@ -145,6 +145,19 @@ socket is closed.
 SET_COLOR sets the WS2812 LED (R/G/B and brightness each 0-255). IDENTIFY causes the
 device to flash briefly so the user can physically locate it during setup.
 
+**Brightness is a *perceptual* value, and the device linearizes it.** The byte is "how
+bright it should look," not a raw PWM/drive level — so equal steps in the byte (and in the
+UI's 0–10 levels, which map to it linearly: level 5 ≈ the default 128) should *appear*
+evenly spaced. WS2812 output and the human eye are both non-linear, so the **firmware**
+applies a **gamma correction** when driving the LED (FastLED ships this — a gamma LUT, or
+`dim8_video` / `applyGamma_video`, applied to the brightness before it reaches the strip).
+
+Owning the correction at the device — not the UI or sidecar — is deliberate: it keeps the
+wire byte device-independent (a future unit with a different LED corrects for *its own*
+response without a protocol or app change), avoids every client re-implementing the curve,
+and removes any risk of double-correction. The sidecar (`encodeSetColor`) therefore passes
+the byte through unmodified, and the UI's level↔byte mapping stays linear.
+
 ### Versioning
 
 HELLO carries the protocol version the device speaks. The server defines two constants:
@@ -171,7 +184,8 @@ eventually retired.
 | Disconnected | 0 | 0 | 255 | device | **Steady.** The device itself has lost the server |
 | Setup | 255 | 0 | 255 | server | Connected but not yet assigned to an input (`GOALS.md`; provisional) |
 
-Brightness default: 128. Configurable per device in the UI.
+Brightness default: 128 (≈ the perceptual midpoint, UI level 5). Configurable per device in
+the UI; it's a perceptual value the device gamma-corrects (see SET_COLOR above).
 
 ### Failure signalling
 

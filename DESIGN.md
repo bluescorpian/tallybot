@@ -109,6 +109,13 @@ Configuration of **lights and inputs happens here, on the canvas**, never in set
   (IDENTIFY) so the operator can find the physical unit. Housing it here is why a plain
   click opens the popover rather than assigning directly. Since lights have no names (just
   a MAC tail), flashing is the only reliable way to tell apart lights that share an input.
+- **Per-device brightness** sits in the same popover, between the MAC header and the
+  assign list (so it's reachable for docked lights too). A flat, rounded **amber bar**
+  (the warm `--brightness` token — its own "light level" axis, never a tally/signal
+  colour) that **animates smoothly** across **10 levels** (`0` = off → LED dark), flanked
+  by **−/+** buttons, with the exact level read out in the middle of the bar. The UI maps
+  the 0–10 level to the protocol's 0–255 brightness byte (`BrightnessBar.svelte`; level 5
+  ≈ the default byte 128).
 - Input **labels come from the source** (per `GOALS.md`), so they aren't edited here.
 
 ---
@@ -132,6 +139,7 @@ promote the group headers into an in-sheet nav rail** (additive, not a rewrite).
 |---|---|
 | Assigning lights to inputs | Defining the source (ATEM IP) |
 | Flash-to-identify | Global / app preferences |
+| Per-device brightness | — |
 | Live tally state | — |
 
 The **content and structure below are settled** and the grouped-card content is **built**
@@ -369,6 +377,7 @@ style, Lucide icons) on Tailwind v4; the canvas itself is bespoke. Tokens live i
 ### Interaction — can overlap with layout build
 
 - [x] **Assign / flash picker popover** — opens on plain click of any light; lists inputs with current marked; unassign + flash actions; shadcn-based
+- [x] **Per-device brightness bar** — built as `BrightnessBar.svelte` in the picker popover (between the MAC header and the assign list): a flat rounded amber bar animating across 10 levels (0 = off), −/+ buttons, level read out centred; maps 0–10 → the 0–255 protocol byte. Mock-wired (`onbrightness`); live `setBrightness` IPC lands with Phase 5.
 
 ### Independent — doesn't block layout
 

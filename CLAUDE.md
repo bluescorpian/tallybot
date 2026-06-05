@@ -135,8 +135,8 @@ outstanding worklist (what to build next, in order) is in [`TODO.md`](TODO.md). 
   adapter (real `atem-connection` behind an `AtemLike` seam), config store, IPC bridge,
   and the orchestrator that wires them — built and tested (`pnpm start` runs it).
 - **app/ UI** — **Phase 4 mostly done**: the board, settings drawer, and frameless
-  chrome are built, but driven by **mock data with stub handlers**. Remaining: per-device
-  brightness control, then the live IPC wiring (Phase 5).
+  chrome are built (including per-device brightness in the light popover), but driven by
+  **mock data with stub handlers**. Remaining: the live IPC wiring (Phase 5).
 - **app/ shell** — **Phase 5 not started**: `src-tauri/src/lib.rs` is still the
   `create-tauri-app` `greet` template. Needs the sidecar↔UI bridge (spawn + stdio↔IPC),
   config (shell capability, `externalBin`), and a packaging strategy (open decision —

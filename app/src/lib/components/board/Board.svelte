@@ -50,6 +50,8 @@
 		onassign?: (mac: string, inputId: string) => void;
 		onunassign?: (mac: string) => void;
 		onflash?: (mac: string) => void;
+		/** Set a device's LED brightness (protocol byte, 0–255). */
+		onbrightness?: (mac: string, value: number) => void;
 	}
 	let {
 		inputs,
@@ -63,6 +65,7 @@
 		onassign,
 		onunassign,
 		onflash,
+		onbrightness,
 		onsetup,
 	}: Props = $props();
 
@@ -328,9 +331,11 @@
 							state={displayState(light)}
 							inputs={offerInputs}
 							currentInputId={inp.id}
+							brightness={light.brightness}
 							onassign={(id) => onassign?.(light.mac, id)}
 							onunassign={() => onunassign?.(light.mac)}
 							onflash={() => flash(light.mac)}
+							onbrightness={(v) => onbrightness?.(light.mac, v)}
 						/>
 					</div>
 				{/each}
@@ -356,6 +361,7 @@
 				lightWidth={LT_W}
 				onassign={(mac, id) => onassign?.(mac, id)}
 				onflash={(mac) => flash(mac)}
+				onbrightness={(mac, v) => onbrightness?.(mac, v)}
 			/>
 		</div>
 	</div>

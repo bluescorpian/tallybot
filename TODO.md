@@ -14,11 +14,12 @@ app is ~90% built but disconnected.
 
 ## UI (Phase 4 tail)
 
-- [ ] **Brightness control** — add per-device brightness to the UI (natural home: the
-  `LightPicker` popover), emitting the existing `setBrightness` command. Needs an
-  `onbrightness` handler on `Board.svelte` (it has `onassign` / `onunassign` / `onflash`
-  only); today `brightness` exists just as a mock field. *This is the only Phase-4 feature
-  still missing — the settings IP field is already built, it just needs the bridge below.*
+- [x] **Brightness control** — built as `BrightnessBar.svelte` in the `LightPicker`
+  popover (flat amber bar, 10 levels, 0 = off, −/+ buttons, level centred; maps 0–10 ↔ the
+  0–255 byte). `brightness` is threaded through the board view-model and an `onbrightness`
+  handler runs the full chain `Board` → `BoardDock` → `LightPicker`, mock-wired in
+  `+page.svelte`. **Remaining for Phase 5:** swap the mock for the real `setBrightness`
+  command (already in `ipc.ts`) — see the bridge below; consider debouncing rapid ±/hold.
 
 ## App (Phase 5 — the sidecar↔UI bridge)
 
@@ -69,6 +70,11 @@ line-by-line reference for the device side of the wire.
 - [ ] **LED** — WS2812 via FastLED on **GPIO8**; render every server colour; IDENTIFY
   flash; device-local **steady blue** when the server is lost. Mind the firmware gotchas
   (GPIO8 addressable, never sleep, TX-power fallback — `CLAUDE.md`).
+  - **Gamma-correct the brightness byte.** It's a *perceptual* value (`ARCHITECTURE.md` →
+    SET_COLOR), so apply a gamma LUT (FastLED `dim8_video` / `applyGamma_video`, γ≈2.2–2.8)
+    to it before driving the strip — otherwise the UI's even 0–10 levels look bunched at
+    the dim end. This is the single home for the linearity correction; the sidecar and UI
+    deliberately leave the byte uncorrected.
 - [ ] **`firmware/README.md`** — the one new doc: build/flash/monitor on NixOS (PlatformIO
   via `nix run nixpkgs#platformio`) + the gotchas. Mirrors `app/sidecar/README.md`.
 

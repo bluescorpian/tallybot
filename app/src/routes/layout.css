@@ -34,6 +34,10 @@
 	--live: oklch(61.797% 0.24643 23.602);
 	--preview: oklch(77.167% 0.24613 144.546);
 	--idle: oklch(0.74 0.003 286);
+	/* Brightness/level — warm amber, the "light level" colour for the per-device
+	   brightness bar in the light picker. Not a tally/signal colour (those are
+	   red/green/grey + cyan), so it reads as its own "warmth/intensity" axis. */
+	--brightness: oklch(0.81 0.16 78);
 	/* ── Board canvas (bespoke PCB-schematic surface) ─────────────────────────
 	   Warm off-white "greige" + a tonal dot-grid. Single home for the board look:
 	   retune here. Board surfaces (lanes / dock / gate) derive from --board via
@@ -127,6 +131,7 @@
 	--color-live: var(--live);
 	--color-preview: var(--preview);
 	--color-idle: var(--idle);
+	--color-brightness: var(--brightness);
 	--color-input: var(--input);
 	--color-border: var(--border);
 	--color-destructive: var(--destructive);

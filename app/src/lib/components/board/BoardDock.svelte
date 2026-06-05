@@ -17,8 +17,17 @@
 		lightWidth: number;
 		onassign?: (mac: string, inputId: string) => void;
 		onflash?: (mac: string) => void;
+		/** Set a device's LED brightness (protocol byte, 0–255). */
+		onbrightness?: (mac: string, value: number) => void;
 	}
-	let { lights, pickerInputs, lightWidth, onassign, onflash }: Props = $props();
+	let {
+		lights,
+		pickerInputs,
+		lightWidth,
+		onassign,
+		onflash,
+		onbrightness,
+	}: Props = $props();
 </script>
 
 <div class="dock">
@@ -34,8 +43,10 @@
 					state={light.state}
 					inputs={pickerInputs}
 					currentInputId={null}
+					brightness={light.brightness}
 					onassign={(id) => onassign?.(light.mac, id)}
 					onflash={() => onflash?.(light.mac)}
+					onbrightness={(v) => onbrightness?.(light.mac, v)}
 				/>
 			</div>
 		{/each}

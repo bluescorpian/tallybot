@@ -30,6 +30,7 @@
 	import TallyLightPcb, {
 		type LightState,
 	} from "$lib/components/board/TallyLightPcb.svelte";
+	import BrightnessBar from "$lib/components/board/BrightnessBar.svelte";
 	import Zap from "@lucide/svelte/icons/zap";
 	import Check from "@lucide/svelte/icons/check";
 	import Unplug from "@lucide/svelte/icons/unplug";
@@ -41,9 +42,13 @@
 		inputs: PickerInput[];
 		/** Currently assigned input id, or null when the light is unassigned. */
 		currentInputId?: string | null;
+		/** This device's LED brightness as the protocol byte (0–255). */
+		brightness?: number;
 		onassign?: (inputId: string) => void;
 		onunassign?: () => void;
 		onflash?: () => void;
+		/** Emits the new brightness byte (0–255) when the level changes. */
+		onbrightness?: (value: number) => void;
 		open?: boolean;
 	}
 	let {
@@ -51,9 +56,11 @@
 		state = "idle",
 		inputs,
 		currentInputId = null,
+		brightness = 128,
 		onassign,
 		onunassign,
 		onflash,
+		onbrightness,
 		open = $bindable(false),
 	}: Props = $props();
 
@@ -97,6 +104,15 @@
 				<Zap class="size-3.5" />
 				Flash
 			</button>
+		</div>
+
+		<div class="bg-border h-px"></div>
+
+		<!-- Brightness: per-device LED level (0–10, 0 = off). Always shown — applies
+		     whether the light is assigned or sitting in the dock. -->
+		<div class="px-3 py-2.5">
+			<p class="text-muted-foreground pb-1.5 text-[0.68rem]">Brightness</p>
+			<BrightnessBar value={brightness} onchange={(v) => onbrightness?.(v)} />
 		</div>
 
 		<div class="bg-border h-px"></div>

@@ -29,4 +29,6 @@ export interface BoardLight {
 	inputId: string | null;
 	/** Resolved LED state (live / preview / idle / setup / offline / fault). */
 	state: LightState;
+	/** Per-device LED brightness as the protocol byte (0–255). */
+	brightness: number;
 }
