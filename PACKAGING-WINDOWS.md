@@ -8,6 +8,22 @@ native deps per-OS, so a Windows sidecar binary has to be built on Windows. The 
 recipe lives in [`ARCHITECTURE.md`](ARCHITECTURE.md) → "Packaging the Sidecar → Building a
 release"; this file is the Windows-specific walkthrough.
 
+## Quick path: the script
+
+[`scripts/win-build.ps1`](scripts/win-build.ps1) does everything below except cloning the
+repo — installs the prerequisites via winget, installs deps, builds, and produces the
+portable zip. After cloning, open an **Administrator** PowerShell at the repo root:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\win-build.ps1
+```
+
+If a freshly-installed tool isn't on PATH yet (it can take a new shell), open a new
+terminal and re-run with `-SkipSetup` to jump straight to the build. Use `-SkipSetup` any
+time the prerequisites are already installed. The rest of this document is the manual
+version of what the script does — read it if the script fails or you want to understand a
+step.
+
 ## 1. Prerequisites (one-time)
 
 Install these four:
