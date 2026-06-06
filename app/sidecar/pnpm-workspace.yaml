@@ -13,5 +13,9 @@
 # binary wouldn't exec under this box's stub nix-ld anyway, and `new Atem()` loads
 # freetype2 lazily, so leaving it unbuilt is harmless. This also silences pnpm's
 # ignored-build warning and records the decision.
+# esbuild ships its platform binary via an install script; pnpm blocks lifecycle
+# scripts by default, so allow it (the binary is a static Go executable — fine on
+# NixOS). Used by build.mjs to bundle the sidecar before pkg packs it.
 allowBuilds:
   "@julusian/freetype2": false
+  esbuild: true

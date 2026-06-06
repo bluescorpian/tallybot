@@ -45,28 +45,42 @@ fn spawn_sidecar(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error
         _ => cfg!(debug_assertions),
     };
 
-    // PACKAGING: in dev we run Node directly on the TypeScript source, resolved relative
-    // to this crate. The fake-ATEM entry lives with the other dev tools in `tools/`. A
-    // shippable build will instead bundle the production sidecar as `externalBin` and
-    // spawn it with `app.shell().sidecar("tallybot-sidecar")` — deferred for now.
-    let rel = if dev {
-        "../../tools/src/sidecar-fake-main.ts"
+    // Dev runs Node directly on the TypeScript source (fake-ATEM entry from `tools/`),
+    // resolved relative to this crate. A shippable build instead spawns the production
+    // sidecar packaged as an `externalBin` (a single self-contained binary built with
+    // `@yao-pkg/pkg` — see `binaries/` and `tauri.conf.json`). The pkg binary carries its
+    // own Node runtime + `atem-connection` (incl. the `threadedclass`/`atemSocketChild`
+    // worker), so no host Node is required on the user's machine.
+    let cmd = if dev {
+        let entry = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tools/src/sidecar-fake-main.ts")
+            .to_string_lossy()
+            .into_owned();
+        eprintln!("[sidecar] spawning FAKE (dev) ATEM entry: {entry}");
+        app.shell()
+            .command("node")
+            .args(["--experimental-strip-types", &entry])
     } else {
-        "../sidecar/src/main.ts"
+        eprintln!("[sidecar] spawning packaged sidecar binary (externalBin)");
+        // Per Tauri docs: pass just the filename, not the configured `externalBin` path.
+        // The CLI places `binaries/tallybot-sidecar-<triple>` next to the exe as
+        // `tallybot-sidecar`; the resolver looks there (`<exe_dir>/tallybot-sidecar`).
+        let mut cmd = app.shell().sidecar("tallybot-sidecar")?;
+        // Persist config under the OS app-data dir (`%APPDATA%\com.tallybot.app` on
+        // Windows, `~/.config/com.tallybot.app` on Linux, `~/Library/Application
+        // Support/com.tallybot.app` on macOS) rather than next to the executable, so a
+        // portable-zip update that replaces the app folder doesn't wipe the user's saved
+        // ATEM/device config. The sidecar reads `TALLYBOT_STATE_FILE` first
+        // (`sidecar/src/main.ts` → `stateFilePath()`); if we can't resolve the dir we
+        // simply don't set it and the sidecar falls back to its own XDG-style default.
+        match app.path().app_config_dir() {
+            Ok(dir) => cmd = cmd.env("TALLYBOT_STATE_FILE", dir.join("state.json")),
+            Err(e) => eprintln!("[sidecar] no app config dir ({e}); using sidecar default state path"),
+        }
+        cmd
     };
-    let entry = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join(rel)
-        .to_string_lossy()
-        .into_owned();
-    eprintln!(
-        "[sidecar] spawning {} ATEM entry: {entry}",
-        if dev { "FAKE (dev)" } else { "real" }
-    );
 
-    let (mut rx, child) = app
-        .shell()
-        .command("node")
-        .args(["--experimental-strip-types", &entry])
+    let (mut rx, child) = cmd
         // NVIDIA + Wayland workaround for the shipped binary (CLAUDE.md). Harmless
         // elsewhere; the dev shell already sets this for the parent.
         .env("WEBKIT_DISABLE_DMABUF_RENDERER", "1")

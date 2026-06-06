@@ -6,7 +6,8 @@ design rationale and the protocol live in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 Where things stand: the **firmware is done and hardware-verified** (Phase 3) and the
 **app now runs live** — `cargo tauri dev` drives the real UI against the real sidecar
-(Phase 4 ✅, Phase 5 bridge ✅). The only remaining v1 work is **packaging** (deferred).
+(Phase 4 ✅, Phase 5 bridge ✅). **Packaging is solved** (single-binary sidecar, wired into
+`cargo tauri build`); the only remaining v1 work is **building + testing it on Windows**.
 
 ## UI (Phase 4) — ✅ done
 
@@ -28,15 +29,20 @@ Where things stand: the **firmware is done and hardware-verified** (Phase 3) and
   exposes the `send_to_sidecar` `#[tauri::command]` (UI → stdin), and kills the child on
   exit. `console.log`/`info`/`debug` → stderr redirect added so no library line corrupts
   the NDJSON stream. The frontend store + senders live in `src/lib/ipc.svelte.ts`.
-  - *Spawned from Rust, so no frontend shell capability / `externalBin` was needed yet;
-    the dev spawn runs `node` on the sidecar source, marked `// PACKAGING:`.*
+  - *In dev, `lib.rs` spawns `node` on the sidecar source (fake-ATEM entry); a shippable
+    build spawns the packaged `externalBin` instead.*
 
-- [ ] **Research packaging.** Open decision: single-binary (`pkg`/SEA) was tested and found
-  impractical for `atem-connection`. Candidate is shipping JS + `node_modules` + a Node
-  runtime as `externalBin`, switching the `// PACKAGING:` dev spawn in `lib.rs` to
-  `app.shell().sidecar(...)`. **Does not block the hardware test** — `cargo tauri dev`
-  spawns `node` on the sidecar source; packaging only blocks a shippable build.
-  See `PHASES.md` Phase 5 and `ARCHITECTURE.md` "Packaging the Sidecar".
+- [x] **Packaging — single binary (proven).** Myth busted: `@yao-pkg/pkg` + the default
+  multithreaded `atem-connection` works — verified end-to-end (isolated repro, standalone
+  sidecar, and the real Tauri app), no freetype2 stub / no `atemSocketChild` copy / no
+  `disableMultithreaded`. `app/sidecar/build.mjs` (esbuild bundle with `atem-connection`
+  external → pkg) emits `src-tauri/binaries/tallybot-sidecar-<triple>`; `lib.rs` spawns it
+  via `app.shell().sidecar(...)` and points `TALLYBOT_STATE_FILE` at the OS app-data dir;
+  `beforeBuildCommand` runs the build. Binary is git-ignored. See `ARCHITECTURE.md`
+  "Packaging the Sidecar → Building a release".
+  - [ ] **Build + test on Windows.** Run the release recipe on a Windows box
+    (`pnpm -C sidecar install` → `cargo tauri build`), confirm the win-x64 sidecar binary
+    boots and connects, then zip exe + sidecar for the no-installer portable distribution.
 
 ## Firmware (Phase 3) — ✅ done
 
@@ -55,7 +61,9 @@ power bank → never sleeps.
 
 ---
 
-**What's left for v1.** Only **packaging** remains (deferred). Everything else is built:
-firmware is hardware-verified, and `cargo tauri dev` runs the real app driving the real
+**What's left for v1.** Packaging is **solved** (single-binary sidecar, proven and wired);
+the only packaging task left is **building + testing on Windows** and zipping the portable
+distribution. Everything else is built: firmware is hardware-verified, `cargo tauri dev`
+runs the real app driving the real sidecar, and `cargo tauri build` produces the packaged
 sidecar. Next milestone is the **full hardware test** — real app + real boards against the
-`FakeAtem`, then swap in the real ATEM — followed by packaging research for a shippable build.
+`FakeAtem`, then swap in the real ATEM.

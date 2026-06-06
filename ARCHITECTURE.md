@@ -317,58 +317,97 @@ networking libraries.
 
 ---
 
-## Packaging the Sidecar (Phase 5 warnings)
+## Packaging the Sidecar
 
-These were learned the hard way building `tools/atem-probe` (a standalone field-test
-tool that packages just the ATEM read-path). Tauri ships a sidecar differently — as an
-external binary beside the Rust shell — so the *mechanics* below won't all apply, but
-warnings 1–4 are properties of `atem-connection` itself and bite however the sidecar is
-shipped. Decide the packaging shape deliberately; don't discover these on a release.
+**Decision (Phase 5, proven empirically):** the sidecar ships as a single
+self-contained binary built with [`@yao-pkg/pkg`](https://github.com/yao-pkg/pkg)
+(the maintained vercel/pkg fork) and spawned by the Rust shell as a Tauri
+`externalBin`. The build is `app/sidecar/build.mjs` (run by `beforeBuildCommand`):
+esbuild bundles `src/main.ts` to one CJS file with **`atem-connection` left
+external**, then pkg packs that bundle + the Node runtime + the still-on-disk
+`atem-connection` (worker included) into one executable named for the Rust target
+triple. No host Node is required on the user's machine.
+
+This contradicts the earlier assumption that single-binary was "impractical" — it was
+verified three ways (isolated repro, standalone sidecar, and the real Tauri app), and
+the multithreaded `threadedClass`/`atemSocketChild` worker does live UDP I/O from
+inside pkg's `/snapshot/` FS. **None of the historical workarounds were needed**: no
+`@julusian/freetype2` stub, no manual `atemSocketChild.js` copy, no
+`disableMultithreaded`. See the corrected warnings below for why each turned out not
+to bite.
+
+### The warnings (and how each actually played out)
+
+These were learned building `tools/atem-probe` (a standalone field-test tool that
+packages just the ATEM read-path) and are properties of `atem-connection` itself, so
+they're worth keeping — but the single-binary verdicts have been corrected against the
+proven recipe above.
 
 1. **`atem-connection` assumes its files live on disk in `node_modules`.** It loads a
    native module *and* loads its UDP-socket worker (`atemSocketChild`) by file *path* at
    runtime (via `threadedclass`) — neither survives being collapsed into one bundled
-   file. Two shapes work:
-   - **Ship JS + `node_modules` + a Node runtime** (files on disk → the library works
-     unmodified). Simplest; this is what the probe does, and what Phase 5 should prefer
-     unless there's a reason not to.
-   - **Compile to a single binary** (`pkg`/SEA). Then you must: stub out
-     `@julusian/freetype2` (native, used only for multiviewer-label rendering, which we
-     never call), supply `atemSocketChild.js` as a real file at the path `threadedclass`
-     resolves, *and* set `disableMultithreaded`. All three are proven in the probe's git
-     history — but it's a lot of yak-shaving for marginal benefit.
+   file. The fix is simply to **not bundle the library**: keep `atem-connection`
+   external in the esbuild step so its files stay on disk, and let pkg trace them into
+   the snapshot. Verified: `atemSocketChild.js` ends up embedded in the binary and the
+   worker runs. (The probe's alternative — ship JS + `node_modules` + a Node runtime —
+   also works, but the single binary is simpler to distribute and was chosen.)
 
-2. **Library code writes to `stdout` — which the IPC bridge owns. (Latent bug today.)**
-   `threadedclass` logs via `console.log`, i.e. to **stdout** (verified with the probe).
-   The sidecar's NDJSON IPC also writes to `process.stdout` (`ipc-bridge.ts`), and the
-   "all logging goes to stderr" rule only governs *our* code, not dependencies. One stray
-   library line will corrupt the IPC framing the UI parses. **Fix:** at sidecar startup,
-   before constructing `Atem`, redirect `console.log`/`info`/`debug` to stderr (or to the
-   IPC log channel). This applies however `Atem` is configured.
+2. **Library code writes to `stdout` — which the IPC bridge owns. (Fixed.)**
+   `threadedclass` logs via `console.log`/`info`/`debug`. The sidecar's NDJSON IPC also
+   writes to `process.stdout` (`ipc-bridge.ts`), and one stray library line would corrupt
+   the framing the UI parses. **Fixed in `sidecar/src/main.ts`:** before any `Atem` is
+   constructed, `console.log`/`info`/`debug` are redirected to stderr (`console.warn`/
+   `error` already go there). Verified in the packaged binary — all library logging lands
+   on stderr, the NDJSON stream stays clean.
 
 3. **The default `new Atem()` is multithreaded — it runs the socket off the main thread**
-   (a `worker_threads` worker, or a forked child on old Node). Production currently uses
-   the default, which loads `atemSocketChild` **by path** at runtime via `threadedclass`.
-   In a packed binary or a restricted sandbox that spawn/require can fail. Single-threaded
-   (`new Atem({ disableMultithreaded: true })`) is simpler to package, observe, and keep
-   from leaking child stdout into the IPC stream (see #2) — but it trades away the
-   library's event-loop isolation and freeze-watchdog, so it's a deliberate choice, **not
-   yet made**. The full trade-off and the open decision live in
-   [`ATEM-CONNECTION-NOTES.md`](ATEM-CONNECTION-NOTES.md) (§1), alongside the library's
-   other runtime sharp edges (lifecycle/leak-safety, stdout logging).
+   (a `worker_threads` worker), loading `atemSocketChild` **by path** at runtime via
+   `threadedclass`. The concern was that a packed binary or restricted sandbox would break
+   that spawn/require. **It doesn't:** the default multithreaded `Atem` packs cleanly and
+   does live UDP I/O from inside the pkg snapshot, so production keeps the default and its
+   event-loop isolation + freeze-watchdog. `disableMultithreaded` was considered and
+   proved **unnecessary**. The library's other runtime sharp edges (lifecycle/leak-safety)
+   are in [`ATEM-CONNECTION-NOTES.md`](ATEM-CONNECTION-NOTES.md) (§1).
 
 4. **Native modules are per-platform *and* per-ABI.** `@julusian/freetype2` ships prebuilt
-   binaries keyed by `platform-arch-napiVersion`. A cross-platform release (win/mac/linux
-   × x64/arm64) needs the matching prebuild for each target. freetype2 happens to bundle
-   *all* of them in its npm tarball — which is why a `node_modules` installed on Linux
-   still runs on Windows (the probe's zip relies on this) — but don't assume every native
-   dep is so generous; per-target installs/builds may be required.
+   binaries keyed by `platform-arch-napiVersion`. Because `atem-connection` is left
+   external, pkg traces freetype2's `node_modules` into the snapshot — and freetype2
+   bundles prebuilds for *all* platforms in its npm tarball, so a tree installed on Linux
+   still carries the Windows/macOS binaries. (We never call freetype2 — multiviewer-label
+   rendering only — so even a missing prebuild wouldn't matter, but they're present.) Don't
+   assume every native dep is so generous; **build per target on its own OS** to be safe.
+   `build.mjs` names output for the host triple, so the Windows binary is built on Windows.
 
-5. **Running TypeScript at runtime is a Node-version dependency.** The sidecar runs `.ts`
-   directly via Node's type stripping (`--experimental-strip-types`, on by default in
-   newer Node). For a shipped product, pin/bundle the Node version or precompile to `.js`
-   rather than trusting the host's Node — but note precompiling reintroduces warning 1's
-   bundling caveats unless `node_modules` ships alongside.
+5. **Running TypeScript at runtime is a Node-version dependency. (Resolved for the
+   binary.)** Standalone/dev runs `.ts` directly via Node's type stripping
+   (`--experimental-strip-types`). The shipped binary sidesteps this entirely: esbuild
+   compiles the TS to JS and pkg embeds a pinned Node runtime, so there's no dependency on
+   the host's Node at all.
+
+### Building a release
+
+The sidecar binary is **per-OS** — build it on the platform you're shipping to (pkg
+can cross-compile the Node runtime, but native deps and bytecode are safest built
+natively). On a clean checkout:
+
+```bash
+cd app/sidecar && pnpm install        # once: installs esbuild + @yao-pkg/pkg
+cd app && pnpm install                # once: frontend deps
+cd app && cargo tauri build           # beforeBuildCommand builds the sidecar binary,
+                                       # then Tauri bundles it as the externalBin
+```
+
+`beforeBuildCommand` runs `pnpm -C sidecar run build:binary` (→ `build.mjs`), which
+emits `app/src-tauri/binaries/tallybot-sidecar-<triple>[.exe]` for the host triple.
+That file is a **git-ignored build artifact** (~90 MB) — never commit it. For the
+no-installer portable distribution we want, take the built executable plus its
+sidecar binary from `target/release/` (skip the `.msi`/`.deb` bundles) and zip them;
+the user unzips and runs in place, and config survives updates because the sidecar
+writes to the OS app-data dir (`TALLYBOT_STATE_FILE`, set by the Rust shell).
+
+> NixOS note: pkg can't exec its fetched base-node to generate V8 bytecode, so
+> `build.mjs` detects `/etc/NIXOS` and passes `--fallback-to-source` (ships plain JS —
+> correct, just larger). Windows/macOS/other-Linux builds produce real bytecode.
 
 ---
 

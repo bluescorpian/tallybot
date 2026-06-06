@@ -178,7 +178,7 @@ the real subnet sweep (`scanSources` → `sourceScan`), and `NoticeEvent`s surfa
 
 ---
 
-## Phase 5 — Shell & packaging · 🔄 in progress (bridge done; packaging deferred)
+## Phase 5 — Shell & packaging · 🔄 in progress (bridge done; packaging proven, Windows test pending)
 
 Wiring the islands into a shippable application.
 
@@ -196,18 +196,21 @@ Wiring the islands into a shippable application.
   (killed on exit) — `lib.rs`, `SIDECAR.md` "The Rust bridge". The `console.log`/`info`/`debug`
   → stderr redirect is in place (warning 2) so no library line corrupts the IPC stream.
   Spawned from Rust via `tauri-plugin-shell`, so no frontend shell capability is needed; the
-  dev spawn runs `node` on the sidecar source (`// PACKAGING:` marks where it becomes
-  `externalBin` + `sidecar()`).
-- ⬜ A packaging strategy that ships the sidecar with the app. **⚠️ Open decision — needs
-  research.** Single-binary (`pkg`/SEA) was **tested and found impractical** for
-  `atem-connection` (it loads a native module and its socket worker *by file path*, which
-  a bundle breaks — `ARCHITECTURE.md` warning 1). The documented alternative is shipping
-  JS + `node_modules` + a Node runtime as `externalBin`, but the final approach is not yet
-  chosen. Whatever the shape, the `atem-connection` warnings must be handled:
-  `console.log`/`info`/`debug` redirected to stderr **before** constructing `Atem` so no
-  library line corrupts the NDJSON IPC stream (warning 2); the
-  multithreaded-vs-`disableMultithreaded` choice made deliberately (warning 3);
-  per-platform/ABI native deps and the runtime Node version pinned (warnings 4–5).
+  dev spawn runs `node` on the sidecar source, while a shippable build spawns the packaged
+  `externalBin` via `app.shell().sidecar(...)` (the `else` branch in `spawn_sidecar`).
+- ✅ A packaging strategy that ships the sidecar with the app — **single self-contained
+  binary**, decided and proven. Single-binary (`@yao-pkg/pkg`) was *re-tested* and found to
+  work after all: esbuild bundles the sidecar with `atem-connection` left **external** (so
+  its socket worker stays a real file pkg can trace into the snapshot — `ARCHITECTURE.md`
+  warning 1), then pkg packs it into `binaries/tallybot-sidecar-<triple>`, spawned via
+  `app.shell().sidecar(...)`. Verified end-to-end with the default **multithreaded**
+  `atem-connection` — no freetype2 stub, no `atemSocketChild` copy, no `disableMultithreaded`
+  (warning 3 resolved). The `console.log`/`info`/`debug` → stderr redirect is in place
+  (warning 2); native deps ship per-tarball and the Node runtime is pinned by pkg (warnings
+  4–5). `build.mjs` runs from `beforeBuildCommand`; the binary is a git-ignored artifact.
+- ⬜ **Build + test on Windows**, then zip exe + sidecar for the no-installer portable
+  distribution. (The recipe is in `ARCHITECTURE.md` "Building a release"; only the Windows
+  run itself is outstanding.)
 - The shipped binary sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` (NVIDIA + Wayland workaround,
   `CLAUDE.md`).
 - End-to-end: a built, packaged app launches, spawns its sidecar, shows live state, and
