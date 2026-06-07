@@ -101,7 +101,12 @@ PROVISIONING → DISCOVERING → CONNECTING → CONNECTED → BACKOFF → (redis
 - **Provisioning** — `WiFiManager.autoConnect` tries saved NVS credentials, else raises
   the `TallyLight-XXXXXX` SoftAP captive portal. Blocking is fine here (the device isn't
   on tally duty yet); the AP re-arms only on a later sustained WiFi loss, not while
-  connected.
+  connected. **To switch networks deliberately, hold the on-board BOOT button (~3 s)** at
+  any time — the LED turns magenta and the portal reopens, without erasing the current
+  creds (enter a new network to overwrite, or close the portal to keep the old one). Join
+  the SoftAP with a phone and the landing page shows a **diagnostics panel** (last WiFi
+  failure reason, SSID tried, stored-password length, RSSI, MAC) — a serial monitor over
+  WiFi when no USB is attached.
 - **Discovering** — broadcasts `TALLY_FIND` to `255.255.255.255:7001` every 2 s. The UDP
   socket is bound to 7001 so it catches both the server's unicast reply and its periodic
   broadcast; `TALLY_HERE:<port>` yields the server IP and TCP port.

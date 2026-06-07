@@ -49,13 +49,18 @@
 #define COLOR_LIVE 255, 0, 0          // input is on Program output
 #define COLOR_PREVIEW 0, 255, 0       // input is on Preview
 #define COLOR_IDLE 30, 30, 30         // not selected, source trustworthy (dim white)
-#define COLOR_DISCONNECTED 0, 0, 255  // device-local steady blue: lost the server
-#define COLOR_SETUP 255, 0, 255       // magenta: shown locally while provisioning
+// Device-local steady blue. As of the LED.md palette its *local* meaning narrows to a single
+// case: "WiFi is fine but we lost the TallyBot server" (LED.md state 10 — go check the PC).
+// The other bring-up phases now use their own indicator colours (amber/cyan/white) defined in
+// main.cpp, so blue no longer doubles for "connecting / discovering / WiFi-down".
+#define COLOR_DISCONNECTED 0, 0, 255
+#define COLOR_SETUP 255, 0, 255       // magenta: shown locally while provisioning (captive portal)
 
 #define DEFAULT_BRIGHTNESS 128  // server's default; configurable per device in the UI
-// Device-owned blue/magenta drive level. A *raw* level, not a perceptual byte: only the
-// server's SET_COLOR brightness is gamma-corrected (main.cpp); these indicators aren't.
-#define LOCAL_BRIGHTNESS 64
+// Device-owned indicator drive level. A *raw* level, not a perceptual byte: only the server's
+// SET_COLOR brightness is gamma-corrected (main.cpp); these indicators aren't. ~10% of full so
+// the bring-up colours (and the boot self-test) don't blind the operator at close range.
+#define LOCAL_BRIGHTNESS 26
 
 // ── Discovery (UDP, text datagrams) ──────────────────────────────────────────
 #define DISCOVERY_REQUEST "TALLY_FIND"            // device → broadcast
