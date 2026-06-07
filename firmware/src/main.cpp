@@ -78,8 +78,13 @@
 #define FAST_BLINK_MS 200      // FAST_BLINK half-period (lost WiFi)
 #define BOOT_TEST_STEP_MS 250  // each colour in the power-on self-test
 
-// Firmware build stamp, shown on the SoftAP diagnostics panel.
-#define FW_BUILD __DATE__ " " __TIME__
+// Firmware build stamp, shown on the SoftAP diagnostics panel. The real wall-clock build time
+// is injected by inject_build_time.py (the toolchain pins __DATE__/__TIME__ to 1980 — see that
+// script); fall back to the compiler macros if the script somehow didn't run.
+#ifndef BUILD_TIMESTAMP
+#define BUILD_TIMESTAMP __DATE__ " " __TIME__
+#endif
+#define FW_BUILD BUILD_TIMESTAMP
 
 // ── Top-level state machine ──────────────────────────────────────────────────
 enum State {
@@ -128,12 +133,24 @@ static Preferences prefs;  // NVS: TX-power policy + last-failure diagnostics ("
 // Last WiFi-disconnect diagnostics — surfaced on the SoftAP portal (the "serial monitor over
 // the phone") and persisted so the failure that triggered the portal survives the reboot.
 struct WifiDiag {
-  uint16_t lastReason = 0;    // wifi_err_reason_t numeric (0 = none recorded)
+  uint16_t lastReason = 0;    // most-diagnostic wifi_err_reason_t (0 = none) — see onWifiEvent
+  uint16_t rawReason = 0;     // last *raw* disconnect reason, unfiltered — a sanity check vs lastReason
   int8_t lastRssi = 0;        // RSSI reported with the disconnect
   char lastSsid[33] = {0};    // SSID the device was trying
+  bool associated = false;    // did we reach association (STA_CONNECTED) before this failure?
   bool valid = false;
 };
 static WifiDiag diag;
+
+// Did we associate (4-way handshake done → password definitely correct) in the connect episode
+// that's currently failing? Set on STA_CONNECTED, cleared when we record the next disconnect, so
+// each attempt is judged on its own. It splits the verdict: associated-then-dropped is a genuine
+// AP kick (signal/policy), never-associated is an auth/range/band problem.
+static bool associatedSinceConnect = false;
+// Has the current connect episode recorded any disconnect yet? The first event of a fresh episode
+// always replaces stale data (possibly from a previous boot/network); later events in the same
+// episode use the "keep the most diagnostic reason" rule so our own teardown can't clobber it.
+static bool attemptHasDiag = false;
 static String diagHtml;  // built HTML for the portal panel; must outlive wm (it keeps the ptr)
 
 // Timers (all rollover-safe millis() deltas)
@@ -298,25 +315,40 @@ static void applyTxPower(uint8_t policy) {
   WiFi.setTxPower(policy == TXPOL_LOW ? WIFI_POWER_8_5dBm : WIFI_POWER_19_5dBm);
 }
 
-// Did we actually reach the AP (but fail to associate/authenticate)? That's the only case the
-// ESP32-C3 low-TX-power antenna workaround can help, so it's the only case worth a second,
-// slower pass at low power. NO_AP_FOUND (201) / beacon timeout (200) / no event (0) mean the AP
-// wasn't on the air for us — lower power can't conjure it, so skip the retry and go to the
-// portal. This keeps time-to-portal short without ever skipping a connection low power'd land.
-static bool reasonSawAp(uint16_t r) { return r != 0 && r != 201 && r != 200; }
+// Did we hit the narrow case the ESP32-C3 low-TX-power antenna workaround can actually help —
+// the AP is on the air and authenticates us, but a full-power association glitches? That's the
+// only case worth a second, slower pass at low power. We skip the retry when:
+//   * 0 / 201 (NO_AP_FOUND) / 200 (beacon timeout) — the AP wasn't reachable; lower power can't
+//     conjure it.
+//   * 3 (AUTH_LEAVE) / 8 (ASSOC_LEAVE) — a deauth/kick (or our own teardown disconnect). If the
+//     AP is kicking a weak client (min-RSSI / band-steering), dropping to 8.5dBm makes our uplink
+//     *weaker* and the kick more likely — exactly the wrong move. Stay at full power → portal.
+// This keeps time-to-portal short without skipping a connection low power would actually land.
+static bool reasonSawAp(uint16_t r) {
+  return r != 0 && r != 201 && r != 200 && r != 3 && r != 8;
+}
 
 // Persist the latest failure (only when the reason changes — bounds NVS wear during a retry
 // storm) so the SoftAP panel can show it after the portal-triggering reboot.
 static void saveDiag() {
-  if (prefs.getUShort("dr", 0xFFFF) == diag.lastReason) return;
+  // Skip the write only when nothing meaningful changed (bounds NVS wear during a retry storm).
+  if (prefs.getUShort("dr", 0xFFFF) == diag.lastReason &&
+      prefs.getUShort("drr", 0xFFFF) == diag.rawReason &&
+      prefs.getUChar("dassoc", 0xFF) == (uint8_t)diag.associated) {
+    return;
+  }
   prefs.putUShort("dr", diag.lastReason);
+  prefs.putUShort("drr", diag.rawReason);
   prefs.putChar("drssi", diag.lastRssi);
   prefs.putString("dssid", diag.lastSsid);
+  prefs.putUChar("dassoc", diag.associated ? 1 : 0);
 }
 
 static void loadDiag() {
   diag.lastReason = prefs.getUShort("dr", 0);
+  diag.rawReason = prefs.getUShort("drr", 0);
   diag.lastRssi = prefs.getChar("drssi", 0);
+  diag.associated = prefs.getUChar("dassoc", 0) != 0;
   if (prefs.isKey("dssid")) {  // isKey first — getString on a missing key logs a scary error
     String s = prefs.getString("dssid", "");
     strncpy(diag.lastSsid, s.c_str(), sizeof(diag.lastSsid) - 1);
@@ -325,19 +357,69 @@ static void loadDiag() {
   diag.valid = (diag.lastReason != 0) || diag.lastSsid[0] != '\0';
 }
 
-// WiFi STA disconnect event — the only place the granular failure reason is exposed (the
-// library surfaces only coarse status). Capture it for the portal panel and the serial log.
+// Association succeeded (4-way handshake done, before DHCP). Reaching here proves the password
+// is correct and the signal was good enough to join — so a later disconnect is a genuine kick,
+// not a credential/range problem. Fires before STA_GOT_IP.
+static void onWifiConnected(WiFiEvent_t, WiFiEventInfo_t) { associatedSinceConnect = true; }
+
+// WiFi STA disconnect event — the only place the granular failure reason is exposed (the library
+// surfaces only coarse status). The trap this guards against: reason 8 (ASSOC_LEAVE) is emitted
+// both when the AP kicks us AND when *we* disconnect — and our own clean-connect + portal-teardown
+// each fire a reason-8 event that would otherwise clobber the real failure (e.g. wrong password =
+// 15) recorded just before it. So we keep the *most diagnostic* reason: a substantive code always
+// wins; a "leave" code (3/8) is only trusted if we'd actually associated (→ a real post-assoc kick)
+// or if it's the first/only thing we've seen this episode.
 static void onWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
-  diag.lastReason = info.wifi_sta_disconnected.reason;
-  diag.lastRssi = info.wifi_sta_disconnected.rssi;
-  uint8_t n = info.wifi_sta_disconnected.ssid_len;
-  if (n >= sizeof(diag.lastSsid)) n = sizeof(diag.lastSsid) - 1;
-  memcpy(diag.lastSsid, info.wifi_sta_disconnected.ssid, n);
-  diag.lastSsid[n] = '\0';
+  uint16_t reason = info.wifi_sta_disconnected.reason;
+  diag.rawReason = reason;  // always: the unfiltered last code, as a sanity check
+
+  bool firstThisAttempt = !attemptHasDiag;  // first event of a fresh episode replaces stale data
+  attemptHasDiag = true;
+  bool leaveCode = (reason == 3 || reason == 8);  // AUTH_LEAVE / ASSOC_LEAVE — often our own disconnect()
+  if (firstThisAttempt || !leaveCode || associatedSinceConnect || diag.lastReason == 0) {
+    diag.lastReason = reason;
+    diag.associated = associatedSinceConnect;
+    diag.lastRssi = info.wifi_sta_disconnected.rssi;
+    uint8_t n = info.wifi_sta_disconnected.ssid_len;
+    if (n >= sizeof(diag.lastSsid)) n = sizeof(diag.lastSsid) - 1;
+    memcpy(diag.lastSsid, info.wifi_sta_disconnected.ssid, n);
+    diag.lastSsid[n] = '\0';
+  }
   diag.valid = true;
+  associatedSinceConnect = false;  // this attempt is over; the next must re-associate to count
   saveDiag();
-  Serial.printf("WiFi disconnect: reason=%u (%s) ssid=\"%s\" rssi=%d\n", diag.lastReason,
-                reasonToStr(diag.lastReason), diag.lastSsid, diag.lastRssi);
+  Serial.printf("WiFi disconnect: raw=%u (%s) kept=%u assoc=%d ssid=\"%s\" rssi=%d\n", reason,
+                reasonToStr(reason), diag.lastReason, diag.associated, diag.lastSsid, diag.lastRssi);
+}
+
+// A one-line plain-English read of the last failure — the "what do I actually do" line. Turns on
+// whether we *associated* (password proven correct, signal adequate) before failing, which the
+// raw reason code alone can't tell you.
+static const char* diagVerdict() {
+  if (!diag.valid) return "No failure recorded yet.";
+  if (diag.associated) {
+    // We joined, then got dropped — definitely not the password. Almost always signal/policy.
+    return "Joined, then the AP dropped us — NOT a password problem. Likely a weak-signal "
+           "(minimum-RSSI) cutoff or band-steering on a managed AP. Get the device closer to an "
+           "access point, or use a dedicated 2.4GHz SSID.";
+  }
+  switch (diag.lastReason) {
+    case 2:
+    case 15:
+    case 202:
+    case 204:
+      return "Failed before joining, on auth/handshake — wrong password or a WPA-mode mismatch.";
+    case 200:
+    case 201:
+      return "Couldn't reach the AP — out of range, a 5GHz-only SSID (the C3 is 2.4GHz only), or "
+             "an SSID typo.";
+    case 3:
+    case 8:
+      return "Refused before joining — the AP turned us away (MAC filter, minimum-signal, or "
+             "band-steering).";
+    default:
+      return "Failed before joining — see the reason code.";
+  }
 }
 
 // Build the diagnostics panel injected into the captive-portal landing page. Secret-safe: it
@@ -351,10 +433,18 @@ static void buildDiagHtml() {
 
   diagHtml = "<div class='tdiag'><h3>TallyBot diagnostics</h3>";
   if (diag.valid) {
-    diagHtml += "<b>Last WiFi failure:</b> ";
+    diagHtml += "<b>Diagnosis:</b> ";
+    diagHtml += diagVerdict();
+    diagHtml += "<br><b>Associated before failing:</b> ";
+    diagHtml += (diag.associated ? "yes (password OK)" : "no");
+    diagHtml += "<br><b>Last WiFi failure:</b> ";
     diagHtml += reasonToStr(diag.lastReason);
     diagHtml += " (code ";
     diagHtml += diag.lastReason;
+    if (diag.rawReason != diag.lastReason) {  // our own teardown overwrote nothing — show both
+      diagHtml += ", raw ";
+      diagHtml += diag.rawReason;
+    }
     diagHtml += ")<br>";
     diagHtml += "<b>SSID tried:</b> ";
     diagHtml += String(diag.lastSsid);
@@ -423,6 +513,7 @@ static void enterDiscovering(unsigned long now) {
 // here — with no network the device can't do anything else anyway.
 static bool connectWithTxPolicy() {
   uint8_t pol = loadTxPolicy();
+  attemptHasDiag = false;  // fresh episode: the first disconnect event replaces any stale diag
 
   // Manage the portal ourselves so we get a genuine low-power retry *before* falling back to
   // provisioning, rather than WiFiManager raising the portal on the first failure.
@@ -582,7 +673,9 @@ void setup() {
                 cerr == ESP_OK ? "ok" : esp_err_to_name(cerr));
 
   // Granular disconnect reasons reach us only via the event (the library exposes coarse status).
+  // STA_CONNECTED tells us we associated — the key signal for the "kicked vs never-joined" verdict.
   WiFi.onEvent(onWifiEvent, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+  WiFi.onEvent(onWifiConnected, ARDUINO_EVENT_WIFI_STA_CONNECTED);
 
   // Provision: connect with saved creds (full power, low fallback), or raise the SoftAP captive
   // portal. Creds persist to NVS, so the portal only opens on first boot or when creds fail.

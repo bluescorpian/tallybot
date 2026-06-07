@@ -33,6 +33,41 @@ Still **out of scope / needs the sidecar** (tracked below): bring-your-own-AP us
 the in-app logs panel, the device→server diagnostic frame, and the server-driven LED states
 (live/preview/idle/fault + the server `SETUP_COLOR` magenta→white change).
 
+### Venue test #2 result (2026-06-07) — the diagnostics panel paid off
+
+Took the hardened firmware back to the venue. It **still didn't join**, but the SoftAP
+diagnostics panel gave us the failure for the first time. Read off the phone:
+
+- **SSID tried / stored:** `ImpetusGemeente` (a normal WPA2-PSK network — confirmed by the user).
+- **Stored password length: 12 chars** → **the `#`-truncation theory (Issue 1, cause 4) is dead.**
+  The creds reached `WiFi.begin()` intact; the password was never the problem.
+- **Reason: code 8 (`ASSOC_LEAVE`), RSSI −79 dBm.**
+
+**The catch — and the follow-up fix.** Reason 8 is emitted *both* when the AP kicks us **and
+when we disconnect ourselves**, and our own `setCleanConnect(true)` + portal-teardown each fire
+a reason-8 event that **overwrote the real failure** before it persisted. So "code 8" was
+partly our own footprints — we couldn't tell a genuine AP kick from a masked auth/range error.
+RSSI −79 is borderline: on a managed AP it's right at a typical **minimum-RSSI cutoff**, and
+band-steering (push to 5GHz, which the C3 can't do) also produces a real reason-8 deauth.
+
+Firmware hardening landed in response (bench-built, `pio run` clean), so the **next** trip is
+conclusive:
+- **"Associated?" tracking** (subscribe to `STA_CONNECTED`): the panel now states a plain-English
+  **verdict** and whether we joined before failing. *Joined-then-dropped* = a genuine kick
+  (signal/policy, never the password); *never-joined* = an auth/range/band problem.
+- **Keep the most-diagnostic reason:** a substantive code wins; a "leave" code (3/8) only counts
+  if we'd actually associated or it's all we saw — so our own teardown can't clobber the truth.
+  The raw last code is still shown alongside as a sanity check.
+- **No low-power retry on a deauth/leave (3/8):** dropping to 8.5 dBm only worsens a weak-uplink
+  / min-RSSI kick. (`reasonSawAp` now excludes 3/8.)
+- **Real build stamp:** the panel showed "Jan 1 1980" (the toolchain pins `__DATE__`/`__TIME__`);
+  a pre-build script now injects the wall-clock UTC build time so we can confirm what's flashed.
+
+**Most likely remaining cause:** a managed venue AP turning a weak (−79 dBm) 2.4GHz client away
+(min-RSSI / band-steering). If the next panel reads *joined-then-dropped*, the firmware can't
+force the AP to accept us — the fix is operational: get a device closer to an AP, or run a
+dedicated 2.4GHz SSID (Issue 1.5, **bring your own AP**).
+
 ---
 
 ## Issue 1 — ESP32-C3 sees the WiFi but won't join (then drops back to SoftAP)
@@ -179,11 +214,13 @@ layers are needed:
 
 ### Plan / action items
 
-- [ ] **Capture WiFi disconnect reason codes** in firmware and classify them
-  (auth-fail / not-found / DHCP / timeout).
-- [~] **Diagnostics page on the SoftAP captive portal**: last failure reason (from NVS),
-  SSID tried, RSSI, FW version, MAC — the "serial monitor over the portal."
-- [ ] **Persist last-boot diagnostics to NVS** so a failure is readable after the reboot.
+- [x] **Capture WiFi disconnect reason codes** in firmware and classify them
+  (auth-fail / not-found / DHCP / timeout) — plus an **"associated?" verdict** and "keep the
+  most-diagnostic reason" so our own teardown disconnect can't mask the real failure (test #2).
+- [x] **Diagnostics page on the SoftAP captive portal**: plain-English verdict, last failure
+  reason (+ raw code), SSID tried, RSSI, stored-password length, FW build, MAC — "serial monitor
+  over the portal."
+- [x] **Persist last-boot diagnostics to NVS** so a failure is readable after the reboot.
 - [~] **In-app logs panel** fed by the sidecar's existing NDJSON stream.
 - [~] **Device→server diagnostic frame** (additive protocol message) so connected devices
   log into the app; carry RSSI/IP/uptime/reconnects/FW version for per-device health.
