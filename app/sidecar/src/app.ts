@@ -68,27 +68,48 @@ export interface IpcPort {
 }
 
 /**
- * Drives the fault blink. The pure engine flags a device as flashing but has no
- * clock; the orchestrator pulses it on this timer. Injectable so tests step the blink
- * deterministically instead of waiting on the wall clock. `start` begins ticking and
- * returns a function that stops it.
+ * Drives connected-state animation (the fault flash and the unassigned breathe). The pure
+ * engine only *names* a device's animation; the orchestrator ticks a single clock and derives
+ * every animated device's current frame from the elapsed time. Injectable so tests step it
+ * deterministically instead of waiting on the wall clock. `start` begins ticking and returns a
+ * function that stops it.
  */
-export interface BlinkClock {
+export interface AnimationClock {
   start(intervalMs: number, tick: () => void): () => void;
 }
 
-const realBlinkClock: BlinkClock = {
+const realAnimationClock: AnimationClock = {
   start(intervalMs, tick) {
     const handle = setInterval(tick, intervalMs);
-    handle.unref(); // a blinking fault must never keep the process alive on its own
+    handle.unref(); // animation must never keep the process alive on its own
     return () => clearInterval(handle);
   },
 };
 
-/** Half a blink cycle: toggling every 500 ms gives the ~1 Hz fault flash. */
-const BLINK_INTERVAL_MS = 500;
-/** The "off" phase of the fault blink — the LED dark between blue pulses. */
+/**
+ * Animation tick. Small enough for a smooth breathe; the flash and breathe phases are derived
+ * from elapsed time, not per-tick, so this rate is independent of either's period.
+ */
+const ANIM_TICK_MS = 100;
+/** Half the fault-flash cycle — lit for this long, then dark, giving the ~1 Hz flash. */
+const FLASH_HALF_MS = 500;
+/** Full breathe cycle for the unassigned state (docs/led.md state 5): a slow, calm swell. */
+const BREATHE_PERIOD_MS = 10_000;
+/** The breathe dims to this fraction of the device's brightness at its trough — never fully off. */
+const BREATHE_FLOOR = 0.1;
+/** The "off" phase of the fault flash — the LED dark between blue pulses. */
 const FLASH_OFF: Color = { r: 0, g: 0, b: 0 };
+
+/**
+ * The brightness to drive a breathing device this tick: its configured brightness modulated by
+ * a raised cosine over {@link BREATHE_PERIOD_MS}, from {@link BREATHE_FLOOR} up to full and back.
+ * Starts at the trough so a device that has just appeared fades up rather than popping on.
+ */
+function breatheBrightness(elapsedMs: number, base: number): number {
+  const phase = (elapsedMs % BREATHE_PERIOD_MS) / BREATHE_PERIOD_MS; // 0..1
+  const wave = (1 - Math.cos(2 * Math.PI * phase)) / 2; // 0 → 1 → 0, starting low
+  return Math.round(base * (BREATHE_FLOOR + (1 - BREATHE_FLOOR) * wave));
+}
 
 export interface SidecarAppDeps {
   atem: AtemSourcePort;
@@ -97,10 +118,10 @@ export interface SidecarAppDeps {
   ipc: IpcPort;
   /** Where to log diagnostics (defaults to stderr; stdout is protocol-only). */
   log?: (message: string) => void;
-  /** Override the fault-blink timer (tests inject a steppable clock). */
-  blinkClock?: BlinkClock;
-  /** Override the blink half-cycle in ms (default {@link BLINK_INTERVAL_MS}). */
-  blinkIntervalMs?: number;
+  /** Override the animation timer (tests inject a steppable clock). */
+  animClock?: AnimationClock;
+  /** Override the animation tick in ms (default {@link ANIM_TICK_MS}); each step advances elapsed time by this. */
+  animTickMs?: number;
   /** The subnet sweep behind the settings "Scan" (injectable so tests don't open sockets). */
   scanNetwork?: (log: (message: string) => void) => Promise<SourceScanHit[]>;
   /**
@@ -126,8 +147,8 @@ export class SidecarApp {
   readonly #store: StorePort;
   readonly #ipc: IpcPort;
   readonly #log: (message: string) => void;
-  readonly #blinkClock: BlinkClock;
-  readonly #blinkIntervalMs: number;
+  readonly #animClock: AnimationClock;
+  readonly #animTickMs: number;
   readonly #scanNetwork: (log: (message: string) => void) => Promise<SourceScanHit[]>;
   readonly #dev: boolean;
 
@@ -139,10 +160,10 @@ export class SidecarApp {
   /** The last colour pushed to each device, to suppress redundant SET_COLORs. */
   readonly #lastColor = new Map<string, { color: Color; brightness: number }>();
 
-  /** Stops the fault blink, or null when nothing is currently flashing. */
-  #stopBlink: (() => void) | null = null;
-  /** Current blink phase: false = lit (show the fault colour), true = dark. */
-  #blinkPhase = false;
+  /** Stops the animation clock, or null when nothing is currently animated. */
+  #stopAnim: (() => void) | null = null;
+  /** Elapsed animation time (ms); the flash phase and breathe envelope are both derived from it. */
+  #animMs = 0;
 
   #source: SourceSnapshot;
   // The override layer is modelled from v1 but stays inactive until a source wires it.
@@ -154,8 +175,8 @@ export class SidecarApp {
     this.#store = deps.store;
     this.#ipc = deps.ipc;
     this.#log = deps.log ?? ((message) => process.stderr.write(`${message}\n`));
-    this.#blinkClock = deps.blinkClock ?? realBlinkClock;
-    this.#blinkIntervalMs = deps.blinkIntervalMs ?? BLINK_INTERVAL_MS;
+    this.#animClock = deps.animClock ?? realAnimationClock;
+    this.#animTickMs = deps.animTickMs ?? ANIM_TICK_MS;
     this.#scanNetwork = deps.scanNetwork ?? scanNetwork;
     this.#dev = deps.dev ?? false;
     this.#source = deps.atem.snapshot();
@@ -194,9 +215,9 @@ export class SidecarApp {
     this.#sync();
   }
 
-  /** Shut down cleanly: stop the blink, the server, the ATEM, flush pending writes. */
+  /** Shut down cleanly: stop the animation clock, the server, the ATEM, flush pending writes. */
   async stop(): Promise<void> {
-    this.#setBlinking(false);
+    this.#setAnimating(false);
     this.#ipc.close();
     await this.#atem.disconnect();
     await this.#server.stop();
@@ -286,39 +307,50 @@ export class SidecarApp {
   }
 
   /**
-   * Push each device's target colour (resolving the current blink phase for flashing
-   * ones) and arm or disarm the blink timer to match. Called on every real change and
-   * on every blink tick; the diff in {@link #pushColor} keeps a steady rig quiet.
+   * Push each device's target frame (resolving the current animation phase for flashing /
+   * breathing ones from {@link #animMs}) and arm or disarm the animation clock to match. Called
+   * on every real change and on every animation tick; the diff in {@link #pushColor} keeps a
+   * steady rig quiet — only animated devices re-send.
    */
   #applyColors(colors: ReadonlyArray<DeviceColor>): void {
-    let anyFlashing = false;
+    let anyAnimated = false;
     for (const target of colors) {
-      if (target.flashing) {
-        anyFlashing = true;
-        // Lit phase shows the fault colour; dark phase blanks the LED.
-        const color = this.#blinkPhase ? FLASH_OFF : target.color;
-        this.#pushColor({ mac: target.mac, color, brightness: target.brightness });
-      } else {
-        this.#pushColor({ mac: target.mac, color: target.color, brightness: target.brightness });
+      switch (target.anim) {
+        case "flash": {
+          anyAnimated = true;
+          // Lit for the first half of each cycle, dark for the second — the ~1 Hz fault flash.
+          const lit = Math.floor(this.#animMs / FLASH_HALF_MS) % 2 === 0;
+          this.#pushColor({ mac: target.mac, color: lit ? target.color : FLASH_OFF, brightness: target.brightness });
+          break;
+        }
+        case "breathe": {
+          anyAnimated = true;
+          // Colour held; brightness swells in a slow sine — the unassigned "alive, waiting" state.
+          const brightness = breatheBrightness(this.#animMs, target.brightness);
+          this.#pushColor({ mac: target.mac, color: target.color, brightness });
+          break;
+        }
+        default:
+          this.#pushColor({ mac: target.mac, color: target.color, brightness: target.brightness });
       }
     }
-    this.#setBlinking(anyFlashing);
+    this.#setAnimating(anyAnimated);
   }
 
-  /** Start the blink timer when a fault appears, stop it when the last one clears. */
-  #setBlinking(on: boolean): void {
-    if (on && !this.#stopBlink) {
-      this.#stopBlink = this.#blinkClock.start(this.#blinkIntervalMs, () => this.#tickBlink());
-    } else if (!on && this.#stopBlink) {
-      this.#stopBlink();
-      this.#stopBlink = null;
-      this.#blinkPhase = false; // so the next fault starts on the lit phase
+  /** Start the animation clock when the first animated device appears, stop it when the last clears. */
+  #setAnimating(on: boolean): void {
+    if (on && !this.#stopAnim) {
+      this.#stopAnim = this.#animClock.start(this.#animTickMs, () => this.#tickAnim());
+    } else if (!on && this.#stopAnim) {
+      this.#stopAnim();
+      this.#stopAnim = null;
+      this.#animMs = 0; // next animation starts from a clean phase (flash lit, breathe at its trough)
     }
   }
 
-  /** Flip the blink phase and re-push colours — but emit no UI snapshot for a mere blink. */
-  #tickBlink(): void {
-    this.#blinkPhase = !this.#blinkPhase;
+  /** Advance animation time and re-push colours — but emit no UI snapshot for a mere animation tick. */
+  #tickAnim(): void {
+    this.#animMs += this.#animTickMs;
     const { colors } = computeEngine(this.#source, this.#gate, this.#deviceRecords());
     this.#applyColors(colors);
   }

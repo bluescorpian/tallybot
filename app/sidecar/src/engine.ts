@@ -54,17 +54,23 @@ export interface DeviceRecord {
   brightness: number;
 }
 
+/**
+ * How the orchestrator animates a device's colour. The pure engine has no clock, so it
+ * only *names* the animation; `src/app.ts` drives it from a timer:
+ *   - `none`    — steady `color`.
+ *   - `flash`   — fault: `color` is the lit phase, pulsed against off (~1 Hz).
+ *   - `breathe` — unassigned: `color` held while its brightness swells in a slow sine.
+ * The firmware stays lean and renders whatever frame it's sent — all connected-state motion
+ * lives here (docs/led.md).
+ */
+export type Anim = "none" | "flash" | "breathe";
+
 /** The colour an online device should display. Offline devices yield no command. */
 export interface DeviceColor {
   mac: string;
   color: Color;
   brightness: number;
-  /**
-   * When true the device is in the fault state and `color` is the "lit" phase of a
-   * blink: the orchestrator (`src/app.ts`) pulses it against off, since the pure
-   * engine has no clock. Steady when false.
-   */
-  flashing: boolean;
+  anim: Anim;
 }
 
 export interface EngineResult {
@@ -108,23 +114,23 @@ function deviceStateOf(device: DeviceRecord): Device["state"] {
 }
 
 /**
- * The colour an online device should show, and whether it flashes. An unassigned
- * device gets the steady setup colour (visibly alive, clearly needs configuring —
- * GOALS.md decision 5). An assigned device shows its input's tally; the fault
- * (`unknown`) state pulses blue rather than ever resting on green.
+ * The colour an online device should show, and how it animates. An unassigned device
+ * gets the white setup colour and *breathes* it (visibly alive, clearly needs configuring
+ * — GOALS.md decision 5; docs/led.md state 5). An assigned device shows its input's tally;
+ * the fault (`unknown`) state flashes blue rather than ever resting on green.
  */
 function colorFor(
   device: DeviceRecord,
   source: SourceSnapshot,
   gate: ProgramGate,
-): { color: Color; flashing: boolean } {
-  if (device.inputId === null) return { color: SETUP_COLOR, flashing: false };
+): { color: Color; anim: Anim } {
+  if (device.inputId === null) return { color: SETUP_COLOR, anim: "breathe" };
   const tally = tallyFor(source, gate, device.inputId);
-  // Fault: the server pulses blue so the light is an obvious "don't trust me", not a
+  // Fault: the server flashes blue so the light is an obvious "don't trust me", not a
   // confident idle. Same hue as the device's own disconnected-blue, but flashed — and
   // the device only rests on steady blue when it has lost the server entirely.
-  if (tally === "unknown") return { color: COLORS.disconnected, flashing: true };
-  return { color: COLORS[tally], flashing: false };
+  if (tally === "unknown") return { color: COLORS.disconnected, anim: "flash" };
+  return { color: COLORS[tally], anim: "none" };
 }
 
 /**
@@ -156,8 +162,8 @@ export function computeEngine(
         device.protocolVersion !== null && device.protocolVersion < PROTOCOL_VERSION.MIN_SUPPORTED,
     });
     if (device.online) {
-      const { color, flashing } = colorFor(device, source, gate);
-      colors.push({ mac: device.mac, color, brightness: device.brightness, flashing });
+      const { color, anim } = colorFor(device, source, gate);
+      colors.push({ mac: device.mac, color, brightness: device.brightness, anim });
     }
   }
 

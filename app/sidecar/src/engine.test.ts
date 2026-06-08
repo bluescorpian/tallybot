@@ -84,7 +84,7 @@ test("an unassigned online device shows the setup colour", () => {
   const { colors, state } = computeEngine(connectedSource(), INACTIVE_GATE, [device({ inputId: null })]);
   assert.equal(colors.length, 1);
   assert.deepEqual(colors[0]!.color, SETUP_COLOR);
-  assert.equal(colors[0]!.flashing, false, "a steady setup colour, not a fault flash");
+  assert.equal(colors[0]!.anim, "breathe", "the unassigned breathe, not a fault flash");
   assert.equal(state.devices[0]!.state, "unassigned");
 });
 
@@ -92,19 +92,19 @@ test("an assigned device on an untrustworthy source flashes blue, never idle gre
   const source = connectedSource({ connection: "disconnected" });
   const { colors, state } = computeEngine(source, INACTIVE_GATE, [device({ inputId: 1 })]);
   assert.deepEqual(colors[0]!.color, COLORS.disconnected, "the fault hue is blue");
-  assert.equal(colors[0]!.flashing, true, "and it flashes, so it can't be mistaken for idle");
+  assert.equal(colors[0]!.anim, "flash", "and it flashes, so it can't be mistaken for idle");
   assert.equal(state.inputs[0]!.tally, "unknown");
 });
 
 test("an *unassigned* device stays setup-coloured even when the source is down", () => {
-  // No input bound → no tally to be wrong about, so no fault flash.
+  // No input bound → no tally to be wrong about, so it breathes setup, never flashes fault.
   const { colors } = computeEngine(
     connectedSource({ connection: "disconnected" }),
     INACTIVE_GATE,
     [device({ inputId: null })],
   );
   assert.deepEqual(colors[0]!.color, SETUP_COLOR);
-  assert.equal(colors[0]!.flashing, false);
+  assert.equal(colors[0]!.anim, "breathe");
 });
 
 test("an offline device yields no colour command and reads as offline", () => {

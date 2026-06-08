@@ -48,9 +48,12 @@ bytes that follow). Full tables in `docs/architecture.md`.
 - **Versioning:** HELLO carries the device's protocol version; the server keeps `CURRENT`
   + `MIN_SUPPORTED` and adapts to older devices (warns below `MIN_SUPPORTED`).
 - **Colours:** Live `255,0,0` · Preview `0,255,0` · Idle `30,30,30` (dim white) ·
-  Disconnected `0,0,255` (device-local steady blue) · Fault `0,0,255` flashing
-  (server-driven, when the source can't be trusted — never idle). Default brightness `128`.
-  Full palette in `docs/led.md`.
+  Unassigned `255,255,255` (white, server-driven breathe) · Disconnected `0,0,255` (device-local
+  steady blue) · Fault `0,0,255` flashing (server-driven, when the source can't be trusted —
+  never idle). Default brightness `128`. Full palette in `docs/led.md`.
+- **Animation lives in the server.** Connected-state motion (the fault flash, the unassigned
+  breathe) is driven by the sidecar streaming frames; the firmware renders static `SET_COLOR`s
+  and only animates device-local bring-up states (no server connected yet).
 - **Identity:** devices are keyed by MAC address.
 
 ## Dev environment (NixOS)
@@ -113,6 +116,9 @@ cd app/sidecar && pnpm start        # run with FakeAtem
   third-party networking libs.
 - Keep the protocol constants in `protocol.ts` (sidecar) and the `#define`s in
   `main.cpp` (firmware) in sync — they encode the same spec.
+- **Firmware is lean; the sidecar owns connected-state behaviour.** Logic and animation belong
+  in the server (easy to change) rather than on the flashed device — the device renders what
+  it's told. See `docs/led.md`.
 - The same-subnet limitation is accepted and intentional — document it for users
   rather than working around it.
 - This will be open-sourced: favour simplicity and clarity, and explain tradeoffs
@@ -130,8 +136,9 @@ Docs live in `docs/`. Load them on demand; don't bulk-load.
 | **`docs/led.md`** | LED palette: every device state, colour, motion, and the design rules. | Touching LED state logic in firmware or sidecar, or discussing device-visible states. |
 | **`docs/atem-connection-notes.md`** | Sharp edges and gotchas with the `atem-connection` library; field-test findings. | Debugging ATEM connectivity, extending the ATEM adapter, or integrating new ATEM state. |
 | **`docs/packaging-windows.md`** | Step-by-step Windows build guide. | Building or testing the Windows portable binary. |
-| **`docs/milestones/v1.1-production-hardening.md`** | Production-hardening worklist: WiFi reliability, diagnostics, LED palette completion. (Status below names the active milestone.) | Planning or starting post-MVP work. |
-| **`docs/milestones/roadmap.md`** | Deferred / future work (OTA, web UI, OBS, multi-switcher). | Evaluating roadmap items or planning beyond v1.1. |
+| **`docs/milestones/v1.1-production-hardening.md`** | **Closed** worklist: diagnostics + LED palette shipped; WiFi-join reliability deferred, transport work pivoted to ESP-NOW. | Reviewing what production-hardening shipped or deferred. |
+| **`docs/wifi-troubleshooting.md`** | Living runbook for the deferred WiFi-join problem: symptoms, the diagnostics-panel verdict, what's ruled out, current hypothesis, what to try next. | Returning to WiFi-join reliability, or reading a device's SoftAP diagnostics panel. |
+| **`docs/milestones/roadmap.md`** | Deferred / future work (ESP-NOW transport — active focus, OTA, web UI, OBS, multi-switcher). | Evaluating roadmap items or planning the next milestone. |
 | **`app/sidecar/SIDECAR.md`** | How the Node.js sidecar process works alongside Tauri: lifecycle, IPC transport, why this pattern. | Working on Tauri ↔ sidecar integration, the sidecar launch/shutdown flow, or IPC transport internals. |
 | **`app/sidecar/README.md`** | Day-to-day sidecar dev guide: how to run, test, and iterate on the sidecar in isolation. | Running or debugging the sidecar standalone, onboarding to sidecar development. |
 | **`tools/README.md`** | Hardware simulators: FakeAtem, fake ESP32 TCP client, sidecar-dev REPL, end-to-end test. | Using or extending the dev tools; hardware-free testing. |
@@ -140,8 +147,13 @@ The `.exploration/` subtree holds vendored source snapshots for research only �
 
 ## Status
 
-MVP is complete. All build phases are done and hardware-verified. The next milestone is
-production hardening — see [`docs/milestones/v1.1-production-hardening.md`](docs/milestones/v1.1-production-hardening.md).
+MVP is complete. Production hardening (v1.1) is **closed**: on-device WiFi diagnostics and the
+full LED palette (server-driven flash + breathe; lean firmware) shipped and were verified.
+WiFi-join reliability hit venue access-point *policy* the device can't change (a weak-signal /
+min-RSSI kick) and is **deferred** — see [`docs/wifi-troubleshooting.md`](docs/wifi-troubleshooting.md)
+and the roadmap. The **active focus is now the ESP-NOW transport**
+([`docs/milestones/roadmap.md`](docs/milestones/roadmap.md), item 3); a milestone doc will be cut
+once it's scoped. Closed worklist: [`docs/milestones/v1.1-production-hardening.md`](docs/milestones/v1.1-production-hardening.md).
 
 - **app/sidecar/** — tally engine, device server (TCP/UDP), ATEM adapter (real
   `atem-connection` behind an `AtemLike` seam), config store, IPC bridge, and the

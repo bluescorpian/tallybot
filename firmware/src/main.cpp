@@ -486,8 +486,13 @@ static void onPayload(const uint8_t* payload, size_t len) {
     // the linearity correction (ARCHITECTURE.md "Brightness is a perceptual value"). The
     // sidecar/UI keep it linear; we gamma-correct here so the UI's even 0–10 levels appear
     // evenly spaced. applyGamma_video keeps a non-zero byte from collapsing to off.
+    //
+    // Server colours are rendered *steady*: the firmware stays lean and the server owns all
+    // connected-state animation (the fault flash and the unassigned breathe are both driven by
+    // the sidecar streaming frames over the wire). Device-local bring-up states animate locally
+    // only because there's no server connected to drive them.
     uint8_t drive = applyGamma_video(msg.brightness, BRIGHTNESS_GAMMA);
-    setResting(msg.r, msg.g, msg.b, drive, STEADY);  // server colours are steady
+    setResting(msg.r, msg.g, msg.b, drive, STEADY);
     Serial.printf("SET_COLOR rgb(%u,%u,%u) brightness=%u (gamma→%u)\n", msg.r, msg.g, msg.b,
                   msg.brightness, drive);
   } else if (msg.kind == ServerMessage::IDENTIFY) {

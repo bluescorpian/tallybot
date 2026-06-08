@@ -72,13 +72,16 @@ export const COLORS = {
 } as const satisfies Record<string, Color>;
 
 /**
- * Colour shown on a connected-but-unassigned device so it's visibly alive and
- * clearly needs configuring (GOALS.md, decision 5).
+ * Colour shown on a connected-but-unassigned device so it's visibly alive and clearly
+ * needs configuring (GOALS.md, decision 5). Full white: the firmware renders it as a slow
+ * "breathe" locally (the wire SET_COLOR is static — see `docs/led.md` state 5), which keeps
+ * it distinct from steady dim-white idle and the IDENTIFY flash burst.
  *
- * TODO(GOALS.md "Still to decide"): the exact setup colour isn't decided yet.
- * Provisional value: magenta — distinct from every state colour above.
+ * NB: this is the *unassigned* colour. It is unrelated to the firmware's `COLOR_SETUP`
+ * (magenta), which is the device-local *provisioning* hint — keeping the two apart is the
+ * whole point, so "needs WiFi setup" and "needs assigning" never look the same (docs/led.md).
  */
-export const SETUP_COLOR: Color = { r: 255, g: 0, b: 255 };
+export const SETUP_COLOR: Color = { r: 255, g: 255, b: 255 };
 
 /** Default LED brightness; configurable per device in the UI. */
 export const DEFAULT_BRIGHTNESS = 128;

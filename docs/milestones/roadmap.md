@@ -56,12 +56,14 @@ stays in the firmware but leaves the primary user-facing story.
 enters SSID + password → app flashes, then sends creds over serial → device reboots, joins
 WiFi, appears via UDP discovery → user types "Camera 1" → unplug, mount, power from a bank.
 
-### 3. ESP-NOW transport
+### 3. ESP-NOW transport — active focus (June 2026)
 
-An alternative transport for venues with no usable WiFi. A bridge dongle (the *same*
-ESP32-C3 SuperMini hardware running bridge firmware) plugs into the streaming PC via USB and
-talks to tally lights over **ESP-NOW** — Espressif's peer-to-peer MAC-layer protocol that
-needs no AP, router, or network infrastructure.
+The near-term build. After the second venue test, WiFi-join reliability proved to be
+dominated by venue access-point *policy* the device can't change (a weak-signal / min-RSSI
+kick), so this is the path being pursued now for dependable venue connectivity. A bridge
+dongle (the *same* ESP32-C3 SuperMini hardware running bridge firmware) plugs into the
+streaming PC via USB and talks to tally lights over **ESP-NOW** — Espressif's peer-to-peer
+MAC-layer protocol that needs no AP, router, or network infrastructure.
 
 - **Transport selection is exclusive.** Each device is provisioned in *either* WiFi or
   ESP-NOW mode at provisioning time; the two never run simultaneously on one device.
@@ -134,6 +136,14 @@ straightforward generalisation that significantly expands the viable install bas
 
 Identified, not rejected, lower priority with open design questions.
 
+- **WiFi-join reliability (one day)** — make the WiFi transport dependable on arbitrary venue
+  networks, deferred from [`v1.1-production-hardening.md`](v1.1-production-hardening.md) when the
+  project pivoted to ESP-NOW. The firmware hardening (TX-power policy, manual channel range,
+  on-device diagnostics with the joined-vs-kicked verdict) already shipped; what remains is the
+  part the device *can't* fix alone — managed-AP policy (min-RSSI kick, band-steering) seen at
+  the second venue — plus a WiFiManager special-char URL-decode audit. ESP-NOW sidesteps all of
+  it for now; revisit if/when WiFi is wanted as a first-class transport again. Living runbook
+  (symptoms, diagnostics, what to try next): [`../wifi-troubleshooting.md`](../wifi-troubleshooting.md).
 - **PC hotspot mode** — the app creates a Windows Mobile Hotspot so lights connect directly
   to the PC with no venue router. Solves the same "no venue WiFi" problem as the ESP-NOW
   bridge but needs no extra hardware. Lower priority now that the ESP-NOW bridge is

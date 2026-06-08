@@ -1,14 +1,22 @@
 # LED.md — TallyBot device LED states
 
-> **Status: device-local states implemented & bench-verified (June 2026); server-driven
-> states pending.** This is the source of truth for the LED palette, from the field test
-> (see [`docs/archive/field-test-venue-1.md`](archive/field-test-venue-1.md), Issue 3). The
+> **Status: implemented & verified (June 2026).** This is the source of truth for the LED
+> palette, from the field test (see
+> [`docs/archive/field-test-venue-1.md`](archive/field-test-venue-1.md), Issue 3). The
 > **device-local** states (boot self-test, provisioning, joining/lost-WiFi, searching,
-> lost-server, plus the 10% local brightness and the connect-gap white breathe) are live in
-> [`firmware/src/main.cpp`](../firmware/src/main.cpp). Still **pending** (needs the sidecar):
-> the server-driven states (live/preview/idle/fault) and changing the `SETUP_COLOR` in
-> [`app/sidecar/src/protocol.ts`](../app/sidecar/src/protocol.ts) from magenta to the white
-> breathe.
+> lost-server, the 10% local brightness, the connect-gap breathe) are live in
+> [`firmware/src/main.cpp`](../firmware/src/main.cpp); the **server-driven** states
+> (live/preview/idle steady, the fault flash, and the unassigned white breathe) are live in the
+> sidecar ([`app/sidecar/src/app.ts`](../app/sidecar/src/app.ts),
+> [`engine.ts`](../app/sidecar/src/engine.ts)), with `SETUP_COLOR` now white in
+> [`protocol.ts`](../app/sidecar/src/protocol.ts).
+>
+> **Architecture: the firmware is lean; the server owns connected-state animation.** Once a
+> device is talking to the sidecar, *all* motion (the fault flash, the unassigned breathe) is
+> driven by the server streaming frames over the wire — the firmware just renders each static
+> `SET_COLOR` it's sent. The device animates *only* during bring-up (provisioning → searching),
+> where there's no server connected to drive it. This keeps device firmware simple and puts the
+> behaviour where it's easy to change.
 
 The tally light has a **single** WS2812 LED on GPIO8. State is therefore carried by two
 axes: **hue** and **motion** (steady / pulse / slow-blink / fast-blink / flash). The design
@@ -48,13 +56,12 @@ must be related (the two blues; the amber WiFi family).
 | 10 | **Lost the server** | Blue `0,0,255` | Steady | device | WiFi is fine but the TallyBot server went away (app closed / PC asleep / sidecar crashed). **PC/app problem** — check the computer. Auto-rediscovers. |
 | 11 | **IDENTIFY** | White `255,255,255` | ~6 flashes | server-triggered | Locate this physical device. Flashes over the current colour, then restores it. |
 
-\* **State 5** is signalled by the server, but the **slow breathe is rendered on the
-device** (the wire `SET_COLOR` is a static RGB+brightness — it can't carry an animation).
-During the brief gap between TCP connect and the first server message, the device shows the
-*same* white breathe locally, so there is no blue flash at hand-off. **Implementation note:**
-decide how the server says "you're unassigned" without churning the protocol — either keep
-sending the unassigned `SET_COLOR` and have the device animate when it recognises that
-colour, or add a lightweight "unassigned" signal. (See open questions.)
+\* **State 5** is **server-driven**: the sidecar holds the white setup colour and streams the
+breathe as a brightness envelope over the wire (the same mechanism as the fault flash — see
+[`app.ts`](../app/sidecar/src/app.ts) `#applyColors`), so the firmware stays lean and renders
+each static `SET_COLOR` as sent. During the brief gap between TCP connect and the first server
+message, the device shows the *same* white breathe **locally** (the one connected-state colour
+it renders itself), so there is no blue flash at hand-off.
 
 ### The three whites are distinguished by brightness + motion
 
@@ -86,9 +93,10 @@ So the operator's first read — amber vs blue — already routes them to the ri
   slow breathe** (state 5). Magenta is now *only* Provisioning (state 1).
 - **Steady blue** no longer means six things. It is now *only* "lost the TallyBot server"
   (state 10). "Joining/lost WiFi" → amber (2/3); "searching for server" → cyan (4).
-- The sidecar's `SETUP_COLOR` (`protocol.ts`) changes magenta → white (rendered as a breathe
-  on the device, see note above); the firmware's `COLOR_*` set in `protocol.h` gains the
-  amber/cyan device-local colours and must stay in lockstep.
+- The sidecar's `SETUP_COLOR` (`protocol.ts`) is now white (was magenta), driven as a
+  server-side breathe (see note above); the firmware's `COLOR_*` set in `protocol.h` gained the
+  amber/cyan device-local colours and stays in lockstep. Note the firmware's own `COLOR_SETUP`
+  (magenta) is a *different* thing — the device-local **provisioning** hint — and stays magenta.
 
 ## Decisions locked (June 2026)
 
@@ -99,11 +107,18 @@ So the operator's first read — amber vs blue — already routes them to the ri
   AP vs the PC.
 - **Boot self-test = yes** — a ~1s R→G→B→W sweep at power-on (state 0).
 
-## Open questions (need sign-off before implementing)
+## Resolved decisions
 
-- **How the server signals "unassigned"** without a protocol change, so the device can render
-  the white breathe locally (see the state-5 implementation note). Default: device animates
-  when it sees the unassigned colour from the server; the connect-gap breathe is purely local.
-- **Exact amber/cyan RGB + brightness, and the breathe/pulse/blink periods**, want tuning on
-  real hardware; the values above are a starting point. Device-local indicators use
-  `LOCAL_BRIGHTNESS`, not the gamma-corrected server brightness.
+- **How the server signals "unassigned"** — *no protocol change.* The sidecar sends the white
+  setup colour via the normal `SET_COLOR` and streams the breathe as a brightness envelope (like
+  the fault flash). The brief connect-gap breathe is the only one rendered locally on the device.
+- **Animation lives in the server.** The firmware renders static frames for every connected
+  state; the sidecar owns the flash and breathe waveforms. Bring-up states animate locally only
+  because no server is connected yet.
+
+## Tuning notes
+
+- **Exact amber/cyan RGB + brightness, and the breathe/pulse/blink periods** are still worth
+  tuning on real hardware; the values here (breathe ~10 s, 10–100%; flash ~1 Hz) are the
+  starting point. Device-local indicators use `LOCAL_BRIGHTNESS`, not the gamma-corrected server
+  brightness; the server-driven breathe modulates the device's configured brightness.

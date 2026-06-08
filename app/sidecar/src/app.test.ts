@@ -4,7 +4,7 @@ import { EventEmitter } from "node:events";
 
 import {
   type AtemSourcePort,
-  type BlinkClock,
+  type AnimationClock,
   type DeviceServerPort,
   type IpcPort,
   type SidecarAppDeps,
@@ -137,8 +137,8 @@ class FakeStore implements StorePort {
   }
 }
 
-/** A blink clock the test steps by hand, so flashing is deterministic (no wall clock). */
-class FakeBlinkClock implements BlinkClock {
+/** An animation clock the test steps by hand, so motion is deterministic (no wall clock). */
+class FakeAnimClock implements AnimationClock {
   #tick: (() => void) | null = null;
   start(_intervalMs: number, tick: () => void): () => void {
     this.#tick = tick;
@@ -146,11 +146,11 @@ class FakeBlinkClock implements BlinkClock {
       this.#tick = null;
     };
   }
-  /** True while a blink is armed. */
+  /** True while an animation is armed. */
   get running(): boolean {
     return this.#tick !== null;
   }
-  /** Advance one half-cycle (toggles the lit/dark phase). */
+  /** Advance one tick (the harness sets the tick to 500 ms, i.e. one flash half-cycle). */
   step(): void {
     this.#tick?.();
   }
@@ -159,6 +159,8 @@ class FakeBlinkClock implements BlinkClock {
 // ── Harness ──────────────────────────────────────────────────────────────────
 
 const MAC = "aa:bb:cc:dd:ee:01";
+/** Mirrors app.ts: one fault-flash half-cycle. The harness ticks the clock at this rate. */
+const FLASH_HALF_MS = 500;
 
 function connectedSource(): SourceSnapshot {
   return {
@@ -180,7 +182,7 @@ interface Harness {
   atem: FakeAtemSource;
   ipc: FakeIpc;
   store: FakeStore;
-  blink: FakeBlinkClock;
+  anim: FakeAnimClock;
 }
 
 function setup(
@@ -191,17 +193,18 @@ function setup(
   const atem = new FakeAtemSource(source);
   const ipc = new FakeIpc();
   const store = new FakeStore();
-  const blink = new FakeBlinkClock();
+  const anim = new FakeAnimClock();
   const app = new SidecarApp({
     atem,
     deviceServer: server,
     store,
     ipc,
-    blinkClock: blink,
+    animClock: anim,
+    animTickMs: FLASH_HALF_MS, // one step == one flash half-cycle, so flash tests read as toggles
     log: () => {},
     ...overrides,
   });
-  return { app, server, atem, ipc, store, blink };
+  return { app, server, atem, ipc, store, anim };
 }
 
 /** Let an async command handler (which awaits the store) settle. */
@@ -295,30 +298,51 @@ test("a disconnected device reads as offline and gets no colour", async () => {
 });
 
 test("when the source drops, an assigned device flashes blue instead of resting on idle", async () => {
-  const { app, server, atem, ipc, blink } = setup(); // connected, program 1
+  const { app, server, atem, ipc, anim } = setup(); // connected, program 1
   await app.start();
   server.connectDevice(MAC);
   ipc.command({ type: "assignDevice", mac: MAC, inputId: 1 });
   await tick();
   assert.deepEqual(server.sentTo(MAC).at(-1)?.color, COLORS.live, "healthy source → live red");
-  assert.equal(blink.running, false, "no fault, no blink");
+  assert.equal(anim.running, false, "no fault, no animation");
 
   // The ATEM drops (inputs retained, but the connection is gone).
   atem.set({ ...connectedSource(), connection: "disconnected" });
   assert.deepEqual(server.sentTo(MAC).at(-1)?.color, COLORS.disconnected, "fault is blue, not idle green");
   assert.notDeepEqual(server.sentTo(MAC).at(-1)?.color, COLORS.idle);
-  assert.equal(blink.running, true, "the blink is armed");
+  assert.equal(anim.running, true, "the flash is armed");
 
-  // Stepping the clock pulses the LED off, then back to blue — i.e. it flashes.
-  blink.step();
+  // Stepping the clock (one half-cycle) pulses the LED off, then back to blue — i.e. it flashes.
+  anim.step();
   assert.deepEqual(server.sentTo(MAC).at(-1)?.color, { r: 0, g: 0, b: 0 }, "dark phase");
-  blink.step();
+  anim.step();
   assert.deepEqual(server.sentTo(MAC).at(-1)?.color, COLORS.disconnected, "lit phase again");
 
-  // Source recovers → back to a steady live red and the blink stops.
+  // Source recovers → back to a steady live red and the animation stops.
   atem.set(connectedSource());
   assert.deepEqual(server.sentTo(MAC).at(-1)?.color, COLORS.live);
-  assert.equal(blink.running, false, "recovery disarms the blink");
+  assert.equal(anim.running, false, "recovery disarms the animation");
+});
+
+test("an unassigned device breathes the setup colour (server-driven brightness envelope)", async () => {
+  const { app, server, anim } = setup();
+  await app.start();
+  server.connectDevice(MAC); // connected but unassigned
+
+  // The colour is the white setup colour, and the breathe is armed.
+  assert.deepEqual(server.sentTo(MAC).at(-1)?.color, SETUP_COLOR, "unassigned shows the setup colour");
+  assert.equal(anim.running, true, "the breathe is armed");
+
+  // It starts at the trough (dim, not full) and swells as the clock advances — colour unchanged.
+  const lastBrightness = () => server.sentTo(MAC).at(-1)!.brightness;
+  const b0 = lastBrightness(); // elapsed 0 → trough
+  assert.ok(b0 < DEFAULT_BRIGHTNESS, "breathing, not resting at full brightness");
+  anim.step();
+  const b1 = lastBrightness();
+  anim.step();
+  const b2 = lastBrightness();
+  assert.deepEqual(server.sentTo(MAC).at(-1)?.color, SETUP_COLOR, "still white while breathing");
+  assert.ok(b1 > b0 && b2 > b1, "brightness swells across the breathe");
 });
 
 test("identify reaches a connected device, and warns when offline", async () => {
