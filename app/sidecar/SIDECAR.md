@@ -2,15 +2,8 @@
 
 How TallyBot runs a **Node.js process alongside the Tauri app**, why, and how the two
 talk. This is the architectural reference for the sidecar; [`README.md`](README.md) is the
-day-to-day dev guide, and [`ARCHITECTURE.md`](../../ARCHITECTURE.md) remains the source of
-truth for the binary device protocol.
-
-> **Status.** Phase 2 builds the **sidecar runtime** — the tally engine, device server,
-> ATEM adapter, config store, IPC bridge, and the orchestrator that wires them (`pnpm
-> start` runs it). What's left for **Phase 5** is the *host* side described below: the
-> Tauri shell spawning the process, the Rust stdio bridge to the webview, and packaging
-> the binary. Those are documented here so the contracts make sense and Phase 5 has a
-> target.
+day-to-day dev guide, and [`docs/architecture.md`](../../docs/architecture.md) remains the
+source of truth for the binary device protocol.
 
 ## Why a Node sidecar at all
 
@@ -49,7 +42,7 @@ Svelte UI is a pure view. Responsibilities don't bleed across those lines.
 Two protocols meet in the sidecar and must not be confused:
 
 - **Down to devices** — the length-prefixed **binary** protocol (`src/protocol.ts`,
-  specified in `ARCHITECTURE.md`). The sidecar is the TCP *server*; devices connect to it.
+  specified in `docs/architecture.md`). The sidecar is the TCP *server*; devices connect to it.
 - **Up to the UI** — **NDJSON over stdio** (`src/ipc.ts`), bridged by the Rust shell to
   Tauri's event/command IPC.
 
@@ -90,9 +83,9 @@ The UI then `listen`s for `SidecarEvent`s and `invoke`s a command that forwards
 ## The shared contracts (Phase 0, implemented)
 
 - **`src/protocol.ts`** — the binary device↔server codec and constants (framing, encoders,
-  decoder, discovery, versioning). Mirrors `ARCHITECTURE.md`; keep its values in sync with
-  the firmware `#define`s.
-- **`src/ipc.ts`** — the UI↔sidecar schema. Its nouns mirror `GOALS.md` (source / input /
+  decoder, discovery, versioning). Mirrors `docs/architecture.md`; keep its values in sync
+  with the firmware `#define`s.
+- **`src/ipc.ts`** — the UI↔sidecar schema. Its nouns mirror `docs/goals.md` (source / input /
   device / program-gate) so the schema, persisted state, and UI line up. The UI imports
   these **type-only** via the `$ipc` alias (`../svelte.config.js`), so nothing from the
   sidecar reaches the browser bundle.
@@ -139,6 +132,5 @@ workaround the dev shell already applies (see the repo `CLAUDE.md`).
 
 - [Tauri — Node.js as a sidecar](https://v2.tauri.app/learn/sidecar-nodejs/)
 - [Tauri — Embedding external binaries](https://v2.tauri.app/develop/sidecar/)
-- [`ARCHITECTURE.md`](../../ARCHITECTURE.md) — binary protocol (source of truth) ·
-  [`GOALS.md`](../../GOALS.md) — the model the IPC schema mirrors ·
-  [`PHASES.md`](../../PHASES.md) — where this sits in the build
+- [`docs/architecture.md`](../../docs/architecture.md) — binary protocol (source of truth) ·
+  [`docs/goals.md`](../../docs/goals.md) — the model the IPC schema mirrors

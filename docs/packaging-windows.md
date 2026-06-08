@@ -5,7 +5,7 @@ written for someone who doesn't usually develop on Windows.
 
 You must build **on a Windows machine**: `@yao-pkg/pkg` embeds a native Node runtime and
 native deps per-OS, so a Windows sidecar binary has to be built on Windows. The general
-recipe lives in [`ARCHITECTURE.md`](ARCHITECTURE.md) → "Packaging the Sidecar → Building a
+recipe lives in [`docs/architecture.md`](architecture.md) → "Packaging the Sidecar → Building a
 release"; this file is the Windows-specific walkthrough.
 
 ## Quick path: the script

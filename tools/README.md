@@ -2,9 +2,8 @@
 
 Stand-ins for the two pieces of hardware TallyBot talks to, so the rest of the system
 can be built and exercised without an ATEM switcher or an ESP32 on the bench. Both are
-built against the **Phase 0 contracts** in [`app/sidecar/src`](../app/sidecar/src) (the
-binary protocol and its constants), so they speak exactly the spec'd wire format. See
-[`PHASES.md`](../PHASES.md) — this is Phase 1.
+built against the contracts in [`app/sidecar/src`](../app/sidecar/src) (the binary protocol
+and its constants), so they speak exactly the spec'd wire format.
 
 ## ATEM simulator
 

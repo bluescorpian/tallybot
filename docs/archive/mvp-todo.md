@@ -1,3 +1,5 @@
+> Archived post-MVP. Active work → [docs/milestones/](../milestones/).
+
 # TallyBot — What's Next
 
 The actionable remaining work to ship v1, in suggested order. This is the outstanding

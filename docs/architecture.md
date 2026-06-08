@@ -11,9 +11,9 @@ ATEM Mini's own button LED conventions.
 The project will be open-sourced. All architecture decisions favour simplicity,
 reliability on unknown networks, and cross-platform support.
 
-**Related docs:** `GOALS.md` holds the product intent and decisions, `DESIGN.md` the UI
-design, and `PHASES.md` the build phases. This document is the source of truth for the
-network/binary protocol and the rationale — keep it consistent with `GOALS.md`.
+**Related docs:** [`docs/goals.md`](goals.md) holds the product intent and decisions,
+[`docs/design.md`](design.md) the UI design. This document is the source of truth for
+the network/binary protocol and the rationale.
 
 ---
 
@@ -41,15 +41,14 @@ network/binary protocol and the rationale — keep it consistent with `GOALS.md`
 
 ### Critical Firmware Gotchas
 
-1. GPIO8 is addressable, not digital. digitalWrite(8, ...) does nothing and makes the
+1. GPIO8 is addressable, not digital. `digitalWrite(8, ...)` does nothing and makes the
    board appear dead. Always drive the LED via FastLED or Adafruit NeoPixel.
 
 2. Never sleep. Deep or light sleep causes the power bank's auto-off to cut power
-   (low-current detection). Keep the device in active WiFi mode (~80-130 mA average).
+   (low-current detection). Keep the device in active WiFi mode (~80–130 mA average).
 
-3. WiFi TX power fix (older C3 boards): if WiFi won't connect, add
-   WiFi.setTxPower(WIFI_POWER_8_5dBm) before WiFi.begin(). V2 supposedly fixed the
-   antenna issue, but this is a safe fallback to include.
+3. WiFi TX power: start at full power; only retry at `WIFI_POWER_8_5dBm` after a failed
+   association attempt (older C3 boards with weak antenna). Never cap it unconditionally.
 
 ---
 
@@ -63,7 +62,7 @@ The sidecar also runs a TCP server (port 7000) and a UDP discovery listener (por
 ESP32 devices connect to the server over TCP after discovering its IP via UDP broadcast.
 The Svelte UI communicates with the sidecar via Tauri's IPC event system.
 
-Data flow: ATEM state change -> Node.js sidecar -> TCP socket -> ESP32 -> WS2812 LED.
+Data flow: ATEM state change → Node.js sidecar → TCP socket → ESP32 → WS2812 LED.
 
 ---
 
@@ -175,14 +174,9 @@ eventually retired.
 
 ### Standard Colours
 
-| State | R | G | B | Driven by | Meaning |
-|---|---|---|---|---|---|
-| Live | 255 | 0 | 0 | server | Input is on Program output |
-| Preview | 0 | 255 | 0 | server | Input is on Preview |
-| Idle | 30 | 30 | 30 | server | Input is not selected *and the source is trustworthy* (dim white) |
-| Fault | 0 | 0 | 255 | server | **Flashing.** Source state can't be trusted (see below) |
-| Disconnected | 0 | 0 | 255 | device | **Steady.** The device itself has lost the server |
-| Setup | 255 | 0 | 255 | server | Connected but not yet assigned to an input (`GOALS.md`; provisional) |
+See [`docs/led.md`](led.md) for the full LED palette, state definitions, and the design
+rules behind the colour assignments. The tally colours (red/green/dim-white/flashing-blue)
+are specified there alongside all device-local states.
 
 Brightness default: 128 (≈ the perceptual midpoint, UI level 5). Configurable per device in
 the UI; it's a perceptual value the device gamma-corrects (see SET_COLOR above).
@@ -219,7 +213,7 @@ above already covers.
 Either way the operator's takeaway is identical: this light is not telling you your real
 state. The UI also greys the source out and shows each input as *unknown* rather than idle.
 An **unassigned** connected device is unaffected — with no input bound there is no tally to
-get wrong, so it keeps the steady setup colour.
+get wrong, so it keeps the setup colour.
 
 ---
 
@@ -242,13 +236,13 @@ Library: WiFiManager (tzapu/WiFiManager on PlatformIO).
 
 Each device is identified by its MAC address, read via WiFi.macAddress() on the ESP32.
 The MAC is included in every TCP message from the device. The server stores a mapping of
-**MAC -> assigned ATEM input** (e.g. AA:BB:CC:DD:EE:FF -> input 1), persisted to disk by
+**MAC → assigned ATEM input** (e.g. AA:BB:CC:DD:EE:FF → input 1), persisted to disk by
 the Node.js sidecar so assignments survive app restarts.
 
 Devices have **no user-given name**: a device is identified by its MAC (shown as a short
 tail in the UI) and located physically with IDENTIFY (a flash). Human-readable labels come
-from the **input** — the ATEM's own input names — not from the device, and there is no
-separate "camera" entity. See `GOALS.md` for the rationale.
+from the **input** — the ATEM's own input names — not from the device. See
+[`docs/goals.md`](goals.md) for the rationale.
 
 ---
 
@@ -268,33 +262,8 @@ the UI's input row matches the physical switcher rather than listing routing int
 The ATEM's IP is entered once in app settings, and is persisted alongside the device
 assignments so it is reused on the next launch. DHCP reservation is recommended.
 
-### Why Not the Official Blackmagic SDK
-
-The official SDK is COM-based (Windows Component Object Model), meaning it only works
-on Windows and macOS, requires ATEM Software Control to be installed, and produces
-unidiomatic C# via COM interop. atem-connection is cross-platform, has no install
-dependency, and is significantly more actively maintained.
-
-### Why Not the Videohub TCP Protocol (port 9990)
-
-The Videohub protocol is a simple text-based TCP interface that exposes program/preview
-routing — sufficient for tally alone, but read-only. It cannot be used to control the
-switcher. Rejected in favour of atem-connection which enables full control for the
-future roadmap.
-
----
-
-## Project File Structure
-
-At a high level the repo has three top-level areas:
-
-- `app/` — the Tauri 2 desktop application: a SvelteKit UI, a minimal Rust shell
-  (`src-tauri/`), and the Node.js sidecar backend (`sidecar/`).
-- `firmware/` — the ESP32-C3 device firmware (PlatformIO + Arduino).
-- `tools/` — ATEM and tally-client simulators for hardware-free development.
-
-This document describes the design, not a file-by-file snapshot. Explore the
-directories for the current layout — it changes as the project grows.
+For sharp edges and gotchas with the atem-connection library, see
+[`docs/atem-connection-notes.md`](atem-connection-notes.md).
 
 ---
 
@@ -319,76 +288,21 @@ networking libraries.
 
 ## Packaging the Sidecar
 
-**Decision (Phase 5, proven empirically):** the sidecar ships as a single
-self-contained binary built with [`@yao-pkg/pkg`](https://github.com/yao-pkg/pkg)
-(the maintained vercel/pkg fork) and spawned by the Rust shell as a Tauri
-`externalBin`. The build is `app/sidecar/build.mjs` (run by `beforeBuildCommand`):
-esbuild bundles `src/main.ts` to one CJS file with **`atem-connection` left
-external**, then pkg packs that bundle + the Node runtime + the still-on-disk
-`atem-connection` (worker included) into one executable named for the Rust target
-triple. No host Node is required on the user's machine.
+The sidecar ships as a single self-contained binary built with
+[`@yao-pkg/pkg`](https://github.com/yao-pkg/pkg) and spawned by the Rust shell as a
+Tauri `externalBin`. The build (`app/sidecar/build.mjs`, run by `beforeBuildCommand`)
+esbuild-bundles `src/main.ts` with **`atem-connection` left external** so its
+runtime-loaded worker file survives into the pkg snapshot, then packs that bundle + the
+Node runtime into one executable named for the Rust target triple.
 
-This contradicts the earlier assumption that single-binary was "impractical" — it was
-verified three ways (isolated repro, standalone sidecar, and the real Tauri app), and
-the multithreaded `threadedClass`/`atemSocketChild` worker does live UDP I/O from
-inside pkg's `/snapshot/` FS. **None of the historical workarounds were needed**: no
-`@julusian/freetype2` stub, no manual `atemSocketChild.js` copy, no
-`disableMultithreaded`. See the corrected warnings below for why each turned out not
-to bite.
-
-### The warnings (and how each actually played out)
-
-These were learned building `tools/atem-probe` (a standalone field-test tool that
-packages just the ATEM read-path) and are properties of `atem-connection` itself, so
-they're worth keeping — but the single-binary verdicts have been corrected against the
-proven recipe above.
-
-1. **`atem-connection` assumes its files live on disk in `node_modules`.** It loads a
-   native module *and* loads its UDP-socket worker (`atemSocketChild`) by file *path* at
-   runtime (via `threadedclass`) — neither survives being collapsed into one bundled
-   file. The fix is simply to **not bundle the library**: keep `atem-connection`
-   external in the esbuild step so its files stay on disk, and let pkg trace them into
-   the snapshot. Verified: `atemSocketChild.js` ends up embedded in the binary and the
-   worker runs. (The probe's alternative — ship JS + `node_modules` + a Node runtime —
-   also works, but the single binary is simpler to distribute and was chosen.)
-
-2. **Library code writes to `stdout` — which the IPC bridge owns. (Fixed.)**
-   `threadedclass` logs via `console.log`/`info`/`debug`. The sidecar's NDJSON IPC also
-   writes to `process.stdout` (`ipc-bridge.ts`), and one stray library line would corrupt
-   the framing the UI parses. **Fixed in `sidecar/src/main.ts`:** before any `Atem` is
-   constructed, `console.log`/`info`/`debug` are redirected to stderr (`console.warn`/
-   `error` already go there). Verified in the packaged binary — all library logging lands
-   on stderr, the NDJSON stream stays clean.
-
-3. **The default `new Atem()` is multithreaded — it runs the socket off the main thread**
-   (a `worker_threads` worker), loading `atemSocketChild` **by path** at runtime via
-   `threadedclass`. The concern was that a packed binary or restricted sandbox would break
-   that spawn/require. **It doesn't:** the default multithreaded `Atem` packs cleanly and
-   does live UDP I/O from inside the pkg snapshot, so production keeps the default and its
-   event-loop isolation + freeze-watchdog. `disableMultithreaded` was considered and
-   proved **unnecessary**. The library's other runtime sharp edges (lifecycle/leak-safety)
-   are in [`ATEM-CONNECTION-NOTES.md`](ATEM-CONNECTION-NOTES.md) (§1).
-
-4. **Native modules are per-platform *and* per-ABI.** `@julusian/freetype2` ships prebuilt
-   binaries keyed by `platform-arch-napiVersion`. Because `atem-connection` is left
-   external, pkg traces freetype2's `node_modules` into the snapshot — and freetype2
-   bundles prebuilds for *all* platforms in its npm tarball, so a tree installed on Linux
-   still carries the Windows/macOS binaries. (We never call freetype2 — multiviewer-label
-   rendering only — so even a missing prebuild wouldn't matter, but they're present.) Don't
-   assume every native dep is so generous; **build per target on its own OS** to be safe.
-   `build.mjs` names output for the host triple, so the Windows binary is built on Windows.
-
-5. **Running TypeScript at runtime is a Node-version dependency. (Resolved for the
-   binary.)** Standalone/dev runs `.ts` directly via Node's type stripping
-   (`--experimental-strip-types`). The shipped binary sidesteps this entirely: esbuild
-   compiles the TS to JS and pkg embeds a pinned Node runtime, so there's no dependency on
-   the host's Node at all.
+The key constraint: `atem-connection` must stay external (not bundled) so its
+`atemSocketChild` worker is traceable by pkg. Library `console.log`/`info`/`debug` output
+is redirected to stderr in `main.ts` before any `Atem` is constructed, keeping the NDJSON
+stdout stream clean for Tauri IPC. Everything else — multithreaded `Atem`, native deps,
+pkg bytecode — works with no workarounds. Build per target on its own OS; native deps and
+bytecode are not cross-platform.
 
 ### Building a release
-
-The sidecar binary is **per-OS** — build it on the platform you're shipping to (pkg
-can cross-compile the Node runtime, but native deps and bytecode are safest built
-natively). On a clean checkout:
 
 ```bash
 cd app/sidecar && pnpm install        # once: installs esbuild + @yao-pkg/pkg
@@ -400,10 +314,11 @@ cd app && cargo tauri build           # beforeBuildCommand builds the sidecar bi
 `beforeBuildCommand` runs `pnpm -C sidecar run build:binary` (→ `build.mjs`), which
 emits `app/src-tauri/binaries/tallybot-sidecar-<triple>[.exe]` for the host triple.
 That file is a **git-ignored build artifact** (~90 MB) — never commit it. For the
-no-installer portable distribution we want, take the built executable plus its
-sidecar binary from `target/release/` (skip the `.msi`/`.deb` bundles) and zip them;
-the user unzips and runs in place, and config survives updates because the sidecar
-writes to the OS app-data dir (`TALLYBOT_STATE_FILE`, set by the Rust shell).
+no-installer portable distribution, take the built executable plus its sidecar binary
+from `target/release/` and zip them; config survives updates because the sidecar writes
+to the OS app-data dir (`TALLYBOT_STATE_FILE`, set by the Rust shell).
+
+For Windows-specific steps, see [`docs/packaging-windows.md`](packaging-windows.md).
 
 > NixOS note: pkg can't exec its fetched base-node to generate V8 bytecode, so
 > `build.mjs` detects `/etc/NIXOS` and passes `--fallback-to-source` (ships plain JS —
@@ -411,44 +326,13 @@ writes to the OS app-data dir (`TALLYBOT_STATE_FILE`, set by the Rust shell).
 
 ---
 
-## Roadmap (Not Yet Designed)
+## Simulators and dev tools
 
-- Web UI accessible from other devices on the network
-- Multi-switcher support
-- Per-device colour/appearance customisation in UI (per-device brightness is already v1)
-- Non-ATEM input sources (e.g. OBS as a switcher) — a deferred refactor; see `GOALS.md`
+See [`tools/README.md`](../tools/README.md) for the ATEM simulator, tally-client
+simulator, `sidecar-dev` REPL, and the end-to-end test harness.
 
-The **Tauri sidecar IPC event schema** is no longer an open design question: its shape is
-now determined by `GOALS.md` (device / input / source / program-gate), and writing it is
-the Phase 0 deliverable (see `PHASES.md`).
+---
 
-### OBS Integration (obs-websocket)
+## Roadmap
 
-When OBS is the streaming application, a scene change in OBS can render ATEM tally
-meaningless — if OBS switches away from the scene containing the ATEM feed, all cameras
-are effectively off-air regardless of what the ATEM is doing.
-
-The proposed integration connects the sidecar to OBS via obs-websocket and monitors the
-active scene. When OBS is on a scene that does not contain the ATEM feed, the sidecar
-overrides all device colours to Idle. When OBS is back on the ATEM scene, normal tally
-resumes.
-
-**Decided — tally authority:** the **ATEM always drives per-input tally**; OBS contributes
-only a global **program-gate override** that forces every device to Idle when its active
-scene does not contain the ATEM feed. (OBS taking full per-camera control would require
-per-input tally data it does not expose.) The program-gate is modelled in the IPC schema
-from v1 — present but inactive until an override source is configured — so adding OBS *as
-an override* is cheap. OBS *as an input source* (switching cameras in OBS instead of on
-the ATEM) is a separate, deferred refactor. See `GOALS.md`.
-
-### ATEM and Tally Client Simulators
-
-To allow development and testing without physical hardware:
-
-- **ATEM simulator:** a stub of the atem-connection library, exposing the same API but with hardcoded or configurable state. This allows the sidecar and UI to be developed and tested without an actual ATEM switcher. it should include controls for changing program/preview state to verify the full data flow.
-- **Tally client simulator:** a script that connects to the sidecar's TCP server,
-  sends a HELLO with a configurable fake MAC address, and logs incoming SET_COLOR
-  commands to the terminal. Allows the full server-side path to be verified without
-  ESP32 hardware.
-
-Both simulators should live in a /tools directory in the repo.
+Future work is tracked in [`docs/milestones/roadmap.md`](milestones/roadmap.md).

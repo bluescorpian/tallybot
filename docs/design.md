@@ -4,9 +4,9 @@ The **visual and interaction design** for the desktop app. This is frontend-only
 backend, protocol, and schema work doesn't need it, and it shouldn't bleed into those
 sessions.
 
-It builds on the model in [`GOALS.md`](GOALS.md) — *source*, *input*, *device/light*,
+It builds on the model in [`docs/goals.md`](goals.md) — *source*, *input*, *device/light*,
 *assignment*, *program/preview/idle*, the unassigned *setup colour*, and the program
-*override*. Where `GOALS.md` defines behavioural intent, this file defines what the UI
+*override*. Where `docs/goals.md` defines behavioural intent, this file defines what the UI
 looks like and how you manipulate it.
 
 ---
@@ -116,7 +116,7 @@ Configuration of **lights and inputs happens here, on the canvas**, never in set
   by **−/+** buttons, with the exact level read out in the middle of the bar. The UI maps
   the 0–10 level to the protocol's 0–255 brightness byte (`BrightnessBar.svelte`; level 5
   ≈ the default byte 128).
-- Input **labels come from the source** (per `GOALS.md`), so they aren't edited here.
+- Input **labels come from the source** (per `docs/goals.md`), so they aren't edited here.
 
 ---
 
@@ -163,7 +163,7 @@ Three groups, in this order:
   assistive secondary one.
 - **OBS override** — shown but **greyed / "Coming soon"**. Designed-for, built-later
   (the program-gate is in the schema from v1; only the OBS override *source* is deferred —
-  see `GOALS.md`).
+  see `docs/goals.md`).
 
 **General**
 - **Launch on system startup** — toggle. Serves the "set up once, forget during the
@@ -287,7 +287,7 @@ component as they are built.
 #### UI vs. device colours
 
 **The on-screen colours are not the physical LED colours.** The device LEDs are defined in
-[`ARCHITECTURE.md`](ARCHITECTURE.md); the UI mimics a real ATEM switch *face*, so it tunes
+[`docs/architecture.md`](architecture.md); the UI mimics a real ATEM switch *face*, so it tunes
 for skeuomorphic realism and for the off-white board, not for an LED-exact match. Two
 states diverge deliberately:
 
@@ -328,7 +328,7 @@ style, Lucide icons) on Tailwind v4; the canvas itself is bespoke. Tokens live i
     traces and the override→gate link, exposed as the `signal` utility colour. This is the
     *colour* only; the trace's visual treatment is still open (see below).
 - **Tally state colours** (live red / preview green / idle grey) *approximate* the device
-  LED values in [`ARCHITECTURE.md`](ARCHITECTURE.md) but don't match them — idle is a light
+  LED values in [`docs/architecture.md`](architecture.md) but don't match them — idle is a light
   grey here (the LED is dim white) and **disconnected** greys out (the LED goes blue). See
   "UI vs. device colours" above for the full mapping and rationale. Tokens live in
   `layout.css`: `--live`, `--preview`, `--idle`.

@@ -1,3 +1,5 @@
+> Archived post-MVP. Active work → [docs/milestones/](../milestones/).
+
 # TallyBot — Build Phases
 
 This document scopes the build into phases: *what* each phase covers, *what it depends

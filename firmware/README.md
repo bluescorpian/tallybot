@@ -3,8 +3,7 @@
 ESP32-C3 device firmware — the **tally light** end of TallyBot. On the wire it's a TCP
 *client*: it discovers the sidecar over UDP, connects, sends `HELLO` then `HEARTBEAT`s,
 and applies `SET_COLOR` / `IDENTIFY` commands to the onboard LED. See
-[`../ARCHITECTURE.md`](../ARCHITECTURE.md) for the protocol and
-[`../PHASES.md`](../PHASES.md) for the build sequence.
+[`docs/architecture.md`](../docs/architecture.md) for the protocol.
 
 > **Status — tally client (Phase 3).** [`src/main.cpp`](src/main.cpp) is the full
 > device: WiFi provisioning via a captive portal, UDP discovery, the TCP binary
@@ -117,7 +116,7 @@ PROVISIONING → DISCOVERING → CONNECTING → CONNECTED → BACKOFF → (redis
 The `SET_COLOR` **brightness byte is perceptual**, so the firmware gamma-corrects it
 (FastLED `applyGamma_video`, γ≈2.5) before driving the LED — the device is the single home
 for that correction, so the sidecar and UI keep their 0–255 / 0–10 mappings linear
-(`../ARCHITECTURE.md`, "Brightness is a perceptual value").
+(`docs/architecture.md`, "Brightness is a perceptual value").
 
 `src/protocol.h` is the cross-language contract — constants, framing, and the
 encode/decode helpers — and must stay in lockstep with the sidecar's `protocol.ts`.
@@ -125,6 +124,5 @@ encode/decode helpers — and must stay in lockstep with the sidecar's `protocol
 ## Next
 
 The firmware is independent of the rest of the app once the protocol is fixed. Remaining
-work lives elsewhere (see [`../PHASES.md`](../PHASES.md)): Phase 5 wires the sidecar into
-the Tauri shell and packages it. Firmware OTA updates are a roadmap item
-([`../ARCHITECTURE.md`](../ARCHITECTURE.md)), not part of v1.
+work lives elsewhere. Firmware OTA updates are a roadmap item
+([`docs/milestones/roadmap.md`](../docs/milestones/roadmap.md)), not part of v1.

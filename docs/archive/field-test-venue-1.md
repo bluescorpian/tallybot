@@ -1,3 +1,5 @@
+> Archived post-MVP. Active work → [docs/milestones/v1.1-production-hardening.md](../milestones/v1.1-production-hardening.md).
+
 # Field-Test Findings — Venue Test, June 2026
 
 Notes and remediation plan from the second on-site test. The app side went well: the

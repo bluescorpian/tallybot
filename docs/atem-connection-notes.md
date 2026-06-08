@@ -459,6 +459,20 @@ a transition whose `incomingInput` is `0`/a still must still leave the non-invol
 
 ---
 
+## Why atem-connection (not the official SDK or Videohub)
+
+**Official Blackmagic SDK:** COM-based (Windows Component Object Model) — only works on
+Windows and macOS, requires ATEM Software Control to be installed, and produces
+unidiomatic C# via COM interop. atem-connection is cross-platform, has no install
+dependency, and is significantly more actively maintained.
+
+**Videohub TCP protocol (port 9990):** a simple text-based TCP interface that exposes
+program/preview routing — sufficient for tally alone, but read-only. It cannot be used to
+control the switcher. Rejected in favour of atem-connection which enables full control for
+the future roadmap.
+
+---
+
 [#106]: https://github.com/Sofie-Automation/sofie-atem-connection/issues/106
 [#125]: https://github.com/Sofie-Automation/sofie-atem-connection/issues/125
 [#133]: https://github.com/Sofie-Automation/sofie-atem-connection/issues/133

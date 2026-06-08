@@ -1,13 +1,13 @@
 # TallyBot — Goals & Product Decisions
 
 This file is the **north star** for what the system should *do* and *feel like*. It holds
-the product intent and the decisions behind it. Where `ARCHITECTURE.md` says *how* the
-system works and `PHASES.md` says *when* things get built, this file says *what we're
+the product intent and the decisions behind it. Where `docs/architecture.md` says *how* the
+system works, this file says *what we're
 building and why* — and it is the document a contributor (or agent) should read before
 designing the IPC schema, the settings surface, or the UI, so the patterns they create
 match the intended model.
 
-Decisions here are the source of truth for product/UX intent. Keep `ARCHITECTURE.md`
+Decisions here are the source of truth for product/UX intent. Keep `docs/architecture.md`
 consistent with it.
 
 ---
@@ -20,7 +20,7 @@ live, on preview, or idle. Setup is zero-config on the network and friendly to
 non-technical users; runtime is reliable on unknown networks and demands no interaction
 during a production.
 
-*(Derived from `ARCHITECTURE.md`; correct if the framing is off.)*
+*(Derived from `docs/architecture.md`; correct if the framing is off.)*
 
 ---
 
@@ -81,8 +81,9 @@ These are settled product decisions; they have wide impact on the schema and UX.
    way to tell apart lights that share an input.
 4. **Input names come from the source.** TallyBot mirrors the ATEM's own input labels
    rather than asking the user to name everything.
-5. **Unassigned devices get a distinct setup colour** and appear in the UI for
-   assignment, rather than staying dark or masquerading as idle.
+5. **Unassigned devices get a distinct setup colour** (white, slow breathe — see
+   [`docs/led.md`](led.md) state 5) and appear in the UI for assignment, rather than
+   staying dark or masquerading as idle.
 6. **Devices have no user names.** A light is identified by its MAC (a short tail in the
    UI) plus flash-to-identify — there is no nickname field in the schema.
 
@@ -98,7 +99,7 @@ These are settled product decisions; they have wide impact on the schema and UX.
   identifiers; surface only a short **MAC tail** where an identifier is unavoidable, and
   keep the rest of the plumbing hidden.
 - **Reliable on unknown networks.** Favour simplicity and graceful reconnection over
-  features. *(See `ARCHITECTURE.md` for the same-subnet limitation.)*
+  features. *(See [`docs/architecture.md`](architecture.md) for the same-subnet limitation.)*
 
 ---
 
@@ -115,7 +116,6 @@ These are settled product decisions; they have wide impact on the schema and UX.
 
 ## Still to decide
 
-- The exact **setup colour** for unassigned devices.
 - For OBS specifically: the **override** path is the modelled, cheap one (the program-gate
   is already in the schema); OBS as an **input source** would need the deferred source
   refactor. Which to build first isn't locked.

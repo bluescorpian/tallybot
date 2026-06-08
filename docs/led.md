@@ -2,13 +2,13 @@
 
 > **Status: device-local states implemented & bench-verified (June 2026); server-driven
 > states pending.** This is the source of truth for the LED palette, from the field test
-> (see [`FIELD-TEST-FINDINGS.md`](FIELD-TEST-FINDINGS.md), Issue 3). The **device-local**
-> states (boot self-test, provisioning, joining/lost-WiFi, searching, lost-server, plus the
-> 10% local brightness and the connect-gap white breathe) are live in
-> [`firmware/src/main.cpp`](firmware/src/main.cpp). Still **pending** (needs the sidecar): the
-> server-driven states (live/preview/idle/fault) and changing the `SETUP_COLOR` in
-> [`app/sidecar/src/protocol.ts`](app/sidecar/src/protocol.ts) from magenta to the white
-> breathe. `ARCHITECTURE.md` / `DESIGN.md` should link here.
+> (see [`docs/archive/field-test-venue-1.md`](archive/field-test-venue-1.md), Issue 3). The
+> **device-local** states (boot self-test, provisioning, joining/lost-WiFi, searching,
+> lost-server, plus the 10% local brightness and the connect-gap white breathe) are live in
+> [`firmware/src/main.cpp`](../firmware/src/main.cpp). Still **pending** (needs the sidecar):
+> the server-driven states (live/preview/idle/fault) and changing the `SETUP_COLOR` in
+> [`app/sidecar/src/protocol.ts`](../app/sidecar/src/protocol.ts) from magenta to the white
+> breathe. Tracked in [`docs/milestones/v1.1-production-hardening.md`](milestones/v1.1-production-hardening.md).
 
 The tally light has a **single** WS2812 LED on GPIO8. State is therefore carried by two
 axes: **hue** and **motion** (steady / pulse / slow-blink / fast-blink / flash). The design
@@ -28,7 +28,7 @@ must be related (the two blues; the amber WiFi family).
    - **Blue** → **WiFi is fine, the TallyBot PC/app** is the problem (check the computer).
    - **Red/Green/White** → normal tally (the show is running).
 4. **Never show a false "clear."** Idle dim-white is only ever server-driven and only when
-   the source is genuinely trusted (see `ARCHITECTURE.md`, "Failure signalling"). Device-local
+   the source is genuinely trusted (see `docs/architecture.md`, "Failure signalling"). Device-local
    uncertainty is never dim-white.
 
 ## The states
@@ -68,7 +68,7 @@ glance. Idle stays the only static white, preserving the "never a false clear" r
 
 ## Why the two blues, and why amber vs blue
 
-`ARCHITECTURE.md` keeps **two blues, one meaning — "don't trust this light"**: **steady**
+`docs/architecture.md` keeps **two blues, one meaning — "don't trust this light"**: **steady**
 blue is device-local (it lost the server), **flashing** blue is server-driven (the source is
 untrusted). We preserve that. The new split is one level up:
 

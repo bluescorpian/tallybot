@@ -3,8 +3,8 @@
 WiFi camera tally light system for live video production. A Tauri desktop app reads
 ATEM Mini switcher state and drives ESP32-C3 LED devices over WiFi.
 
-**[`ARCHITECTURE.md`](ARCHITECTURE.md) is the source of truth** for design decisions,
-the network/binary protocol, and rationale. Read it before changing anything
+**[`docs/architecture.md`](docs/architecture.md) is the source of truth** for design
+decisions, the network/binary protocol, and rationale. Read it before changing anything
 structural. This file is the working guide; keep the two consistent.
 
 ## Repository layout
@@ -22,7 +22,7 @@ drift as the project grows.
 - **Sidecar** is the brain: it connects to the ATEM, runs the TCP server and UDP
   discovery, maps device MACs to ATEM-input assignments, and translates ATEM
   program/preview state into `SET_COLOR` commands.
-- **Svelte UI** talks to the sidecar over Tauri IPC (schema shape set in `GOALS.md` / `DESIGN.md`).
+- **Svelte UI** talks to the sidecar over Tauri IPC (schema shape set in `docs/goals.md` / `docs/design.md`).
 - **Firmware** is a TCP *client*: it discovers the server, connects, sends `HELLO`
   then `HEARTBEAT`s, and applies `SET_COLOR` / `IDENTIFY` commands to the LED.
 
@@ -31,7 +31,7 @@ Data flow: `ATEM state change → sidecar → TCP → ESP32 → WS2812 LED`.
 ## Protocol quick reference
 
 Length-prefixed binary: every message is `[len][payload…]` (`len` = count of payload
-bytes that follow). Full tables in `ARCHITECTURE.md`.
+bytes that follow). Full tables in `docs/architecture.md`.
 
 - **Discovery (UDP 7001):** device broadcasts `TALLY_FIND`; server replies/broadcasts
   `TALLY_HERE:7000`.
@@ -42,8 +42,8 @@ bytes that follow). Full tables in `ARCHITECTURE.md`.
   + `MIN_SUPPORTED` and adapts to older devices (warns below `MIN_SUPPORTED`).
 - **Colours:** Live `255,0,0` · Preview `0,255,0` · Idle `30,30,30` (dim white) ·
   Disconnected `0,0,255` (device-local steady blue) · Fault `0,0,255` flashing
-  (server-driven, when the source can't be trusted — never idle). Default
-  brightness `128`. See `ARCHITECTURE.md` "Failure signalling".
+  (server-driven, when the source can't be trusted — never idle). Default brightness `128`.
+  Full palette in `docs/led.md`.
 - **Identity:** devices are keyed by MAC address.
 
 ## Dev environment (NixOS)
@@ -80,13 +80,14 @@ cd app && cargo tauri dev           # run desktop app (compiles the Rust shell)
 cd app && cargo tauri build         # production build
 cd app && pnpm build                # frontend only -> app/build
 
-# Firmware (PlatformIO) — not yet scaffolded
+# Firmware (PlatformIO)
 cd firmware && pio run              # build
 cd firmware && pio run -t upload    # flash
 cd firmware && pio device monitor   # serial @ 115200
 
-# Sidecar (Node.js) — not yet built
+# Sidecar (Node.js) — standalone dev
 cd app/sidecar && pnpm install
+cd app/sidecar && pnpm start        # run with FakeAtem
 ```
 
 ## Firmware gotchas (ESP32-C3 SuperMini) — these will bite you
@@ -95,8 +96,9 @@ cd app/sidecar && pnpm install
    board looks dead. Always drive the LED via FastLED.
 2. **Never sleep.** Deep/light sleep lets the power bank's auto-off cut power
    (low-current detection). Keep WiFi active (~80–130 mA).
-3. **WiFi TX power fallback.** On older C3 boards, call
-   `WiFi.setTxPower(WIFI_POWER_8_5dBm)` before `WiFi.begin()` if WiFi won't connect.
+3. **WiFi TX power.** Start at full power; only fall back to `WIFI_POWER_8_5dBm` after a
+   failed association attempt (older C3 boards with a weak antenna). Never cap it
+   unconditionally — it slashes uplink range on venue APs.
 
 ## Conventions
 
@@ -111,15 +113,18 @@ cd app/sidecar && pnpm install
 
 ## Reference documents — what they cover and when to load them
 
-These docs sit at the repo root (or near it). Load them on demand; don't bulk-load.
+Docs live in `docs/`. Load them on demand; don't bulk-load.
 
 | File | Covers | Load when… |
 |------|--------|------------|
-| **`ARCHITECTURE.md`** | Source-of-truth: protocol spec, IPC schema, network topology, failure modes, design rationale. | Touching the binary protocol, TCP/UDP server, ATEM adapter, IPC bridge, or any structural decision. Always read before a structural change. |
-| **`GOALS.md`** | Product intent and user-facing decisions (what we're building and why). | Evaluating whether a feature belongs in the product, or reconciling a tradeoff against user intent. |
-| **`PHASES.md`** | Build phases — scope and sequencing of each phase. | Planning what to build next, checking what's in-scope for the current phase, or understanding what a phase depends on. |
-| **`DESIGN.md`** | UI visual and interaction design: house style, locked primitives, IPC UI schema, open design questions. | Any frontend / Svelte UI work. Not needed for backend, protocol, or firmware work. |
-| **`ATEM-CONNECTION-NOTES.md`** | Sharp edges and gotchas with the `atem-connection` library; field-test findings. | Debugging ATEM connectivity, extending the ATEM adapter, or integrating new ATEM state. |
+| **`docs/architecture.md`** | Source-of-truth: protocol spec, IPC schema, network topology, failure modes, packaging. | Touching the binary protocol, TCP/UDP server, ATEM adapter, IPC bridge, or any structural decision. Always read before a structural change. |
+| **`docs/goals.md`** | Product intent and user-facing decisions (what we're building and why). | Evaluating whether a feature belongs in the product, or reconciling a tradeoff against user intent. |
+| **`docs/design.md`** | UI visual and interaction design: house style, locked primitives, IPC UI schema, open design questions. | Any frontend / Svelte UI work. Not needed for backend, protocol, or firmware work. |
+| **`docs/led.md`** | LED palette: every device state, colour, motion, and the design rules. | Touching LED state logic in firmware or sidecar, or discussing device-visible states. |
+| **`docs/atem-connection-notes.md`** | Sharp edges and gotchas with the `atem-connection` library; field-test findings. | Debugging ATEM connectivity, extending the ATEM adapter, or integrating new ATEM state. |
+| **`docs/packaging-windows.md`** | Step-by-step Windows build guide. | Building or testing the Windows portable binary. |
+| **`docs/milestones/v1.1-production-hardening.md`** | Active next milestone: WiFi reliability, diagnostics, LED palette completion. | Planning or starting post-MVP work. |
+| **`docs/milestones/roadmap.md`** | Deferred / future work (OTA, web UI, OBS, multi-switcher). | Evaluating roadmap items or planning beyond v1.1. |
 | **`app/sidecar/SIDECAR.md`** | How the Node.js sidecar process works alongside Tauri: lifecycle, IPC transport, why this pattern. | Working on Tauri ↔ sidecar integration, the sidecar launch/shutdown flow, or IPC transport internals. |
 | **`app/sidecar/README.md`** | Day-to-day sidecar dev guide: how to run, test, and iterate on the sidecar in isolation. | Running or debugging the sidecar standalone, onboarding to sidecar development. |
 | **`tools/README.md`** | Hardware simulators: FakeAtem, fake ESP32 TCP client, sidecar-dev REPL, end-to-end test. | Using or extending the dev tools; hardware-free testing. |
@@ -128,30 +133,21 @@ The `.exploration/` subtree holds vendored source snapshots for research only �
 
 ## Status
 
-Per-phase status and acceptance criteria live in [`PHASES.md`](PHASES.md); the
-outstanding worklist (what to build next, in order) is in [`TODO.md`](TODO.md). Summary:
+MVP is complete. All build phases are done and hardware-verified. The next milestone is
+production hardening — see [`docs/milestones/v1.1-production-hardening.md`](docs/milestones/v1.1-production-hardening.md).
 
-- **app/sidecar/** — **Phase 2 done**: tally engine, device server (TCP/UDP), ATEM
-  adapter (real `atem-connection` behind an `AtemLike` seam), config store, IPC bridge,
-  and the orchestrator that wires them — built and tested (`pnpm start` runs it).
-- **app/ UI** — **Phase 4 done**: the board, settings drawer, and frameless chrome —
-  including per-device brightness and the settings ATEM **Scan** — now run on the **live
-  sidecar IPC stream** (`src/lib/ipc.svelte.ts`), with a mock fallback when not under Tauri
-  so the `/preview` design workflow still works.
-- **app/ shell** — **Phase 5 bridge built**: `src-tauri/src/lib.rs` spawns the Node sidecar
-  via `tauri-plugin-shell`, forwards its NDJSON stdout to the UI as `"sidecar"` events, and a
-  `send_to_sidecar` command pumps `UiCommand`s to its stdin; the child is killed on exit, so
-  `cargo tauri dev` runs the real app against the real sidecar. **Remaining: packaging** (open
-  decision — single-binary proved impractical for `atem-connection`; the dev spawn runs `node`
-  on the sidecar source, marked `// PACKAGING:` — see `TODO.md`).
-- **firmware/** — **Phase 3 done**: the full tally client (`platformio.ini`, `src/main.cpp`,
-  `src/protocol.h`) — WiFiManager captive-portal provisioning, UDP discovery, the TCP binary
-  protocol, and the LED state machine. Builds with `pio run` and **verified on a physical
-  ESP32-C3**: provision → discover → connect → live/preview/idle tally → identify → per-device
-  brightness, all against the standalone sidecar. `protocol.h` mirrors `protocol.ts`.
-- **tools/** — Phase 1 simulators + the Phase 2 dev runner: ATEM simulator (`FakeAtem`)
-  and tally-client simulator (a fake ESP32 over TCP), plus `sidecar-dev` (drive the real
-  sidecar against the `FakeAtem` from a REPL) and an end-to-end test. See `tools/README.md`.
-
-Roadmap items (OTA, web UI, multi-switcher, OBS integration, simulators) are in
-`ARCHITECTURE.md`.
+- **app/sidecar/** — tally engine, device server (TCP/UDP), ATEM adapter (real
+  `atem-connection` behind an `AtemLike` seam), config store, IPC bridge, and the
+  orchestrator — built and tested.
+- **app/ UI** — the board, settings drawer, and frameless chrome, running on the live
+  sidecar IPC stream (`src/lib/ipc.svelte.ts`), with a mock fallback for the `/preview`
+  design workflow.
+- **app/ shell** — `src-tauri/src/lib.rs` spawns the Node sidecar via
+  `tauri-plugin-shell`, forwards NDJSON stdout to the UI as `"sidecar"` events, and
+  exposes `send_to_sidecar` for UI → sidecar commands. Packaging is solved: single-binary
+  sidecar via `@yao-pkg/pkg`, wired into `cargo tauri build`.
+- **firmware/** — full tally client: WiFiManager captive-portal provisioning, UDP
+  discovery, TCP binary protocol, LED state machine with per-phase colours. Verified on a
+  physical ESP32-C3. `protocol.h` mirrors `protocol.ts`.
+- **tools/** — ATEM simulator (`FakeAtem`), tally-client simulator, `sidecar-dev` REPL,
+  and end-to-end test. See `tools/README.md`.
