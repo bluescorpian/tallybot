@@ -8,7 +8,7 @@
 > [`firmware/src/main.cpp`](../firmware/src/main.cpp). Still **pending** (needs the sidecar):
 > the server-driven states (live/preview/idle/fault) and changing the `SETUP_COLOR` in
 > [`app/sidecar/src/protocol.ts`](../app/sidecar/src/protocol.ts) from magenta to the white
-> breathe. Tracked in [`docs/milestones/v1.1-production-hardening.md`](milestones/v1.1-production-hardening.md).
+> breathe.
 
 The tally light has a **single** WS2812 LED on GPIO8. State is therefore carried by two
 axes: **hue** and **motion** (steady / pulse / slow-blink / fast-blink / flash). The design

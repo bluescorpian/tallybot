@@ -7,6 +7,13 @@ ATEM Mini switcher state and drives ESP32-C3 LED devices over WiFi.
 decisions, the network/binary protocol, and rationale. Read it before changing anything
 structural. This file is the working guide; keep the two consistent.
 
+> **Keep this file true.** CLAUDE.md is always in context and is the source of truth for
+> project status — including the **active milestone** (see [Status](#status)). If a change
+> you make falsifies a claim here — status moves, a path changes, a gotcha is resolved, a
+> command changes, the active milestone ships — **propose an update to this file in the same
+> turn** rather than letting it drift. Don't silently rewrite it; surface the proposed edit
+> to the user.
+
 ## Repository layout
 
 - `app/` — Tauri 2 desktop app: SvelteKit UI (`src/`), Rust shell (`src-tauri/`),
@@ -123,7 +130,7 @@ Docs live in `docs/`. Load them on demand; don't bulk-load.
 | **`docs/led.md`** | LED palette: every device state, colour, motion, and the design rules. | Touching LED state logic in firmware or sidecar, or discussing device-visible states. |
 | **`docs/atem-connection-notes.md`** | Sharp edges and gotchas with the `atem-connection` library; field-test findings. | Debugging ATEM connectivity, extending the ATEM adapter, or integrating new ATEM state. |
 | **`docs/packaging-windows.md`** | Step-by-step Windows build guide. | Building or testing the Windows portable binary. |
-| **`docs/milestones/v1.1-production-hardening.md`** | Active next milestone: WiFi reliability, diagnostics, LED palette completion. | Planning or starting post-MVP work. |
+| **`docs/milestones/v1.1-production-hardening.md`** | Production-hardening worklist: WiFi reliability, diagnostics, LED palette completion. (Status below names the active milestone.) | Planning or starting post-MVP work. |
 | **`docs/milestones/roadmap.md`** | Deferred / future work (OTA, web UI, OBS, multi-switcher). | Evaluating roadmap items or planning beyond v1.1. |
 | **`app/sidecar/SIDECAR.md`** | How the Node.js sidecar process works alongside Tauri: lifecycle, IPC transport, why this pattern. | Working on Tauri ↔ sidecar integration, the sidecar launch/shutdown flow, or IPC transport internals. |
 | **`app/sidecar/README.md`** | Day-to-day sidecar dev guide: how to run, test, and iterate on the sidecar in isolation. | Running or debugging the sidecar standalone, onboarding to sidecar development. |

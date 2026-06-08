@@ -24,6 +24,20 @@ during a production.
 
 ---
 
+## Positioning — the differentiator
+
+The primary differentiator over every existing open-source tally project is a **"buy the
+hardware, install the app, you're done"** experience. No soldering (the ESP32-C3 SuperMini
+V2 has an onboard WS2812 LED — it is a complete tally light as shipped), no Arduino IDE, no
+hardcoded IPs, no terminal commands. A non-technical church volunteer should be able to
+provision a tally light and assign it to a camera in under five minutes.
+
+No competitor has a native desktop app with bundled provisioning. That gap is what the
+onboarding and transport work on the roadmap fills — see
+[`docs/milestones/roadmap.md`](milestones/roadmap.md).
+
+---
+
 ## Core concepts (the vocabulary the schema should mirror)
 
 The system is built around a small, layered model. The IPC schema, the persisted state,

@@ -1,4 +1,4 @@
-> Archived post-MVP. Active work → [docs/milestones/v1.1-production-hardening.md](../milestones/v1.1-production-hardening.md).
+> Archived post-MVP. Active work → [docs/milestones/](../milestones/).
 
 # Field-Test Findings — Venue Test, June 2026
 

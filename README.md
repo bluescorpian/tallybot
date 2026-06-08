@@ -79,8 +79,7 @@ navigate to `192.168.4.1` to enter your network credentials.
 | [`docs/led.md`](docs/led.md) | LED palette: every device state, colour, and motion |
 | [`docs/atem-connection-notes.md`](docs/atem-connection-notes.md) | Sharp edges with the atem-connection library |
 | [`docs/packaging-windows.md`](docs/packaging-windows.md) | Building the Windows portable binary |
-| [`docs/milestones/v1.1-production-hardening.md`](docs/milestones/v1.1-production-hardening.md) | Active next milestone |
-| [`docs/milestones/roadmap.md`](docs/milestones/roadmap.md) | Deferred / future work |
+| [`docs/milestones/`](docs/milestones/) | Current milestone work and the future roadmap |
 
 ## License
 
