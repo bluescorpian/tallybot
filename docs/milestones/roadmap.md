@@ -10,10 +10,11 @@ The product thesis these items serve — the "buy hardware, install app, done" d
 
 ## Onboarding & transport (near-term focus)
 
-The next things to build. These have settled design decisions; they're here rather than in
-a milestone doc until they're scheduled with acceptance criteria.
+These have settled design decisions and are scheduled into milestones: items 1+2 form
+[v1.2 — Zero-Friction Onboarding](v1.2-zero-friction-onboarding.md); item 3 follows in
+[v1.3 — ESP-NOW Transport](v1.3-esp-now-transport.md).
 
-### 1. In-app firmware flashing
+### 1. In-app firmware flashing — [v1.2](v1.2-zero-friction-onboarding.md)
 
 The app detects an ESP32-C3 plugged in via USB-C, offers to flash the TallyBot firmware,
 and handles the whole process without the user touching any external tools.
@@ -32,7 +33,7 @@ inside the desktop app as one unified flow is the step nobody has taken.
 **Enables OTA** (see below): once delivery + write infrastructure exists, over-the-air is
 the same machinery aimed at a connected device instead of a USB one.
 
-### 2. USB serial provisioning
+### 2. USB serial provisioning — [v1.2](v1.2-zero-friction-onboarding.md)
 
 Immediately after flashing, while the device is still plugged in, the app sends WiFi
 credentials over the serial connection. The user never switches their laptop's WiFi network.
@@ -56,11 +57,11 @@ stays in the firmware but leaves the primary user-facing story.
 enters SSID + password → app flashes, then sends creds over serial → device reboots, joins
 WiFi, appears via UDP discovery → user types "Camera 1" → unplug, mount, power from a bank.
 
-### 3. ESP-NOW transport — active focus (June 2026)
+### 3. ESP-NOW transport — [v1.3](v1.3-esp-now-transport.md)
 
-The near-term build. After the second venue test, WiFi-join reliability proved to be
-dominated by venue access-point *policy* the device can't change (a weak-signal / min-RSSI
-kick), so this is the path being pursued now for dependable venue connectivity. A bridge
+After the second venue test, WiFi-join reliability proved to be dominated by venue
+access-point *policy* the device can't change (a weak-signal / min-RSSI kick); this
+transport sidesteps it entirely. A bridge
 dongle (the *same* ESP32-C3 SuperMini hardware running bridge firmware) plugs into the
 streaming PC via USB and talks to tally lights over **ESP-NOW** — Espressif's peer-to-peer
 MAC-layer protocol that needs no AP, router, or network infrastructure.
@@ -70,9 +71,9 @@ MAC-layer protocol that needs no AP, router, or network infrastructure.
   Simultaneous dual-transport was evaluated and **rejected** — possible, but it adds
   firmware/app/channel-coordination complexity to solve a narrow failure already covered by
   robust reconnection.
-- **Bridge dongle:** same hardware (no new parts), dedicated firmware, plugged into the PC
-  permanently during operation; relays ESP-NOW ↔ USB serial to the sidecar over the same
-  serial infrastructure used for flashing/provisioning.
+- **Bridge dongle:** same hardware, same firmware — any USB-connected device can be
+  designated as a bridge in the UI, at which point it relays commands to nearby ESP-NOW
+  lights instead of acting as a tally light.
 - **Discovery** mirrors the UDP broadcast logic one layer down: lights broadcast
   `TALLY_FIND` to the ESP-NOW broadcast MAC; the bridge registers the light as a peer and
   unicasts `TALLY_HERE` back; the light registers the bridge, sends HELLO, receives
