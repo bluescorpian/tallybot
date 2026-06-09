@@ -120,6 +120,18 @@ const BREATHE_PERIOD_MS = 10_000;
 const BREATHE_FLOOR = 0.1;
 /** The "off" phase of the fault flash — the LED dark between blue pulses. */
 const FLASH_OFF: Color = { r: 0, g: 0, b: 0 };
+/**
+ * How often to re-assert every connected device's current colour, regardless of change. Treats
+ * SET_COLOR as periodic *state* rather than a one-shot *event*: a packet lost in flight self-heals
+ * on the next tick. Reliable transports (TCP, USB-CDC) don't need it, but the cost is trivial
+ * (~6 payload bytes × devices/s) and it's applied uniformly so the firmware never has to know its
+ * transport's reliability. It's the safeguard that makes v1.3's fire-and-forget ESP-NOW path
+ * trustworthy — and it lets a light that power-cycles or drifts into range mid-show recover within
+ * a tick, without waiting on a reconnect handshake. Animated devices already re-send every
+ * {@link ANIM_TICK_MS}; this keyframe is their redundant-but-harmless backstop and the only resend
+ * a steady device gets.
+ */
+const REFRESH_PERIOD_MS = 1000;
 
 /**
  * The brightness to drive a breathing device this tick: its configured brightness modulated by
@@ -145,6 +157,14 @@ export interface SidecarAppDeps {
   animClock?: AnimationClock;
   /** Override the animation tick in ms (default {@link ANIM_TICK_MS}); each step advances elapsed time by this. */
   animTickMs?: number;
+  /**
+   * Override the always-on colour-refresh timer (tests inject a steppable clock; reuses the
+   * {@link AnimationClock} seam, but a *separate* instance from {@link animClock} since the two run
+   * independently). Drives the {@link REFRESH_PERIOD_MS} keyframe re-send.
+   */
+  refreshClock?: AnimationClock;
+  /** Override the refresh period in ms (default {@link REFRESH_PERIOD_MS}). */
+  refreshMs?: number;
   /** The subnet sweep behind the settings "Scan" (injectable so tests don't open sockets). */
   scanNetwork?: (log: (message: string) => void) => Promise<SourceScanHit[]>;
   /**
@@ -173,6 +193,8 @@ export class SidecarApp {
   readonly #log: (message: string) => void;
   readonly #animClock: AnimationClock;
   readonly #animTickMs: number;
+  readonly #refreshClock: AnimationClock;
+  readonly #refreshMs: number;
   readonly #scanNetwork: (log: (message: string) => void) => Promise<SourceScanHit[]>;
   readonly #dev: boolean;
 
@@ -188,6 +210,8 @@ export class SidecarApp {
 
   /** Stops the animation clock, or null when nothing is currently animated. */
   #stopAnim: (() => void) | null = null;
+  /** Stops the always-on refresh clock, or null while the app isn't running. */
+  #stopRefresh: (() => void) | null = null;
   /** Elapsed animation time (ms); the flash phase and breathe envelope are both derived from it. */
   #animMs = 0;
 
@@ -204,6 +228,8 @@ export class SidecarApp {
     this.#log = deps.log ?? ((message) => process.stderr.write(`${message}\n`));
     this.#animClock = deps.animClock ?? realAnimationClock;
     this.#animTickMs = deps.animTickMs ?? ANIM_TICK_MS;
+    this.#refreshClock = deps.refreshClock ?? realAnimationClock;
+    this.#refreshMs = deps.refreshMs ?? REFRESH_PERIOD_MS;
     this.#scanNetwork = deps.scanNetwork ?? scanNetwork;
     this.#dev = deps.dev ?? false;
     this.#source = deps.atem.snapshot();
@@ -255,11 +281,15 @@ export class SidecarApp {
     const ip = this.#store.sourceIp;
     if (ip) this.#atem.connect(ip); // emits a `change` that will publish; #sync below covers the no-ip case
     this.#sync();
+    // Begin the periodic keyframe re-send (runs for the app's whole life — see REFRESH_PERIOD_MS).
+    this.#stopRefresh = this.#refreshClock.start(this.#refreshMs, () => this.#refresh());
   }
 
   /** Shut down cleanly: stop the animation clock, the server, the ATEM, flush pending writes. */
   async stop(): Promise<void> {
     this.#setAnimating(false);
+    this.#stopRefresh?.();
+    this.#stopRefresh = null;
     this.#ipc.close();
     await this.#atem.disconnect();
     await this.#server.stop();
@@ -370,7 +400,7 @@ export class SidecarApp {
    * on every real change and on every animation tick; the diff in {@link #pushColor} keeps a
    * steady rig quiet — only animated devices re-send.
    */
-  #applyColors(colors: ReadonlyArray<DeviceColor>): void {
+  #applyColors(colors: ReadonlyArray<DeviceColor>, force = false): void {
     let anyAnimated = false;
     for (const target of colors) {
       switch (target.anim) {
@@ -378,18 +408,18 @@ export class SidecarApp {
           anyAnimated = true;
           // Lit for the first half of each cycle, dark for the second — the ~1 Hz fault flash.
           const lit = Math.floor(this.#animMs / FLASH_HALF_MS) % 2 === 0;
-          this.#pushColor({ mac: target.mac, color: lit ? target.color : FLASH_OFF, brightness: target.brightness });
+          this.#pushColor({ mac: target.mac, color: lit ? target.color : FLASH_OFF, brightness: target.brightness }, force);
           break;
         }
         case "breathe": {
           anyAnimated = true;
           // Colour held; brightness swells in a slow sine — the unassigned "alive, waiting" state.
           const brightness = breatheBrightness(this.#animMs, target.brightness);
-          this.#pushColor({ mac: target.mac, color: target.color, brightness });
+          this.#pushColor({ mac: target.mac, color: target.color, brightness }, force);
           break;
         }
         default:
-          this.#pushColor({ mac: target.mac, color: target.color, brightness: target.brightness });
+          this.#pushColor({ mac: target.mac, color: target.color, brightness: target.brightness }, force);
       }
     }
     this.#setAnimating(anyAnimated);
@@ -413,10 +443,25 @@ export class SidecarApp {
     this.#applyColors(colors);
   }
 
-  /** Send SET_COLOR only when the device's target colour actually changed. */
-  #pushColor(target: { mac: string; color: Color; brightness: number }): void {
+  /**
+   * Periodic keyframe: re-assert every connected device's current colour, bypassing the
+   * {@link #pushColor} diff so a packet lost in flight is corrected on the next tick (see
+   * {@link REFRESH_PERIOD_MS}). Recomputes from live state so it always re-sends the *current*
+   * frame, never a stale one. No-op (and no recompute) when nothing is connected.
+   */
+  #refresh(): void {
+    if (this.#online.size === 0) return;
+    const { colors } = computeEngine(this.#source, this.#gate, this.#deviceRecords());
+    this.#applyColors(colors, true);
+  }
+
+  /**
+   * Send SET_COLOR when the device's target colour changed — or unconditionally when `force` is
+   * set (the periodic keyframe re-send). Either way, only a successful send updates {@link #lastColor}.
+   */
+  #pushColor(target: { mac: string; color: Color; brightness: number }, force = false): void {
     const last = this.#lastColor.get(target.mac);
-    if (last && colorsEqual(last, target)) return;
+    if (!force && last && colorsEqual(last, target)) return;
     if (this.#server.sendColor(target.mac, target.color, target.brightness)) {
       this.#lastColor.set(target.mac, { color: target.color, brightness: target.brightness });
     }

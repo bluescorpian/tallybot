@@ -144,6 +144,17 @@ socket is closed.
 SET_COLOR sets the WS2812 LED (R/G/B and brightness each 0-255). IDENTIFY causes the
 device to flash briefly so the user can physically locate it during setup.
 
+**SET_COLOR is idempotent state, not a one-shot event.** The sidecar re-asserts every
+connected device's current colour on a ~1 s keyframe tick (in addition to sending on change),
+so a packet lost in flight self-heals on the next tick and a device that power-cycles or drifts
+into range mid-show recovers within a tick. The re-send is uniform across all transports: TCP
+and USB-CDC guarantee delivery and don't strictly need it, but the cost is trivial (~6 payload
+bytes × devices/s) and uniformity keeps the firmware a dumb state-renderer that never has to know
+its transport's reliability — the safeguard that makes the v1.3 fire-and-forget ESP-NOW path
+trustworthy. So expect a steady, assigned device to receive a repeating SET_COLOR at ~1 Hz on a
+packet capture; that is the keyframe, not a bug. Animated states (the fault flash, the unassigned
+breathe) re-send far faster as the server streams their frames.
+
 **Brightness is a *perceptual* value, and the device linearizes it.** The byte is "how
 bright it should look," not a raw PWM/drive level — so equal steps in the byte (and in the
 UI's 0–10 levels, which map to it linearly: level 5 ≈ the default 128) should *appear*

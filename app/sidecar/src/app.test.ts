@@ -183,6 +183,7 @@ interface Harness {
   ipc: FakeIpc;
   store: FakeStore;
   anim: FakeAnimClock;
+  refresh: FakeAnimClock;
 }
 
 function setup(
@@ -194,6 +195,7 @@ function setup(
   const ipc = new FakeIpc();
   const store = new FakeStore();
   const anim = new FakeAnimClock();
+  const refresh = new FakeAnimClock();
   const app = new SidecarApp({
     atem,
     deviceServer: server,
@@ -201,10 +203,11 @@ function setup(
     ipc,
     animClock: anim,
     animTickMs: FLASH_HALF_MS, // one step == one flash half-cycle, so flash tests read as toggles
+    refreshClock: refresh, // steppable so the keyframe re-send is deterministic (no real 1 s timer)
     log: () => {},
     ...overrides,
   });
-  return { app, server, atem, ipc, store, anim };
+  return { app, server, atem, ipc, store, anim, refresh };
 }
 
 /** Let an async command handler (which awaits the store) settle. */
@@ -252,6 +255,31 @@ test("a state change that doesn't affect a device's colour is not re-sent", asyn
   atem.set({ ...connectedSource(), previewInput: 3 });
 
   assert.equal(server.sentTo(MAC).length, before, "no redundant SET_COLOR for an unchanged colour");
+});
+
+test("the refresh tick re-asserts a steady device's colour (keyframe for lossy transports)", async () => {
+  const { app, server, ipc, refresh } = setup();
+  await app.start();
+  server.connectDevice(MAC);
+  ipc.command({ type: "assignDevice", mac: MAC, inputId: 1 }); // live
+  await tick();
+  const before = server.sentTo(MAC).length;
+
+  // No state change — a normal #sync would stay quiet (see the test above), but the periodic
+  // keyframe re-sends the current colour unconditionally so a dropped packet self-heals.
+  refresh.step();
+
+  assert.equal(server.sentTo(MAC).length, before + 1, "keyframe re-sends despite no change");
+  assert.deepEqual(server.sentTo(MAC).at(-1)?.color, COLORS.live, "and it's the current colour");
+});
+
+test("the refresh tick does nothing when no device is connected", async () => {
+  const { app, server, refresh } = setup();
+  await app.start();
+
+  refresh.step();
+
+  assert.equal(server.sent.length, 0, "no devices online → no keyframe traffic");
 });
 
 test("changing brightness re-sends the same colour at the new level", async () => {
