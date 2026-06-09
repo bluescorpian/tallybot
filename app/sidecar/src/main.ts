@@ -19,9 +19,11 @@ import { Atem } from "atem-connection";
 
 import { SidecarApp } from "./app.ts";
 import { type AtemLike, AtemSource } from "./atem.ts";
+import { CompositeDeviceServer } from "./composite-device-server.ts";
 import { DeviceServer } from "./device-server.ts";
 import { IpcBridge } from "./ipc-bridge.ts";
 import { ConfigStore } from "./store.ts";
+import { UsbTransport } from "./usb-transport.ts";
 
 // stdout is the NDJSON IPC channel the Tauri shell parses; one stray library log line on
 // it corrupts the stream. `atem-connection`/`threadedClass` log via console.log/info/debug,
@@ -53,10 +55,21 @@ async function main(): Promise<void> {
   // The real Atem's typings are broader than the slice we use; the AtemLike seam is
   // the single point that absorbs that, so the rest of the sidecar stays library-free.
   const atem = new AtemSource(new Atem() as unknown as AtemLike);
-  const deviceServer = new DeviceServer();
   const ipc = new IpcBridge();
 
-  const app = new SidecarApp({ atem, deviceServer, store, ipc });
+  // The device server fans out over both transports, USB preferred when a MAC is on both.
+  // The USB transport rides the same shell↔sidecar bridge `ipc` owns; the shell owns the port.
+  const tcp = new DeviceServer();
+  const usb = new UsbTransport(ipc);
+  const deviceServer = new CompositeDeviceServer(
+    [
+      { transport: "usb", port: usb },
+      { transport: "wifi", port: tcp },
+    ],
+    usb,
+  );
+
+  const app = new SidecarApp({ atem, deviceServer, provisioning: deviceServer, store, ipc });
   await app.start();
   process.stderr.write("tallybot sidecar started\n");
 

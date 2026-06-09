@@ -33,10 +33,12 @@
 
 #include <Arduino.h>
 #include <FastLED.h>
+#include <PacketSerial.h>  // bakercp/PacketSerial — COBS framing over USB-CDC (v1.2)
 #include <Preferences.h>
 #include <WiFi.h>
 #include <WiFiManager.h>  // tzapu/WiFiManager — SoftAP captive portal + NVS creds
 #include <WiFiUdp.h>
+#include <stdarg.h>
 #include <esp_wifi.h>  // esp_wifi_set_country — widen the usable 2.4GHz channel set
 
 #include "protocol.h"
@@ -66,6 +68,11 @@
 #define IDENTIFY_TOGGLE_MS 150       // IDENTIFY flash half-period
 #define IDENTIFY_TOGGLES 6           // total toggles (~0.9s of white/colour blinking)
 #define BRIGHTNESS_GAMMA 2.5f        // perceptual brightness byte → LED drive (see below)
+
+// USB-CDC control channel (v1.2). The shell owns the port; these govern the device side.
+#define USB_HELLO_INTERVAL_MS 1000   // re-announce HELLO until the host sends its first frame
+#define USB_TALLY_IDLE_MS 5000       // USB silence after which we release USB tally ownership
+#define USB_JOIN_TIMEOUT_MS 15000    // SET_WIFI validating-join window before we report failure
 
 // WiFi connection policy (the venue-failure mitigations — see ../../FIELD-TEST-FINDINGS.md).
 #define WIFI_COUNTRY "ZA"            // South Africa: 2.4GHz channels 1–13 (the widest legal set here)
@@ -129,6 +136,26 @@ static FrameDecoder decoder;
 static IPAddress serverIp;
 static uint16_t serverPort = SERVER_PORT;
 static Preferences prefs;  // NVS: TX-power policy + last-failure diagnostics ("tally" namespace)
+
+// ── USB-CDC control channel state (v1.2) ─────────────────────────────────────
+static PacketSerial usbPacket;  // COBS framing bound to Serial (the native USB-CDC port)
+// Transport mode (persisted, NVS "txmode") — what the device does when *unplugged*. Open
+// enum (int, not bool): WIFI joins the saved AP; NOTX disables WiFi (wired-only). Room for 2=ESP-NOW.
+static uint8_t transportMode = TRANSPORT_WIFI;
+static bool wifiEnabled = true;  // = (transportMode == TRANSPORT_WIFI); gates the WiFi state machine
+// USB session bookkeeping.
+static bool hostFrameSeen = false;       // a host frame arrived → stop re-announcing HELLO
+static bool usbTallyActive = false;      // app is driving tally over USB → it wins over local indicators
+static unsigned long lastUsbTallyMsg = 0;
+static unsigned long lastUsbHello = 0;
+// WiFi provisioning-join validation, triggered by SET_WIFI — independent of the discovery SM,
+// so it can validate a join (and stream STATUS) even on a No-TX device while it's on the cable.
+static uint8_t wifiJoinState = WIFI_STATE_IDLE;
+static unsigned long joinStart = 0;
+// Set by onWifiEvent (WiFi-task context) when a validating join hits a definitive auth failure,
+// consumed by serviceWifiJoin (main loop) to report FAILED at once instead of waiting out the
+// full timeout — a wrong password won't become right on the stack's auto-retry.
+static volatile bool joinAuthFailed = false;
 
 // Last WiFi-disconnect diagnostics — surfaced on the SoftAP portal (the "serial monitor over
 // the phone") and persisted so the failure that triggered the portal survives the reboot.
@@ -226,6 +253,14 @@ static void setResting(uint8_t r, uint8_t g, uint8_t b, uint8_t brightness, Moti
   if (!identifyActive) applyColor(r, g, b, computeMotionBrightness(motion, brightness, millis()));
 }
 
+// A *device-local* indicator (the bring-up colours). Suppressed while a USB tally session is
+// active so the app's SET_COLORs win — a USB session presents to the LED exactly like "server
+// connected" (no new LED states; the wired indicator is UI-side only). Server/USB SET_COLOR
+// calls setResting() directly, so they always apply.
+static void setRestingLocal(uint8_t r, uint8_t g, uint8_t b, uint8_t brightness, Motion motion = STEADY) {
+  if (!usbTallyActive) setResting(r, g, b, brightness, motion);
+}
+
 static void startIdentify() {
   identifyActive = true;
   identifyStart = millis();
@@ -266,6 +301,37 @@ static void bootSelfTest() {
   delay(BOOT_TEST_STEP_MS);
 }
 
+// ── USB-CDC control channel (COBS via PacketSerial) ──────────────────────────
+// Frame and write one payload. Non-blocking: usbBegin() sets Serial.setTxTimeoutMs(0), so a
+// host that isn't reading drops bytes rather than stalling the FastLED render loop.
+static void usbSendPayload(const uint8_t* payload, size_t len) { usbPacket.send(payload, len); }
+
+#ifndef TALLYBOT_USB_TEXT_LOG
+// Release builds frame log lines as COBS LOG packets — no raw text on the wire. Best-effort
+// (CDC TX is non-blocking); STATUS is the reliable channel, LOG is human-readable colour.
+static void usbLogf(uint8_t level, const char* fmt, ...) {
+  char msg[200];
+  va_list ap;
+  va_start(ap, fmt);
+  int n = vsnprintf(msg, sizeof(msg), fmt, ap);
+  va_end(ap);
+  if (n < 0) return;
+  size_t mlen = ((size_t)n < sizeof(msg)) ? (size_t)n : sizeof(msg) - 1;
+  uint8_t payload[2 + sizeof(msg)];
+  size_t plen = encodeLogPayload(payload, sizeof(payload), level, msg, mlen);
+  usbSendPayload(payload, plen);
+}
+#endif
+
+// Unified logging. Dev builds (TALLYBOT_USB_TEXT_LOG) print plain text so `pio device monitor`
+// and the exception decoder stay usable; release builds frame each line as a COBS LOG packet
+// the host demuxes to its diagnostics view. printf-style; the level is the LOG_LEVEL_* byte.
+#ifdef TALLYBOT_USB_TEXT_LOG
+#define TLOG(level, ...) Serial.printf(__VA_ARGS__)
+#else
+#define TLOG(level, ...) usbLogf((level), __VA_ARGS__)
+#endif
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 // Lowercase colon form, matching how the server logs a device's MAC.
@@ -303,12 +369,27 @@ static const char* reasonToStr(uint16_t r) {
   }
 }
 
+// Disconnect reasons that mean the password is wrong or the WPA mode mismatches (the same set
+// diagVerdict() calls an auth failure). These don't fix themselves on auto-retry, so a validating
+// join can fail fast on them; a transient scan miss (200/201) is left to the timeout instead.
+static bool isJoinAuthFailure(uint16_t r) {
+  return r == 2 || r == 15 || r == 202 || r == 204;
+}
+
 // ── NVS: TX-power policy + diagnostics ───────────────────────────────────────
 
 static uint8_t loadTxPolicy() { return prefs.getUChar("txpol", TXPOL_FULL); }
 
 static void saveTxPolicy(uint8_t p) {
   if (prefs.getUChar("txpol", 0xFF) != p) prefs.putUChar("txpol", p);  // write only on change
+}
+
+// Transport mode (NVS "txmode"). Stored as an int — an OPEN enum (room for 2=ESP-NOW), never a
+// bool. Default WIFI so existing flashed devices keep their current behaviour after an update.
+static uint8_t loadTransportMode() { return prefs.getUChar("txmode", TRANSPORT_WIFI); }
+
+static void saveTransportMode(uint8_t m) {
+  if (prefs.getUChar("txmode", 0xFF) != m) prefs.putUChar("txmode", m);  // write only on change
 }
 
 static void applyTxPower(uint8_t policy) {
@@ -386,10 +467,16 @@ static void onWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
     diag.lastSsid[n] = '\0';
   }
   diag.valid = true;
+  // Fail a USB validating join fast on a definitive auth failure (we never associated, and the
+  // reason is wrong-password/handshake) — no point waiting out the timeout for a verdict that
+  // won't change. serviceWifiJoin (main loop) acts on this; we only flip the flag here.
+  if (wifiJoinState == WIFI_STATE_JOINING && !associatedSinceConnect && isJoinAuthFailure(reason)) {
+    joinAuthFailed = true;
+  }
   associatedSinceConnect = false;  // this attempt is over; the next must re-associate to count
   saveDiag();
-  Serial.printf("WiFi disconnect: raw=%u (%s) kept=%u assoc=%d ssid=\"%s\" rssi=%d\n", reason,
-                reasonToStr(reason), diag.lastReason, diag.associated, diag.lastSsid, diag.lastRssi);
+  TLOG(LOG_LEVEL_WARN, "WiFi disconnect: raw=%u (%s) kept=%u assoc=%d ssid=\"%s\" rssi=%d\n", reason,
+       reasonToStr(reason), diag.lastReason, diag.associated, diag.lastSsid, diag.lastRssi);
 }
 
 // A one-line plain-English read of the last failure — the "what do I actually do" line. Turns on
@@ -477,39 +564,80 @@ static bool parseDiscoveryResponse(const char* msg, uint16_t* port) {
   return true;
 }
 
-// Decode one framed server payload and act on it. Used as the FrameDecoder callback.
+// Forward declarations for the provisioning actions (defined below, near the WiFi helpers).
+static void applyWifiCreds(const char* ssid, const char* pass);
+static void setTransportMode(uint8_t mode);
+static void emitStatus();
+
+// Act on one decoded server/host message. Shared by both byte sources (TCP FrameDecoder and
+// the USB COBS handler) — the tally/LED logic doesn't care where the bytes came from. The
+// provisioning kinds (SET_WIFI/SET_TRANSPORT/GET_STATUS) only ever arrive over USB; handling
+// them unconditionally is harmless (the TCP server never sends them).
+static void applyServerMessage(const ServerMessage& msg) {
+  switch (msg.kind) {
+    case ServerMessage::SET_COLOR: {
+      // The brightness byte is a *perceptual* value, not a raw drive level — the device owns
+      // the linearity correction (ARCHITECTURE.md "Brightness is a perceptual value"). The
+      // sidecar/UI keep it linear; we gamma-correct here so the UI's even 0–10 levels appear
+      // evenly spaced. applyGamma_video keeps a non-zero byte from collapsing to off.
+      //
+      // Server colours are rendered *steady*: the firmware stays lean and the server owns all
+      // connected-state animation (the fault flash and the unassigned breathe are both driven by
+      // the sidecar streaming frames over the wire). Device-local bring-up states animate locally
+      // only because there's no server connected to drive them.
+      uint8_t drive = applyGamma_video(msg.brightness, BRIGHTNESS_GAMMA);
+      setResting(msg.r, msg.g, msg.b, drive, STEADY);
+      TLOG(LOG_LEVEL_INFO, "SET_COLOR rgb(%u,%u,%u) brightness=%u (gamma->%u)\n", msg.r, msg.g, msg.b,
+           msg.brightness, drive);
+      break;
+    }
+    case ServerMessage::IDENTIFY:
+      startIdentify();
+      TLOG(LOG_LEVEL_INFO, "IDENTIFY\n");
+      break;
+    case ServerMessage::SET_WIFI:
+      applyWifiCreds(msg.ssid, msg.pass);
+      break;
+    case ServerMessage::SET_TRANSPORT:
+      setTransportMode(msg.transportMode);
+      break;
+    case ServerMessage::GET_STATUS:
+      emitStatus();
+      break;
+    case ServerMessage::UNKNOWN:
+      break;
+  }
+}
+
+// TCP FrameDecoder callback: decode one length-framed payload and act on it.
 static void onPayload(const uint8_t* payload, size_t len) {
   ServerMessage msg;
   if (!decodeServerMessage(payload, len, &msg)) return;  // skip unknown/malformed
+  applyServerMessage(msg);
+}
+
+// USB PacketSerial callback: one COBS-deframed payload. Same dispatch as TCP, plus the
+// USB-session bookkeeping — a host SET_COLOR means the app has taken over tally ("USB wins").
+static void onUsbPacket(const uint8_t* payload, size_t len) {
+  ServerMessage msg;
+  if (!decodeServerMessage(payload, len, &msg)) return;
+  hostFrameSeen = true;  // any host frame stops the HELLO re-announce
   if (msg.kind == ServerMessage::SET_COLOR) {
-    // The brightness byte is a *perceptual* value, not a raw drive level — the device owns
-    // the linearity correction (ARCHITECTURE.md "Brightness is a perceptual value"). The
-    // sidecar/UI keep it linear; we gamma-correct here so the UI's even 0–10 levels appear
-    // evenly spaced. applyGamma_video keeps a non-zero byte from collapsing to off.
-    //
-    // Server colours are rendered *steady*: the firmware stays lean and the server owns all
-    // connected-state animation (the fault flash and the unassigned breathe are both driven by
-    // the sidecar streaming frames over the wire). Device-local bring-up states animate locally
-    // only because there's no server connected to drive them.
-    uint8_t drive = applyGamma_video(msg.brightness, BRIGHTNESS_GAMMA);
-    setResting(msg.r, msg.g, msg.b, drive, STEADY);
-    Serial.printf("SET_COLOR rgb(%u,%u,%u) brightness=%u (gamma→%u)\n", msg.r, msg.g, msg.b,
-                  msg.brightness, drive);
-  } else if (msg.kind == ServerMessage::IDENTIFY) {
-    startIdentify();
-    Serial.println("IDENTIFY");
+    usbTallyActive = true;  // the app drives tally now; local indicators step aside
+    lastUsbTallyMsg = millis();
   }
+  applyServerMessage(msg);
 }
 
 static void enterDiscovering(unsigned long now) {
   state = ST_DISCOVERING;
   lastDiscoveryBroadcast = now - DISCOVERY_INTERVAL_MS;  // broadcast on the next tick
   if (everHadServer) {
-    setResting(COLOR_DISCONNECTED, LOCAL_BRIGHTNESS, STEADY);  // state 10: lost the server (check the PC)
+    setRestingLocal(COLOR_DISCONNECTED, LOCAL_BRIGHTNESS, STEADY);  // state 10: lost the server (check the PC)
   } else {
     // state 4: first hunt for the server. A smooth pulse (not a hard blink) — calm, low
     // distraction in a live venue, while still clearly "alive and working".
-    setResting(COLOR_SEARCHING, LOCAL_BRIGHTNESS, SLOW_PULSE);
+    setRestingLocal(COLOR_SEARCHING, LOCAL_BRIGHTNESS, SLOW_PULSE);
   }
 }
 
@@ -530,26 +658,26 @@ static bool connectWithTxPolicy() {
     saveTxPolicy(pol);
   } else if (pol != TXPOL_LOW && reasonSawAp(diag.lastReason)) {
     // We reached the AP but couldn't associate — try the low-power antenna workaround.
-    Serial.println("connect failed but AP was seen — retrying at 8.5dBm (C3 antenna workaround)");
+    TLOG(LOG_LEVEL_WARN, "connect failed but AP was seen - retrying at 8.5dBm (C3 antenna workaround)\n");
     applyTxPower(TXPOL_LOW);
     ok = wm.autoConnect(apSsid);
     if (ok) saveTxPolicy(TXPOL_LOW);
   } else if (!ok) {
     // AP not found (or already at low power): a low-power retry can't help — go to the portal.
-    Serial.printf("connect failed (reason %u, %s) — skipping low-power retry, opening portal\n",
-                  diag.lastReason, reasonToStr(diag.lastReason));
+    TLOG(LOG_LEVEL_WARN, "connect failed (reason %u, %s) - skipping low-power retry, opening portal\n",
+         diag.lastReason, reasonToStr(diag.lastReason));
   }
 
   if (!ok) {
-    Serial.println("both TX-power levels failed — opening the config portal");
+    TLOG(LOG_LEVEL_WARN, "both TX-power levels failed - opening the config portal\n");
     wm.setEnableConfigPortal(true);
     wm.startConfigPortal(apSsid);  // blocks until reconfigured + connected
     ok = true;
   }
 
   wm.setEnableConfigPortal(true);
-  Serial.printf("WiFi connected, IP %s (tx=%s)\n", WiFi.localIP().toString().c_str(),
-                loadTxPolicy() == TXPOL_LOW ? "8.5dBm" : "full");
+  TLOG(LOG_LEVEL_INFO, "WiFi connected, IP %s (tx=%s)\n", WiFi.localIP().toString().c_str(),
+       loadTxPolicy() == TXPOL_LOW ? "8.5dBm" : "full");
   return ok;
 }
 
@@ -557,9 +685,9 @@ static bool connectWithTxPolicy() {
 // first (the AP may simply be back), only raising the portal if that fails. Blocking — fine,
 // since with no WiFi the device can't do anything else.
 static void reprovision() {
-  Serial.println("WiFi down too long — re-running connect + config portal");
+  TLOG(LOG_LEVEL_WARN, "WiFi down too long - re-running connect + config portal\n");
   state = ST_PROVISIONING;
-  setResting(COLOR_SETUP, LOCAL_BRIGHTNESS, STEADY);  // magenta hint
+  setRestingLocal(COLOR_SETUP, LOCAL_BRIGHTNESS, STEADY);  // magenta hint
   connectWithTxPolicy();
   udp.stop();
   udp.begin(DISCOVERY_PORT);
@@ -573,13 +701,13 @@ static void reprovision() {
 // Creds are not erased: entering a new network overwrites them; hitting Exit keeps the current
 // one (we then restore the existing connection). Blocking is fine — same contract as setup().
 static void forceReprovision() {
-  Serial.println("Manual re-provision (BOOT held) — opening config portal");
+  TLOG(LOG_LEVEL_INFO, "Manual re-provision (BOOT held) - opening config portal\n");
   state = ST_PROVISIONING;
   if (tcp.connected()) tcp.stop();
-  setResting(COLOR_SETUP, LOCAL_BRIGHTNESS, STEADY);  // magenta (onConfigPortal repaints it too)
+  setRestingLocal(COLOR_SETUP, LOCAL_BRIGHTNESS, STEADY);  // magenta (onConfigPortal repaints it too)
   bool reconfigured = wm.startConfigPortal(apSsid);
   if (!reconfigured && WiFi.status() != WL_CONNECTED) {
-    Serial.println("portal exited without new creds — restoring the saved network");
+    TLOG(LOG_LEVEL_INFO, "portal exited without new creds - restoring the saved network\n");
     connectWithTxPolicy();
   }
   udp.stop();
@@ -610,10 +738,10 @@ static void checkReprovisionButton(unsigned long now) {
 static void handleWifiDown(unsigned long now) {
   if (tcp.connected()) tcp.stop();
   if (state == ST_CONNECTED || state == ST_CONNECTING) state = ST_DISCOVERING;
-  setResting(COLOR_JOINING, LOCAL_BRIGHTNESS, FAST_BLINK);  // state 3: lost WiFi
+  setRestingLocal(COLOR_JOINING, LOCAL_BRIGHTNESS, FAST_BLINK);  // state 3: lost WiFi
   if (wifiLostSince == 0) {
     wifiLostSince = now;
-    Serial.println("WiFi connection lost; waiting for auto-reconnect");
+    TLOG(LOG_LEVEL_WARN, "WiFi connection lost; waiting for auto-reconnect\n");
   } else if (now - wifiLostSince >= WIFI_LOST_PORTAL_MS) {
     reprovision();
   }
@@ -623,11 +751,102 @@ static void handleWifiDown(unsigned long now) {
 // this boot's failure reason) and show the magenta provisioning hint. Runs inside the blocking
 // autoConnect/startConfigPortal call, so it takes effect before the user loads the page.
 static void onConfigPortal(WiFiManager*) {
-  Serial.printf("Config portal up — join WiFi AP \"%s\", then open 192.168.4.1\n", apSsid);
+  TLOG(LOG_LEVEL_INFO, "Config portal up - join WiFi AP \"%s\", then open 192.168.4.1\n", apSsid);
   buildDiagHtml();
   wm.setCustomMenuHTML(diagHtml.c_str());
-  setResting(COLOR_SETUP, LOCAL_BRIGHTNESS, STEADY);  // state 1: provisioning
+  setRestingLocal(COLOR_SETUP, LOCAL_BRIGHTNESS, STEADY);  // state 1: provisioning
 }
+
+// ── USB provisioning + status (v1.2) ─────────────────────────────────────────
+
+// Push a STATUS frame: [transport][credsPresent][wifiState][rssi]. Pushed on any state change
+// and in reply to GET_STATUS — the reliable channel the wizard reads to confirm a join.
+static void emitStatus() {
+  bool creds = wm.getWiFiSSID(true).length() > 0;
+  uint8_t ws = wifiJoinState;
+  if (ws == WIFI_STATE_IDLE && WiFi.status() == WL_CONNECTED) ws = WIFI_STATE_CONNECTED;
+  int8_t rssi = (WiFi.status() == WL_CONNECTED) ? (int8_t)WiFi.RSSI() : 0;
+  uint8_t payload[5];
+  size_t n = encodeStatusPayload(payload, transportMode, creds, ws, rssi);
+  usbSendPayload(payload, n);
+}
+
+// SET_WIFI: persist creds and attempt a validating join *now*, so the wizard can confirm
+// "joined, RSSI -60" (or a failure reason) before the cable is pulled. WiFi.begin(persistent)
+// stores the creds where WiFiManager.autoConnect() reads them, so the captive-portal fallback
+// and the BOOT-button reprovision stay intact (we deliberately don't keep a second cred store).
+static void applyWifiCreds(const char* ssid, const char* pass) {
+  TLOG(LOG_LEVEL_INFO, "SET_WIFI: joining \"%s\"\n", ssid);
+  WiFi.persistent(true);   // write creds to the NVS store autoConnect() reads
+  WiFi.mode(WIFI_STA);     // radio on for the validating join — even on a No-TX device, cabled
+  attemptHasDiag = false;  // fresh diagnostics episode (onWifiEvent records this attempt's reason)
+  associatedSinceConnect = false;
+  joinAuthFailed = false;  // fresh validating join — clear any prior fast-fail verdict
+  WiFi.begin(ssid, pass);
+  wifiJoinState = WIFI_STATE_JOINING;
+  joinStart = millis();
+  emitStatus();
+}
+
+// SET_TRANSPORT: persist the unplugged behaviour. The radio change applies on the next boot
+// (the device is replugged/power-cycled after provisioning) — we don't tear down a live link.
+static void setTransportMode(uint8_t mode) {
+  saveTransportMode(mode);
+  transportMode = mode;
+  TLOG(LOG_LEVEL_INFO, "SET_TRANSPORT: %s (applies on next boot)\n",
+       mode == TRANSPORT_NOTX ? "No-TX" : "WiFi");
+  emitStatus();
+}
+
+// Poll the SET_WIFI validating join (independent of the discovery state machine, so it runs
+// even on a No-TX device while cabled). Streams a STATUS on success/failure; the existing
+// onWifiEvent/diag machinery supplies the operator-facing failure verdict.
+static void serviceWifiJoin(unsigned long now) {
+  if (wifiJoinState != WIFI_STATE_JOINING) return;
+  if (WiFi.status() == WL_CONNECTED) {
+    wifiJoinState = WIFI_STATE_CONNECTED;
+    TLOG(LOG_LEVEL_INFO, "join ok, RSSI %d\n", (int)WiFi.RSSI());
+    emitStatus();
+  } else if (joinAuthFailed || now - joinStart >= USB_JOIN_TIMEOUT_MS) {
+    // joinAuthFailed → a definitive auth failure already arrived (fast path); otherwise the
+    // window elapsed with no verdict (range/no-AP/transient — the slow path).
+    wifiJoinState = WIFI_STATE_FAILED;
+    TLOG(LOG_LEVEL_ERROR, "join failed: %s\n", diagVerdict());
+    emitStatus();
+  }
+}
+
+// Re-announce HELLO over USB every ~1s until the host sends its first frame (native USB-CDC has
+// no clean connect event, and DTR must NOT be used as one — it would interrupt a live No-TX device).
+static void serviceUsbHello(unsigned long now) {
+  if (hostFrameSeen) return;
+  if (now - lastUsbHello < USB_HELLO_INTERVAL_MS) return;
+  lastUsbHello = now;
+  uint8_t payload[8];
+  size_t n = encodeHelloPayload(payload, mac);
+  usbSendPayload(payload, n);
+}
+
+// Release USB tally ownership after the host falls silent (e.g. unplugged from the PC but still
+// powered): local indicators — or a server colour re-pushed over TCP — resume driving the LED.
+static void serviceUsbTally(unsigned long now) {
+  if (usbTallyActive && now - lastUsbTallyMsg >= USB_TALLY_IDLE_MS) {
+    usbTallyActive = false;
+    TLOG(LOG_LEVEL_INFO, "USB tally idle; releasing local indicators\n");
+  }
+}
+
+// Bring up the USB-CDC control channel. setTxTimeoutMs(0) is MANDATORY — without it CDC TX
+// blocks when the host isn't reading and stalls the FastLED render loop (arduino-esp32 #7779).
+static void usbBegin() {
+  Serial.setTxTimeoutMs(0);
+  usbPacket.setStream(&Serial);
+  usbPacket.setPacketHandler(&onUsbPacket);
+}
+
+// Drain all available USB-CDC RX into the COBS parser. Called every loop iteration (in every
+// state) so device→host TX never stalls and provisioning works regardless of WiFi state.
+static void usbLoop() { usbPacket.update(); }
 
 // ── Arduino entry points ─────────────────────────────────────────────────────
 
@@ -637,6 +856,7 @@ void setup() {
   // off a power bank with no host attached, and must never block there.
   unsigned long start = millis();
   while (!Serial && millis() - start < 2000) delay(10);
+  usbBegin();  // COBS control channel up before any TLOG (release builds frame logs)
 
   WiFi.macAddress(mac);
   // AP SSID from the last 3 MAC octets, uppercase — "TallyLight-XXXXXX".
@@ -644,46 +864,28 @@ void setup() {
 
   char macStr[18];
   macToStr(macStr, sizeof(macStr));
-  Serial.println();
-  Serial.println(F("=== TallyBot tally light ==="));
-  Serial.printf("chip: %s rev %d   fw: %s\n", ESP.getChipModel(), ESP.getChipRevision(), FW_BUILD);
-  Serial.printf("MAC:  %s   AP: %s\n", macStr, apSsid);
+  TLOG(LOG_LEVEL_INFO, "=== TallyBot tally light ===\n");
+  TLOG(LOG_LEVEL_INFO, "chip: %s rev %d   fw: %s\n", ESP.getChipModel(), ESP.getChipRevision(), FW_BUILD);
+  TLOG(LOG_LEVEL_INFO, "MAC:  %s   AP: %s\n", macStr, apSsid);
 
   pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);  // BOOT button: hold at runtime to re-open WiFi setup
 
   FastLED.addLeds<WS2812, LED_PIN, GRB>(leds, NUM_LEDS);
   bootSelfTest();  // R→G→B→W — prove the LED works before anything network-related
-  setResting(COLOR_JOINING, LOCAL_BRIGHTNESS, SLOW_PULSE);  // state 2: about to join WiFi
 
-  prefs.begin("tally", false);  // NVS: TX-power policy + last-failure diagnostics
+  prefs.begin("tally", false);  // NVS: TX-power policy + last-failure diagnostics + transport mode
   loadDiag();                   // surface the previous boot's failure on the portal
-
-  WiFi.mode(WIFI_STA);
-
-  // Widen the usable 2.4GHz channels. A manual 1–13 range (vs the chip's cautious "world-safe"
-  // default) ensures channels 12/13 are scannable/usable — some venues sit an AP there. cc is
-  // South Africa; max_tx_power left high so it doesn't cap the radio (we set power below).
-  // NB: do NOT use wm.setCountry()/esp_wifi_set_country_code("ZA") — the IDF's validated
-  // country-code table has no "ZA", so it returns ESP_ERR_WIFI_ARG and the country never gets
-  // set. The older esp_wifi_set_country() takes an explicit channel range and doesn't validate
-  // the cc against that table, so a manual 1–13 range works regardless of the code string.
-  wifi_country_t country = {};
-  memcpy(country.cc, WIFI_COUNTRY, sizeof(country.cc));
-  country.schan = 1;
-  country.nchan = 13;
-  country.max_tx_power = 84;  // 21 dBm in 0.25dBm units — don't constrain
-  country.policy = WIFI_COUNTRY_POLICY_MANUAL;
-  esp_err_t cerr = esp_wifi_set_country(&country);
-  Serial.printf("WiFi country %s ch1-13: %s\n", WIFI_COUNTRY,
-                cerr == ESP_OK ? "ok" : esp_err_to_name(cerr));
+  transportMode = loadTransportMode();
+  wifiEnabled = (transportMode == TRANSPORT_WIFI);
 
   // Granular disconnect reasons reach us only via the event (the library exposes coarse status).
   // STA_CONNECTED tells us we associated — the key signal for the "kicked vs never-joined" verdict.
+  // Registered unconditionally so a USB-provisioning join (even on a No-TX device) is diagnosed.
   WiFi.onEvent(onWifiEvent, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
   WiFi.onEvent(onWifiConnected, ARDUINO_EVENT_WIFI_STA_CONNECTED);
 
-  // Provision: connect with saved creds (full power, low fallback), or raise the SoftAP captive
-  // portal. Creds persist to NVS, so the portal only opens on first boot or when creds fail.
+  // WiFiManager config — cheap to set up and needed by the captive-portal fallback / BOOT-button
+  // reprovision regardless of transport mode.
   wm.setConnectTimeout(WIFI_CONNECT_TIMEOUT_S);
   wm.setConnectRetries(WIFI_CONNECT_RETRIES);
   wm.setCleanConnect(true);  // disconnect before each attempt — clears stale half-handshake state
@@ -700,20 +902,61 @@ void setup() {
   wm.setDebugOutput(true);  // loud library-internal connection trace (opt-in build flag)
 #endif
 
-  // WPA3-SAE transition mode is enabled by default in this core; no code needed. A WPA3-only AP
-  // that still fails will surface as reason 202/204 on the diagnostics panel above.
   state = ST_PROVISIONING;
-  connectWithTxPolicy();
+  if (wifiEnabled) {
+    setResting(COLOR_JOINING, LOCAL_BRIGHTNESS, SLOW_PULSE);  // state 2: about to join WiFi
+    WiFi.mode(WIFI_STA);
 
-  udp.begin(DISCOVERY_PORT);  // bind 7001 to catch both the unicast reply and broadcasts
-  enterDiscovering(millis());
+    // Widen the usable 2.4GHz channels. A manual 1–13 range (vs the chip's cautious "world-safe"
+    // default) ensures channels 12/13 are scannable/usable — some venues sit an AP there. cc is
+    // South Africa; max_tx_power left high so it doesn't cap the radio (we set power below).
+    // NB: do NOT use wm.setCountry()/esp_wifi_set_country_code("ZA") — the IDF's validated
+    // country-code table has no "ZA", so it returns ESP_ERR_WIFI_ARG and the country never gets
+    // set. The older esp_wifi_set_country() takes an explicit channel range and doesn't validate
+    // the cc against that table, so a manual 1–13 range works regardless of the code string.
+    wifi_country_t country = {};
+    memcpy(country.cc, WIFI_COUNTRY, sizeof(country.cc));
+    country.schan = 1;
+    country.nchan = 13;
+    country.max_tx_power = 84;  // 21 dBm in 0.25dBm units — don't constrain
+    country.policy = WIFI_COUNTRY_POLICY_MANUAL;
+    esp_err_t cerr = esp_wifi_set_country(&country);
+    TLOG(LOG_LEVEL_INFO, "WiFi country %s ch1-13: %s\n", WIFI_COUNTRY,
+         cerr == ESP_OK ? "ok" : esp_err_to_name(cerr));
+
+    // WPA3-SAE transition mode is enabled by default in this core; no code needed. A WPA3-only AP
+    // that still fails will surface as reason 202/204 on the diagnostics panel above.
+    connectWithTxPolicy();  // saved creds (full→low power), else the SoftAP captive portal
+    udp.begin(DISCOVERY_PORT);  // bind 7001 to catch both the unicast reply and broadcasts
+    enterDiscovering(millis());
+  } else {
+    // No-TX: the device lives only on the USB cable. Disable the radio (no wireless attempt when
+    // unplugged) and rest on steady blue until the app connects over USB and drives tally.
+    WiFi.mode(WIFI_OFF);
+    TLOG(LOG_LEVEL_INFO, "No-TX mode: WiFi disabled; USB only\n");
+    setRestingLocal(COLOR_DISCONNECTED, LOCAL_BRIGHTNESS, STEADY);
+  }
 }
 
 void loop() {
   unsigned long now = millis();
 
+  // Service the USB-CDC control channel every iteration, in every state and before the WiFi
+  // branches below — so RX never stalls TX and provisioning works even with WiFi down/off.
+  usbLoop();
+  serviceUsbHello(now);   // re-announce HELLO until the host replies
+  serviceUsbTally(now);   // release USB tally ownership after idle (unplug-but-powered revert)
+  serviceWifiJoin(now);   // poll a SET_WIFI validating join, independent of discovery
+
   // Hold BOOT to deliberately re-open WiFi setup (e.g. to switch networks), in any state.
   checkReprovisionButton(now);
+
+  // No-TX: USB-only, no WiFi state machine. The LED is driven by USB (app) or the local blue.
+  if (!wifiEnabled) {
+    renderLed(now);
+    delay(1);
+    return;
+  }
 
   // WiFi is the authoritative "network up" signal, distinct from a TCP drop.
   if (WiFi.status() != WL_CONNECTED) {
@@ -723,7 +966,7 @@ void loop() {
     return;
   }
   if (wifiLostSince != 0) {  // WiFi just came back without needing the portal
-    Serial.printf("WiFi reconnected, IP %s\n", WiFi.localIP().toString().c_str());
+    TLOG(LOG_LEVEL_INFO, "WiFi reconnected, IP %s\n", WiFi.localIP().toString().c_str());
     wifiLostSince = 0;
     udp.stop();
     udp.begin(DISCOVERY_PORT);  // the socket may not survive an interface bounce
@@ -753,7 +996,7 @@ void loop() {
         if (parseDiscoveryResponse(buf, &port)) {
           serverIp = udp.remoteIP();  // valid right after parsePacket(): the server's IP
           serverPort = port;
-          Serial.printf("Found server at %s:%u\n", serverIp.toString().c_str(), port);
+          TLOG(LOG_LEVEL_INFO, "Found server at %s:%u\n", serverIp.toString().c_str(), port);
           state = ST_CONNECTING;
         }
       }
@@ -769,11 +1012,11 @@ void loop() {
         lastHeartbeat = now;
         everHadServer = true;  // from now on, a "no server" signal means we LOST one (state 10)
         state = ST_CONNECTED;
-        Serial.printf("Connected to %s:%u; HELLO sent\n", serverIp.toString().c_str(), serverPort);
+        TLOG(LOG_LEVEL_INFO, "Connected to %s:%u; HELLO sent\n", serverIp.toString().c_str(), serverPort);
         // Connected but not yet assigned: white breathe locally until the first SET_COLOR.
-        setResting(COLOR_UNASSIGNED, LOCAL_BRIGHTNESS, BREATHE);  // state 5
+        setRestingLocal(COLOR_UNASSIGNED, LOCAL_BRIGHTNESS, BREATHE);  // state 5
       } else {
-        Serial.println("TCP connect failed; backing off");
+        TLOG(LOG_LEVEL_WARN, "TCP connect failed; backing off\n");
         backoffStart = now;
         state = ST_BACKOFF;
       }
@@ -782,9 +1025,9 @@ void loop() {
 
     case ST_CONNECTED: {
       if (!tcp.connected() && tcp.available() == 0) {
-        Serial.println("Server connection lost");
+        TLOG(LOG_LEVEL_WARN, "Server connection lost\n");
         tcp.stop();
-        setResting(COLOR_DISCONNECTED, LOCAL_BRIGHTNESS, STEADY);  // state 10: lost the server
+        setRestingLocal(COLOR_DISCONNECTED, LOCAL_BRIGHTNESS, STEADY);  // state 10: lost the server
         backoffStart = now;
         state = ST_BACKOFF;
         break;

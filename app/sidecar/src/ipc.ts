@@ -52,6 +52,17 @@ export interface Input {
  */
 export type DeviceState = "assigned" | "unassigned" | "offline";
 
+/**
+ * Which transport currently carries a device. **Open union** (centralised here, never
+ * copied as a string literal across files): v1.3 adds `"espnow"`. A USB-connected device
+ * is shown with a wired indicator; while plugged in, USB always wins (the same MAC seen on
+ * both WiFi and USB appears once, as `"usb"`).
+ */
+export type DeviceTransport = "wifi" | "usb" | "espnow";
+
+/** WiFi join progress, surfaced while provisioning a device over USB. */
+export type DeviceWifiState = "idle" | "joining" | "connected" | "failed";
+
 /** A physical tally light, identified by MAC with no user-given name (GOALS.md). */
 export interface Device {
   /** Full MAC, lower-case colon form — the device's identity. */
@@ -67,6 +78,12 @@ export interface Device {
   protocolVersion: number | null;
   /** True when the device's protocol version is below the server's minimum. */
   firmwareOutdated: boolean;
+  /** Transport currently serving the device (drives the wired indicator). */
+  transport: DeviceTransport;
+  /** WiFi join progress while provisioning over USB; null when not applicable. */
+  wifiState: DeviceWifiState | null;
+  /** Last reported RSSI in dBm while provisioning over USB; null when not applicable. */
+  rssi: number | null;
 }
 
 /**
@@ -128,7 +145,35 @@ export interface SourceScanEvent {
   error: string | null;
 }
 
-export type SidecarEvent = StateEvent | NoticeEvent | SourceScanEvent;
+/**
+ * The shell detected an ESP32-C3 on USB that isn't running TallyBot firmware (no HELLO
+ * within the detect window). The UI may offer to flash it (flashing is deferred — the
+ * event is wired now so the contract is stable).
+ */
+export interface UnflashedDeviceDetectedEvent {
+  type: "unflashedDeviceDetected";
+  /** The serial port path/name (e.g. `/dev/ttyACM0`, `COM5`). */
+  port: string;
+}
+
+/**
+ * A device-log line, sourced from a USB `LOG` frame. The live device-log channel over USB
+ * directly attacks the deferred WiFi-join problem (`docs/wifi-troubleshooting.md`) — the
+ * wizard streams join progress/verdicts straight from the device.
+ */
+export interface DeviceLogEvent {
+  type: "deviceLog";
+  mac: string;
+  level: "info" | "warn" | "error";
+  text: string;
+}
+
+export type SidecarEvent =
+  | StateEvent
+  | NoticeEvent
+  | SourceScanEvent
+  | UnflashedDeviceDetectedEvent
+  | DeviceLogEvent;
 
 // ── UI → sidecar commands ───────────────────────────────────────────────────────
 // Assignment & identify happen on the canvas; setSource is the settings window
@@ -193,6 +238,28 @@ export interface SetProgramCommand {
   inputId: number;
 }
 
+/**
+ * Provision a USB-connected device's WiFi creds. The device persists them and attempts a
+ * validating join immediately, streaming progress via `deviceLog` + the device's
+ * `wifiState`/`rssi` so the wizard confirms a join *before* the cable is pulled.
+ */
+export interface ProvisionWifiCommand {
+  type: "provisionWifi";
+  mac: string;
+  ssid: string;
+  password: string;
+}
+
+/**
+ * Set what a USB-connected device does when unplugged: `"wifi"` (join the provisioned
+ * network) or `"notx"` (WiFi disabled — wired-only). Open for `"espnow"` in v1.3.
+ */
+export interface SetTransportCommand {
+  type: "setTransport";
+  mac: string;
+  mode: "notx" | "wifi";
+}
+
 export type UiCommand =
   | AssignDeviceCommand
   | UnassignDeviceCommand
@@ -201,7 +268,9 @@ export type UiCommand =
   | SetSourceCommand
   | ScanSourcesCommand
   | RequestStateCommand
-  | SetProgramCommand;
+  | SetProgramCommand
+  | ProvisionWifiCommand
+  | SetTransportCommand;
 
 // ── Transport (NDJSON over stdio) ───────────────────────────────────────────────
 
@@ -209,7 +278,13 @@ export type UiCommand =
  * Every message type, kept in sync with the unions above by `satisfies` — adding
  * a message without listing it here (or vice versa) is a type error.
  */
-export const EVENT_TYPES = ["state", "notice", "sourceScan"] as const satisfies readonly SidecarEvent["type"][];
+export const EVENT_TYPES = [
+  "state",
+  "notice",
+  "sourceScan",
+  "unflashedDeviceDetected",
+  "deviceLog",
+] as const satisfies readonly SidecarEvent["type"][];
 export const COMMAND_TYPES = [
   "assignDevice",
   "unassignDevice",
@@ -219,6 +294,8 @@ export const COMMAND_TYPES = [
   "scanSources",
   "requestState",
   "setProgram",
+  "provisionWifi",
+  "setTransport",
 ] as const satisfies readonly UiCommand["type"][];
 
 const eventTypes = new Set<string>(EVENT_TYPES);

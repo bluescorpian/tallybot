@@ -7,18 +7,26 @@ import {
   DISCOVERY_REQUEST,
   DeviceMessageType,
   FrameDecoder,
+  LogLevel,
   PROTOCOL_VERSION,
   ServerMessageType,
+  Transport,
+  WifiState,
   decodeDeviceMessage,
   encodeDiscoveryResponse,
   encodeIdentify,
   encodeSetColor,
   formatMac,
   frame,
+  getStatusPayload,
+  identifyPayload,
   isDiscoveryRequest,
   isSupportedVersion,
   macTail,
   parseDiscoveryResponse,
+  setColorPayload,
+  setTransportPayload,
+  setWifiPayload,
 } from "./protocol.ts";
 
 // ── Framing ───────────────────────────────────────────────────────────────────
@@ -100,6 +108,62 @@ test("encodeSetColor rejects out-of-range channels", () => {
 
 test("encodeIdentify frames just the type byte", () => {
   assert.deepEqual(encodeIdentify(), Uint8Array.of(1, ServerMessageType.IDENTIFY));
+});
+
+// ── Shared payload builders (the unframed body — wrapped by TCP frame() or USB COBS) ──
+
+test("encodeSetColor == frame(setColorPayload) — TCP wraps the shared payload", () => {
+  const payload = setColorPayload({ r: 255, g: 180, b: 0 }, 64);
+  assert.deepEqual(payload, Uint8Array.of(ServerMessageType.SET_COLOR, 255, 180, 0, 64));
+  assert.deepEqual(encodeSetColor({ r: 255, g: 180, b: 0 }, 64), frame(payload));
+});
+
+test("identifyPayload is the bare type byte", () => {
+  assert.deepEqual(identifyPayload(), Uint8Array.of(ServerMessageType.IDENTIFY));
+  assert.deepEqual(encodeIdentify(), frame(identifyPayload()));
+});
+
+test("setWifiPayload lays out [type][ssidLen][ssid][passLen][pass]", () => {
+  assert.deepEqual(
+    setWifiPayload("Net", "pw12"),
+    Uint8Array.of(ServerMessageType.SET_WIFI, 3, 0x4e, 0x65, 0x74, 4, 0x70, 0x77, 0x31, 0x32),
+  );
+});
+
+test("setWifiPayload handles empty creds and UTF-8 byte length (not char length)", () => {
+  assert.deepEqual(setWifiPayload("", ""), Uint8Array.of(ServerMessageType.SET_WIFI, 0, 0));
+  // "é" is 2 UTF-8 bytes — the length byte must count bytes, not code points.
+  const wire = setWifiPayload("é", "");
+  assert.equal(wire[1], 2);
+});
+
+test("setTransportPayload / getStatusPayload", () => {
+  assert.deepEqual(setTransportPayload(Transport.NOTX), Uint8Array.of(ServerMessageType.SET_TRANSPORT, 0));
+  assert.deepEqual(setTransportPayload(Transport.WIFI), Uint8Array.of(ServerMessageType.SET_TRANSPORT, 1));
+  assert.deepEqual(getStatusPayload(), Uint8Array.of(ServerMessageType.GET_STATUS));
+});
+
+// ── Device → host: STATUS / LOG decode (USB only) ───────────────────────────────
+
+test("decodeDeviceMessage reads STATUS, sign-extending RSSI", () => {
+  const payload = Uint8Array.of(DeviceMessageType.STATUS, Transport.WIFI, 1, WifiState.CONNECTED, 0xc4); // -60
+  assert.deepEqual(decodeDeviceMessage(payload), {
+    kind: "status",
+    transport: Transport.WIFI,
+    credsPresent: true,
+    wifiState: WifiState.CONNECTED,
+    rssi: -60,
+  });
+});
+
+test("decodeDeviceMessage reads LOG text", () => {
+  const payload = Uint8Array.of(DeviceMessageType.LOG, LogLevel.WARN, ...new TextEncoder().encode("hi"));
+  assert.deepEqual(decodeDeviceMessage(payload), { kind: "log", level: LogLevel.WARN, text: "hi" });
+});
+
+test("decodeDeviceMessage rejects malformed STATUS/LOG", () => {
+  assert.throws(() => decodeDeviceMessage(Uint8Array.of(DeviceMessageType.STATUS, 1, 1, 1)), RangeError); // short
+  assert.throws(() => decodeDeviceMessage(Uint8Array.of(DeviceMessageType.LOG)), RangeError); // no level
 });
 
 // ── Device → server decoder ────────────────────────────────────────────────────

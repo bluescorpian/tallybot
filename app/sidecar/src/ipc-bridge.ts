@@ -13,6 +13,7 @@ import { EventEmitter } from "node:events";
 import { type Interface, createInterface } from "node:readline";
 
 import { type SidecarEvent, type UiCommand, parseCommand, serializeMessage } from "./ipc.ts";
+import { type UsbInbound, type UsbOutbound, parseUsbInbound } from "./usb-bridge.ts";
 
 export interface IpcBridgeOptions {
   input?: NodeJS.ReadableStream;
@@ -22,7 +23,9 @@ export interface IpcBridgeOptions {
 // Typed events (the interface merges with the class and is erased at build).
 export interface IpcBridge {
   on(event: "command", listener: (command: UiCommand) => void): this;
+  on(event: "usb", listener: (message: UsbInbound) => void): this;
   emit(event: "command", command: UiCommand): boolean;
+  emit(event: "usb", message: UsbInbound): boolean;
 }
 
 export class IpcBridge extends EventEmitter {
@@ -36,6 +39,12 @@ export class IpcBridge extends EventEmitter {
     this.#readline = createInterface({ input, crlfDelay: Infinity });
     this.#readline.on("line", (line) => {
       if (line.trim() === "") return;
+      // The shell multiplexes UI commands and USB bridge messages onto one stdin pipe.
+      const usb = parseUsbInbound(line);
+      if (usb) {
+        this.emit("usb", usb);
+        return;
+      }
       const command = parseCommand(line);
       // Unrecognised lines are dropped: this is a trusted local pipe, and ipc.ts
       // validates only the discriminant (see parseCommand).
@@ -46,6 +55,11 @@ export class IpcBridge extends EventEmitter {
   /** Emit one event to the UI. */
   send(event: SidecarEvent): void {
     this.#output.write(serializeMessage(event));
+  }
+
+  /** Send one USB bridge message to the shell (same stdout pipe; the shell demuxes it). */
+  sendUsb(message: UsbOutbound): void {
+    this.#output.write(`${JSON.stringify(message)}\n`);
   }
 
   /** Convenience for an out-of-band notice (info / warn / error). */

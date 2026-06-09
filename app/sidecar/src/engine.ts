@@ -17,7 +17,16 @@
  * override(s) → per-device colour").
  */
 
-import type { AppState, Device, Input, ProgramGate, SourceConnection, Tally } from "./ipc.ts";
+import type {
+  AppState,
+  Device,
+  DeviceTransport,
+  DeviceWifiState,
+  Input,
+  ProgramGate,
+  SourceConnection,
+  Tally,
+} from "./ipc.ts";
 import { type Color, COLORS, DEFAULT_BRIGHTNESS, PROTOCOL_VERSION, SETUP_COLOR } from "./protocol.ts";
 
 // ── Inputs the engine derives from ──────────────────────────────────────────────
@@ -52,6 +61,12 @@ export interface DeviceRecord {
   inputId: number | null;
   /** Per-device LED brightness, 0–255. */
   brightness: number;
+  /** Transport currently serving the device (drives the wired indicator). */
+  transport: DeviceTransport;
+  /** WiFi join progress while provisioning over USB; null when not applicable. */
+  wifiState: DeviceWifiState | null;
+  /** Last reported RSSI (dBm) while provisioning over USB; null when not applicable. */
+  rssi: number | null;
 }
 
 /**
@@ -160,6 +175,9 @@ export function computeEngine(
       protocolVersion: device.protocolVersion,
       firmwareOutdated:
         device.protocolVersion !== null && device.protocolVersion < PROTOCOL_VERSION.MIN_SUPPORTED,
+      transport: device.transport,
+      wifiState: device.wifiState,
+      rssi: device.rssi,
     });
     if (device.online) {
       const { color, anim } = colorFor(device, source, gate);

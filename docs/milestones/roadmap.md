@@ -10,54 +10,32 @@ The product thesis these items serve — the "buy hardware, install app, done" d
 
 ## Onboarding & transport (near-term focus)
 
-These have settled design decisions and are scheduled into milestones: items 1+2 form
-[v1.2 — Zero-Friction Onboarding](v1.2-zero-friction-onboarding.md); item 3 follows in
-[v1.3 — ESP-NOW Transport](v1.3-esp-now-transport.md).
+These have settled design decisions and are scheduled into milestones: item 1 forms
+[v1.2 — Zero-Friction Onboarding](v1.2-zero-friction-onboarding.md); item 2 follows in
+[v1.3 — ESP-NOW Transport](v1.3-esp-now-transport.md). In-app flashing (item 3 in the
+original plan) is **deferred** — see [Deferred](#deferred--open-questions) below.
 
-### 1. In-app firmware flashing — [v1.2](v1.2-zero-friction-onboarding.md)
+### 1. USB serial provisioning — [v1.2](v1.2-zero-friction-onboarding.md)
 
-The app detects an ESP32-C3 plugged in via USB-C, offers to flash the TallyBot firmware,
-and handles the whole process without the user touching any external tools.
+While a device is plugged in via USB-C, all communication happens over USB — there is
+no reason to use wireless with a stable wired connection. The app provisions the device's
+**unplugged behaviour**: WiFi mode (SSID + password; device confirms the join over USB
+before the user unplugs) or No-TX mode (WiFi disabled; device only operates when cabled,
+makes no wireless attempt when unplugged — for permanent wired installations).
 
-- The Node.js sidecar watches for serial-port appearance on device connect.
-- [`esptool-js`](https://github.com/espressif/esptool-js) (the JS port of Espressif's flash
-  tool) is bundled in the sidecar and writes the firmware binary. The C3's native USB means
-  no FTDI adapter and no driver install.
-- Firmware ships as a versioned `.bin` GitHub release artifact; the app downloads and caches
-  the latest.
+The protocol is COBS-framed binary over USB-CDC, specified in
+[`docs/spec/usb-serial-protocol.md`](../spec/usb-serial-protocol.md). Key messages:
+`SET_WIFI`, `SET_TRANSPORT`, `GET_STATUS` / `STATUS`, `SET_COLOR` / `IDENTIFY` (byte-identical
+to TCP). Logs become `LOG` frames; no raw text on the wire in release builds.
 
-**Why:** removes PlatformIO and the Arduino IDE from the user's path entirely. The most
-popular competitor (AronHetLam) offers a *separate* browser-based web flasher; doing it
-inside the desktop app as one unified flow is the step nobody has taken.
-
-**Enables OTA** (see below): once delivery + write infrastructure exists, over-the-air is
-the same machinery aimed at a connected device instead of a USB one.
-
-### 2. USB serial provisioning — [v1.2](v1.2-zero-friction-onboarding.md)
-
-Immediately after flashing, while the device is still plugged in, the app sends WiFi
-credentials over the serial connection. The user never switches their laptop's WiFi network.
-
-Protocol (app ↔ device over serial):
-```
-App    → Device:  TALLY_PROVISION:MyNetwork:password\n
-Device → App:     TALLY_OK\n
-```
-
-- On boot the firmware opens a brief (~5s) serial listening window before WiFi init. A
-  `TALLY_PROVISION` command stores creds to NVS and acks; the app sends right after flash
-  completes, so the window is always hit in the provisioning flow.
-- No command (normal boot) → the window expires and the device proceeds normally.
+The Rust shell owns the serial port (flash + detect + comms on a dedicated thread via
+`serialport-rs`); the tally engine stays in the sidecar and talks to USB devices through the
+existing shell↔sidecar NDJSON bridge via `UsbTransport` / `CompositeDeviceServer`.
 
 **Fallback:** the WiFiManager SoftAP captive portal is retained for field re-provisioning —
-hold **BOOT** on power-up to trigger the SoftAP when no laptop is available. WiFiManager
-stays in the firmware but leaves the primary user-facing story.
+hold **BOOT** on power-up when no laptop is available.
 
-**Full onboarding flow this enables:** plug in via USB-C → app detects "new device" → user
-enters SSID + password → app flashes, then sends creds over serial → device reboots, joins
-WiFi, appears via UDP discovery → user types "Camera 1" → unplug, mount, power from a bank.
-
-### 3. ESP-NOW transport — [v1.3](v1.3-esp-now-transport.md)
+### 2. ESP-NOW transport — [v1.3](v1.3-esp-now-transport.md)
 
 After the second venue test, WiFi-join reliability proved to be dominated by venue
 access-point *policy* the device can't change (a weak-signal / min-RSSI kick); this
@@ -136,6 +114,14 @@ straightforward generalisation that significantly expands the viable install bas
 ## Deferred / open questions
 
 Identified, not rejected, lower priority with open design questions.
+
+- **In-app firmware flashing** — the app detects a bare ESP32-C3 and flashes TallyBot firmware
+  without the user touching PlatformIO or the Arduino IDE. Designed and unblocked (`espflash`
+  Rust crate in the Tauri shell, bundled `.bin`; see [Flashing](../spec/usb-serial-protocol.md#flashing)
+  in the USB spec), but deprioritised: USB provisioning + ESP-NOW transport were higher-value.
+  The most popular competitor offers only a separate browser-based web flasher; doing it inside
+  the desktop app as a single unified flow remains the key differentiator. **Enables OTA** (same
+  write infrastructure aimed at a connected device over WiFi). Schedule after v1.3 is stable.
 
 - **WiFi-join reliability (one day)** — make the WiFi transport dependable on arbitrary venue
   networks, deferred from [`v1.1-production-hardening.md`](v1.1-production-hardening.md) when the

@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import {
   COLORS,
   DEFAULT_BRIGHTNESS,
+  PROTOCOL_VERSION,
   SETUP_COLOR,
   decodeDeviceMessage,
   encodeIdentify,
@@ -45,7 +46,7 @@ test("encodeHello round-trips through the sidecar's decodeDeviceMessage", () => 
 test("encodeHello defaults to the current protocol version", () => {
   const msg = decodeDeviceMessage(unframe(encodeHello("01:23:45:67:89:ab")));
   assert.equal(msg.kind, "hello");
-  assert.equal((msg as { version: number }).version, 1);
+  assert.equal((msg as { version: number }).version, PROTOCOL_VERSION.CURRENT);
 });
 
 test("encodeHello rejects a version that isn't a byte", () => {

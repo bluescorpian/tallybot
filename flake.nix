@@ -37,6 +37,11 @@
           # glib, cairo, pango, etc. come in transitively via its pkg-config.
           webkitgtk_4_1
           librsvg
+
+          # libudev — the serialport crate's Linux backend enumerates ports through
+          # udev (USB provisioning, v1.2). Dev-only: the Windows release build uses a
+          # native backend and never links udev.
+          udev
         ];
 
         # GSettings schemas must be on XDG_DATA_DIRS or the GTK webview aborts at

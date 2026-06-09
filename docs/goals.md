@@ -100,6 +100,11 @@ These are settled product decisions; they have wide impact on the schema and UX.
    staying dark or masquerading as idle.
 6. **Devices have no user names.** A light is identified by its MAC (a short tail in the
    UI) plus flash-to-identify — there is no nickname field in the schema.
+7. **Target platforms are Linux and Windows.** **Linux** is the development platform;
+   **Windows** is the platform for the official released build. **macOS is out of scope** —
+   there is no build, test, or publish path planned for it. This shapes platform-specific
+   work (e.g. USB flashing/serial in the [onboarding milestone](milestones/v1.2-zero-friction-onboarding.md)
+   is validated on Linux first, then Windows).
 
 ---
 
@@ -124,7 +129,8 @@ These are settled product decisions; they have wide impact on the schema and UX.
 - **Designed for, built later:** the OBS program-gating **override**. The program-gate is
   already in the schema; only the OBS-side override source is deferred.
 - **Out of scope for v1:** per-device colour/appearance customisation, multi-switcher
-  running simultaneously, anything crossing subnet/router/VLAN boundaries.
+  running simultaneously, anything crossing subnet/router/VLAN boundaries, **macOS support**
+  (Linux + Windows only — see decision 7).
 
 ---
 

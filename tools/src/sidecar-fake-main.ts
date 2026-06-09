@@ -26,9 +26,11 @@ import { FakeAtem } from "./atem-sim.ts";
 
 import { SidecarApp } from "../../app/sidecar/src/app.ts";
 import { AtemSource } from "../../app/sidecar/src/atem.ts";
+import { CompositeDeviceServer } from "../../app/sidecar/src/composite-device-server.ts";
 import { DeviceServer } from "../../app/sidecar/src/device-server.ts";
 import { IpcBridge } from "../../app/sidecar/src/ipc-bridge.ts";
 import { ConfigStore } from "../../app/sidecar/src/store.ts";
+import { UsbTransport } from "../../app/sidecar/src/usb-transport.ts";
 
 // stdout is the NDJSON IPC channel the Tauri shell parses; one stray library log line
 // on it corrupts the stream. Route console.log/info/debug to stderr (warn/error already
@@ -53,10 +55,21 @@ async function main(): Promise<void> {
 
   const fakeAtem = new FakeAtem({ inputCount: 4, programInput: 1, previewInput: 2 });
   const atem = new AtemSource(fakeAtem);
-  const deviceServer = new DeviceServer();
   const ipc = new IpcBridge();
 
-  const app = new SidecarApp({ atem, deviceServer, store, ipc, dev: true });
+  // Mirror production wiring so `cargo tauri dev` exercises USB provisioning too: a real
+  // ESP32-C3 on USB (relayed by the Rust shell) shows up alongside LAN devices.
+  const tcp = new DeviceServer();
+  const usb = new UsbTransport(ipc);
+  const deviceServer = new CompositeDeviceServer(
+    [
+      { transport: "usb", port: usb },
+      { transport: "wifi", port: tcp },
+    ],
+    usb,
+  );
+
+  const app = new SidecarApp({ atem, deviceServer, provisioning: deviceServer, store, ipc, dev: true });
 
   // Dev-only: drive the fake ATEM's program from the UI. Clicking an input takes it to
   // air; the previously-live input drops to preview (a swap, as on a real ME cut). This

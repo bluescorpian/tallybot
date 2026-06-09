@@ -8,6 +8,12 @@
 //!   • kills the child when the app exits, so no orphan `node` survives.
 //!
 //! See `app/sidecar/SIDECAR.md` ("The Rust bridge") for the design rationale.
+//!
+//! USB-serial provisioning (v1.2) extends this same bridge: the `usb` module owns the
+//! serial port(s) on dedicated threads and exchanges `usb*` JSON messages with the
+//! sidecar over the very stdin/stdout pipe used here — see `usb/mod.rs`.
+
+mod usb;
 
 use std::sync::Mutex;
 
@@ -15,21 +21,33 @@ use tauri::{Emitter, Manager, RunEvent};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
+use usb::UsbState;
+
 /// Holds the running sidecar so the `send_to_sidecar` command can write to its stdin and
 /// the exit handler can kill it. `None` until spawned / after it's been taken to kill.
 struct SidecarState(Mutex<Option<CommandChild>>);
 
-/// Forward one already-serialized NDJSON `UiCommand` line to the sidecar's stdin.
-/// The UI calls this via `invoke` for every command (assign, identify, setSource, …).
-#[tauri::command]
-fn send_to_sidecar(state: tauri::State<'_, SidecarState>, line: String) -> Result<(), String> {
+/// Write one NDJSON line to the sidecar's stdin (a trailing newline is added if missing).
+/// The single stdin writer — used by the `send_to_sidecar` UI command and by the USB port
+/// threads relaying device messages. Errors if the sidecar isn't running.
+pub(crate) fn write_sidecar_line(app: &tauri::AppHandle, line: &str) -> Result<(), String> {
+    let state = app
+        .try_state::<SidecarState>()
+        .ok_or("sidecar state missing")?;
     let mut guard = state.0.lock().map_err(|e| e.to_string())?;
     let child = guard.as_mut().ok_or("sidecar is not running")?;
-    let mut bytes = line.into_bytes();
+    let mut bytes = line.as_bytes().to_vec();
     if bytes.last() != Some(&b'\n') {
         bytes.push(b'\n'); // NDJSON: one JSON object per line
     }
     child.write(&bytes).map_err(|e| e.to_string())
+}
+
+/// Forward one already-serialized NDJSON `UiCommand` line to the sidecar's stdin.
+/// The UI calls this via `invoke` for every command (assign, identify, setSource, …).
+#[tauri::command]
+fn send_to_sidecar(app: tauri::AppHandle, line: String) -> Result<(), String> {
+    write_sidecar_line(&app, &line)
 }
 
 /// Spawn the sidecar and pump its output to the UI. Stdout lines become `"sidecar"`
@@ -93,10 +111,13 @@ fn spawn_sidecar(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error
         while let Some(event) = rx.recv().await {
             match event {
                 // The shell plugin delivers stdout one line at a time — one NDJSON
-                // message per event. Forward the raw line; the UI parses it via `$ipc`.
+                // message per event. `usb*` messages are shell-targeted (route them to the
+                // serial port threads); everything else is forwarded to the UI via `$ipc`.
                 CommandEvent::Stdout(line) => {
                     let text = String::from_utf8_lossy(&line).into_owned();
-                    let _ = handle.emit("sidecar", text);
+                    if !usb::handle_outbound(&handle, &text) {
+                        let _ = handle.emit("sidecar", text);
+                    }
                 }
                 CommandEvent::Stderr(line) => {
                     eprint!("[sidecar] {}", String::from_utf8_lossy(&line));
@@ -114,8 +135,12 @@ fn spawn_sidecar(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error
     Ok(())
 }
 
-/// Kill the sidecar if it's still running. Called on app exit so no orphan survives.
-fn kill_sidecar(app: &tauri::AppHandle) {
+/// Kill the sidecar if it's still running, and signal the USB threads to wind down.
+/// Called on app exit so no orphan process or open serial port survives.
+fn shutdown(app: &tauri::AppHandle) {
+    if let Some(usb) = app.try_state::<UsbState>() {
+        usb.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
     if let Some(state) = app.try_state::<SidecarState>() {
         if let Some(child) = state.0.lock().unwrap().take() {
             let _ = child.kill();
@@ -129,8 +154,10 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .manage(SidecarState(Mutex::new(None)))
+        .manage(UsbState::new())
         .setup(|app| {
             spawn_sidecar(app.handle())?;
+            usb::start(app.handle().clone()); // poll for ESP32-C3 serial ports + relay
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![send_to_sidecar])
@@ -138,7 +165,7 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             if let RunEvent::Exit = event {
-                kill_sidecar(app_handle);
+                shutdown(app_handle);
             }
         });
 }

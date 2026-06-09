@@ -1,22 +1,25 @@
 // TallyBot binary wire protocol — the device (firmware) side.
 //
-// This file is the C++ mirror of `app/sidecar/src/protocol.ts`. The sidecar is the
-// source of truth (see `ARCHITECTURE.md` "Binary Message Protocol"); these values
-// and the framing logic must stay in lockstep with it. If you change one, change the
-// other — a maintainer editing the TS should find this header, and vice versa.
+// This file is the C++ mirror of `app/sidecar/src/protocol.ts` (the source of truth;
+// see `ARCHITECTURE.md` "Binary Message Protocol"). There is now a THIRD, minimal
+// mirror in `app/src-tauri/src/usb/protocol.rs` (COBS framing + HELLO parse only).
+// Keep all three in lockstep — a maintainer editing any one should find the others.
 //
-// Framing: every message is length-prefixed — a single leading byte gives the number
-// of payload bytes that follow, and the first payload byte is the message type. One
-// uniform loop frames any message regardless of length, which lets a parser skip a
-// message (or trailing fields) it doesn't recognise.
+// Framing is **transport-specific; payloads are shared**. The `[type][fields…]`
+// payloads ride unchanged over both transports; only the wrapper differs:
+//   • TCP — length-prefixed: a single leading byte gives the number of payload bytes
+//     that follow. One uniform loop frames any message regardless of length, which
+//     lets a parser skip a message (or trailing fields) it doesn't recognise.
+//       [len][payload …]      len = count of payload bytes that follow (1 byte, 0–255)
+//   • USB-CDC — COBS (via PacketSerial), self-synchronising on a lone 0x00 delimiter.
+//     PacketSerial applies the COBS wrapper; the encoders below build only the payload.
 //
-//   [len][payload …]      len = count of payload bytes that follow (1 byte, 0–255)
-//
-// Wire reference (exact bytes):
-//   HELLO      08 01 01 <mac0..mac5>      (device → server)
+// Wire reference (exact TCP bytes; over USB the same payloads ride inside a COBS frame):
+//   HELLO      08 01 02 <mac0..mac5>      (device → server)   [version is now 2]
 //   HEARTBEAT  01 02                      (device → server)
 //   SET_COLOR  05 01 <R> <G> <B> <bri>    (server → device)
 //   IDENTIFY   01 02                      (server → device)
+//   STATUS/LOG and SET_WIFI/SET_TRANSPORT/GET_STATUS are USB-only — see below.
 
 #pragma once
 
@@ -28,7 +31,9 @@
 // server (easy to update), not the firmware (flashed onto devices), so the device
 // only ever announces CURRENT. MIN_SUPPORTED is informational here — the server
 // enforces it and surfaces an "update firmware" notice below it.
-#define PROTOCOL_VERSION_CURRENT 1
+// Bumped 1 → 2 for USB provisioning: a v2 HELLO tells the app this firmware understands
+// SET_WIFI/SET_TRANSPORT (the app only sends those to version ≥ 2 devices).
+#define PROTOCOL_VERSION_CURRENT 2
 #define PROTOCOL_VERSION_MIN_SUPPORTED 1
 
 // ── Network ports ────────────────────────────────────────────────────────────
@@ -37,10 +42,36 @@
 
 // ── Message types (the first payload byte) ───────────────────────────────────
 // Device→server and server→device type spaces are independent; both start at 0x01.
-#define MSG_HELLO 0x01      // device → server
-#define MSG_HEARTBEAT 0x02  // device → server
-#define MSG_SET_COLOR 0x01  // server → device
-#define MSG_IDENTIFY 0x02   // server → device
+// HELLO/HEARTBEAT/SET_COLOR/IDENTIFY travel over both transports; the rest are
+// USB-only provisioning/diagnostics frames.
+#define MSG_HELLO 0x01      // device → server (both transports)
+#define MSG_HEARTBEAT 0x02  // device → server (TCP; unused over USB — port close is liveness)
+#define MSG_STATUS 0x03     // device → host  (USB): transport/WiFi status snapshot
+#define MSG_LOG 0x04        // device → host  (USB): framed log line (release builds)
+#define MSG_SCAN_RESULT 0x05  // device → host (USB): reserved, deferred post-v1.2
+
+#define MSG_SET_COLOR 0x01     // server → device (both transports)
+#define MSG_IDENTIFY 0x02      // server → device (both transports)
+#define MSG_SET_WIFI 0x03      // host → device  (USB): persist creds + validating join
+#define MSG_SET_TRANSPORT 0x04  // host → device (USB): persist transport mode
+#define MSG_GET_STATUS 0x05    // host → device  (USB): request a STATUS frame
+#define MSG_SCAN_WIFI 0x06     // host → device  (USB): reserved, deferred post-v1.2
+#define MSG_RELAY 0x07         // host → device  (USB): reserved for v1.3 ESP-NOW bridge, unimplemented
+
+// ── Shared payload field enums ───────────────────────────────────────────────
+// Transport is an OPEN enum: stored as an int (NVS), a wire byte, and the IPC type —
+// never a bool — so v1.3 can add ESP-NOW (2) without a migration.
+#define TRANSPORT_NOTX 0
+#define TRANSPORT_WIFI 1
+// WiFi join progress, streamed in STATUS so the wizard confirms a join before unplug.
+#define WIFI_STATE_IDLE 0
+#define WIFI_STATE_JOINING 1
+#define WIFI_STATE_CONNECTED 2
+#define WIFI_STATE_FAILED 3
+// LOG severity.
+#define LOG_LEVEL_INFO 0
+#define LOG_LEVEL_WARN 1
+#define LOG_LEVEL_ERROR 2
 
 // ── Standard colours (ARCHITECTURE.md "Standard Colours"), R, G, B ───────────
 // These are what the *server* drives via SET_COLOR; the firmware renders whatever
@@ -76,10 +107,14 @@
 // ── Framing ──────────────────────────────────────────────────────────────────
 #define MAX_PAYLOAD_BYTES 255  // largest payload a single length byte can frame
 
-// A decoded server → device message.
+// A decoded server → device message. SET_COLOR/IDENTIFY arrive over both transports;
+// SET_WIFI/SET_TRANSPORT/GET_STATUS are USB-only provisioning frames.
 struct ServerMessage {
-  enum Kind { SET_COLOR, IDENTIFY, UNKNOWN } kind;
+  enum Kind { SET_COLOR, IDENTIFY, SET_WIFI, SET_TRANSPORT, GET_STATUS, UNKNOWN } kind;
   uint8_t r, g, b, brightness;  // valid only when kind == SET_COLOR
+  char ssid[33];                // valid only when kind == SET_WIFI (≤32 chars + NUL)
+  char pass[64];                // valid only when kind == SET_WIFI (≤63 chars + NUL)
+  uint8_t transportMode;        // valid only when kind == SET_TRANSPORT
 };
 
 // Reassembles length-prefixed frames from a TCP byte stream. TCP has no message
@@ -132,13 +167,51 @@ class FrameDecoder {
 
 // ── Device → server encoders ─────────────────────────────────────────────────
 
-// HELLO — sent immediately on every (re)connect: [type][version][MAC×6].
+// ── Shared payload builders (the unframed [type][fields…] body) ──────────────
+// These build only the payload — the unit shared across transports. TCP callers
+// prepend a length byte (the encode* helpers below); the USB path hands the same
+// payload to PacketSerial, which applies the COBS wrapper. Identity is the STA MAC
+// (WiFi.macAddress()): v1.3 ESP-NOW addresses peers by this exact MAC, so it must
+// not change to e.g. the SoftAP MAC.
+
+// HELLO payload: [type][version][MAC×6] — 8 bytes. `out` must hold ≥ 8.
+inline size_t encodeHelloPayload(uint8_t* out, const uint8_t mac[6]) {
+  out[0] = MSG_HELLO;
+  out[1] = PROTOCOL_VERSION_CURRENT;
+  memcpy(&out[2], mac, 6);
+  return 8;
+}
+
+// STATUS payload: [type][transport][credsPresent][wifiState][rssi] — 5 bytes. `out` ≥ 5.
+inline size_t encodeStatusPayload(uint8_t* out, uint8_t transport, bool credsPresent,
+                                  uint8_t wifiState, int8_t rssi) {
+  out[0] = MSG_STATUS;
+  out[1] = transport;
+  out[2] = credsPresent ? 1 : 0;
+  out[3] = wifiState;
+  out[4] = (uint8_t)rssi;  // signed byte on the wire; host sign-extends
+  return 5;
+}
+
+// LOG payload: [type][level][utf8…]. Copies up to `maxOut-2` message bytes. Returns the
+// payload length written. `out` must hold ≥ 2 bytes.
+inline size_t encodeLogPayload(uint8_t* out, size_t maxOut, uint8_t level, const char* msg,
+                               size_t msgLen) {
+  out[0] = MSG_LOG;
+  out[1] = level;
+  size_t room = maxOut >= 2 ? maxOut - 2 : 0;
+  if (msgLen > room) msgLen = room;
+  memcpy(&out[2], msg, msgLen);
+  return 2 + msgLen;
+}
+
+// ── Device → server encoders (TCP frames: payload + leading length byte) ──────
+
+// HELLO — sent immediately on every (re)connect: [len][type][version][MAC×6].
 // `out` must hold at least 9 bytes; returns the frame length (9).
 inline size_t encodeHello(uint8_t* out, const uint8_t mac[6]) {
   out[0] = 8;  // payload length: type + version + 6 MAC bytes
-  out[1] = MSG_HELLO;
-  out[2] = PROTOCOL_VERSION_CURRENT;
-  memcpy(&out[3], mac, 6);
+  encodeHelloPayload(&out[1], mac);
   return 9;
 }
 
@@ -173,6 +246,30 @@ inline bool decodeServerMessage(const uint8_t* payload, size_t len, ServerMessag
     case MSG_IDENTIFY:  // [type] — 1 payload byte
       if (len != 1) break;
       out->kind = ServerMessage::IDENTIFY;
+      return true;
+    case MSG_SET_WIFI: {  // [type][ssidLen][ssid…][passLen][pass…] — USB only
+      if (len < 3) break;  // need at least type + ssidLen + passLen
+      uint8_t ssidLen = payload[1];
+      if (ssidLen >= sizeof(out->ssid)) break;          // would overflow the field
+      if ((size_t)(2 + ssidLen) >= len) break;          // passLen byte must be present
+      uint8_t passLen = payload[2 + ssidLen];
+      if (passLen >= sizeof(out->pass)) break;
+      if ((size_t)(3 + ssidLen + passLen) != len) break;  // exact-length check
+      memcpy(out->ssid, &payload[2], ssidLen);
+      out->ssid[ssidLen] = '\0';
+      memcpy(out->pass, &payload[3 + ssidLen], passLen);
+      out->pass[passLen] = '\0';
+      out->kind = ServerMessage::SET_WIFI;
+      return true;
+    }
+    case MSG_SET_TRANSPORT:  // [type][mode] — 2 payload bytes
+      if (len != 2) break;
+      out->kind = ServerMessage::SET_TRANSPORT;
+      out->transportMode = payload[1];
+      return true;
+    case MSG_GET_STATUS:  // [type] — 1 payload byte
+      if (len != 1) break;
+      out->kind = ServerMessage::GET_STATUS;
       return true;
   }
   out->kind = ServerMessage::UNKNOWN;

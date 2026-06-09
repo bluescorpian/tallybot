@@ -31,6 +31,9 @@ function device(overrides: Partial<DeviceRecord> = {}): DeviceRecord {
     protocolVersion: 1,
     inputId: null,
     brightness: DEFAULT_BRIGHTNESS,
+    transport: "wifi",
+    wifiState: null,
+    rssi: null,
     ...overrides,
   };
 }
@@ -166,5 +169,8 @@ test("the device snapshot carries identity, assignment, and brightness through",
     brightness: 200,
     protocolVersion: 1,
     firmwareOutdated: false,
+    transport: "wifi",
+    wifiState: null,
+    rssi: null,
   });
 });

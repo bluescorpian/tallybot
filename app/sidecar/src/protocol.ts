@@ -2,14 +2,21 @@
  * Binary device↔server wire protocol — the server (sidecar) side.
  *
  * Source of truth: `ARCHITECTURE.md` ("Binary Message Protocol"). These values
- * mirror the firmware `#define`s in `firmware/src/main.cpp`; keep the two in sync.
+ * are mirrored in TWO other places — keep all three in sync:
+ *   • `firmware/src/protocol.h`        (C++, the device)
+ *   • `app/src-tauri/src/usb/protocol.rs` (Rust, the USB-serial shell — a *minimal*
+ *     mirror: COBS framing + HELLO parse only; every other payload is forwarded
+ *     opaque so this file stays the single payload codec authority).
  *
- * Framing: every message is length-prefixed — a single leading byte gives the
- * number of payload bytes that follow, and the first payload byte is the message
- * type. One uniform loop frames any message regardless of length, which is what
- * lets a parser skip a message (or trailing fields) it doesn't recognise.
- *
- *   [len][payload …]      len = count of payload bytes that follow (1 byte, 0–255)
+ * Framing is **transport-specific; payloads are shared**. The `[type][fields…]`
+ * payloads below ride unchanged over both transports; only the wrapper differs:
+ *   • TCP — length-prefixed: a single leading byte gives the number of payload
+ *     bytes that follow. One uniform loop frames any message regardless of length,
+ *     which lets a parser skip a message (or trailing fields) it doesn't recognise.
+ *       [len][payload …]      len = count of payload bytes that follow (1 byte, 0–255)
+ *   • USB — COBS (Consistent Overhead Byte Stuffing), self-synchronising on a lone
+ *     `0x00` delimiter. Framed by PacketSerial (firmware) / a cobs crate (shell);
+ *     this file only builds/parses the payloads, never the COBS wrapper.
  */
 
 // ── Network ports ───────────────────────────────────────────────────────────
@@ -21,17 +28,62 @@ export const DISCOVERY_PORT = 7001;
 
 // ── Message types (the first payload byte) ──────────────────────────────────
 // Device→server and server→device type spaces are independent; both start at 0x01.
+// HELLO/HEARTBEAT/SET_COLOR/IDENTIFY travel over both transports; the rest are
+// USB-only provisioning/diagnostics frames (a USB device is by definition new
+// enough to speak them — see the versioning note below).
 
-/** Device → server message types. */
+/** Device → server (a.k.a. device → host) message types. */
 export const DeviceMessageType = {
   HELLO: 0x01,
   HEARTBEAT: 0x02,
+  /** Transport/WiFi status snapshot, pushed on change and in reply to GET_STATUS (USB). */
+  STATUS: 0x03,
+  /** A framed log line — replaces raw Serial.print on release firmware (USB). */
+  LOG: 0x04,
+  /** WiFi scan result. Reserved; deferred post-v1.2 (the user types the SSID for now). */
+  SCAN_RESULT: 0x05,
 } as const;
 
-/** Server → device message types. */
+/** Server → device (a.k.a. host → device) message types. */
 export const ServerMessageType = {
   SET_COLOR: 0x01,
   IDENTIFY: 0x02,
+  /** Persist WiFi creds + trigger a validating join attempt (USB). */
+  SET_WIFI: 0x03,
+  /** Persist the transport mode (No-TX / WiFi) (USB). */
+  SET_TRANSPORT: 0x04,
+  /** Request a STATUS frame (USB). */
+  GET_STATUS: 0x05,
+  /** Request a WiFi scan → SCAN_RESULT. Reserved; deferred post-v1.2. */
+  SCAN_WIFI: 0x06,
+  /** v1.3 ESP-NOW bridge relay `[type][targetMAC×6][inner…]`. Reserved; unimplemented. */
+  RELAY: 0x07,
+} as const;
+
+// ── Shared field enums (used inside the payloads above) ──────────────────────
+
+/**
+ * How a device reaches the server when unplugged. **Open enum** — store as an int
+ * everywhere (NVS, wire byte, IPC), never a bool: v1.3 adds `2 = ESP-NOW`.
+ */
+export const Transport = {
+  NOTX: 0,
+  WIFI: 1,
+} as const;
+
+/** WiFi join progress, streamed in STATUS so the wizard confirms a join before unplug. */
+export const WifiState = {
+  IDLE: 0,
+  JOINING: 1,
+  CONNECTED: 2,
+  FAILED: 3,
+} as const;
+
+/** LOG severity. */
+export const LogLevel = {
+  INFO: 0,
+  WARN: 1,
+  ERROR: 2,
 } as const;
 
 // ── Protocol versioning ─────────────────────────────────────────────────────
@@ -39,8 +91,13 @@ export const ServerMessageType = {
 // (easy to update), not the firmware (flashed onto devices). See ARCHITECTURE.md.
 
 export const PROTOCOL_VERSION = {
-  /** The version the server prefers / emits. */
-  CURRENT: 1,
+  /**
+   * The version the server prefers / emits. Bumped 1 → 2 for USB provisioning: a v2
+   * HELLO tells the app the firmware understands SET_WIFI/SET_TRANSPORT, so the app
+   * only sends those to a device reporting version ≥ 2. (Those frames only ever travel
+   * over USB anyway, where the firmware is by definition new.)
+   */
+  CURRENT: 2,
   /** The oldest device version the server still handles; below this it warns. */
   MIN_SUPPORTED: 1,
 } as const;
@@ -139,7 +196,10 @@ export class FrameDecoder {
   }
 }
 
-// ── Server → device encoders ───────────────────────────────────────────────────
+// ── Server → device payloads & encoders ──────────────────────────────────────
+// `*Payload` builders produce the unframed `[type][fields…]` body — the unit shared
+// across transports. TCP callers wrap one in `frame()` (the `encode*` helpers below);
+// the USB path hands the same payload to COBS framing. Keep encoders == frame(payload).
 
 function assertByte(name: string, value: number): void {
   if (!Number.isInteger(value) || value < 0 || value > 255) {
@@ -147,21 +207,65 @@ function assertByte(name: string, value: number): void {
   }
 }
 
-/**
- * SET_COLOR — set the WS2812 LED. `color` is the tally state colour; `brightness`
- * is per-device (defaults to DEFAULT_BRIGHTNESS). Returns a complete frame.
- */
-export function encodeSetColor(color: Color, brightness: number = DEFAULT_BRIGHTNESS): Uint8Array {
+/** SET_COLOR payload: `[type][R][G][B][brightness]`. */
+export function setColorPayload(color: Color, brightness: number = DEFAULT_BRIGHTNESS): Uint8Array {
   assertByte("r", color.r);
   assertByte("g", color.g);
   assertByte("b", color.b);
   assertByte("brightness", brightness);
-  return frame(Uint8Array.of(ServerMessageType.SET_COLOR, color.r, color.g, color.b, brightness));
+  return Uint8Array.of(ServerMessageType.SET_COLOR, color.r, color.g, color.b, brightness);
 }
 
-/** IDENTIFY — flash the device briefly so the user can physically locate it. */
+/**
+ * SET_COLOR (TCP frame) — set the WS2812 LED. `color` is the tally state colour;
+ * `brightness` is per-device (defaults to DEFAULT_BRIGHTNESS). Returns a complete frame.
+ */
+export function encodeSetColor(color: Color, brightness: number = DEFAULT_BRIGHTNESS): Uint8Array {
+  return frame(setColorPayload(color, brightness));
+}
+
+/** IDENTIFY payload: `[type]`. */
+export function identifyPayload(): Uint8Array {
+  return Uint8Array.of(ServerMessageType.IDENTIFY);
+}
+
+/** IDENTIFY (TCP frame) — flash the device briefly so the user can physically locate it. */
 export function encodeIdentify(): Uint8Array {
-  return frame(Uint8Array.of(ServerMessageType.IDENTIFY));
+  return frame(identifyPayload());
+}
+
+/**
+ * SET_WIFI payload: `[type][ssidLen][ssid…][passLen][pass…]` (USB only). The device
+ * persists these creds where WiFiManager reads them and attempts a validating join.
+ * SSID/password are UTF-8; each length is a single byte (the lengths the firmware and
+ * NVS accept comfortably bound this — SSID ≤ 32, WPA pass ≤ 63).
+ */
+export function setWifiPayload(ssid: string, password: string): Uint8Array {
+  const enc = new TextEncoder();
+  const ssidBytes = enc.encode(ssid);
+  const passBytes = enc.encode(password);
+  assertByte("ssidLen", ssidBytes.length);
+  assertByte("passLen", passBytes.length);
+  const out = new Uint8Array(1 + 1 + ssidBytes.length + 1 + passBytes.length);
+  let i = 0;
+  out[i++] = ServerMessageType.SET_WIFI;
+  out[i++] = ssidBytes.length;
+  out.set(ssidBytes, i);
+  i += ssidBytes.length;
+  out[i++] = passBytes.length;
+  out.set(passBytes, i);
+  return out;
+}
+
+/** SET_TRANSPORT payload: `[type][mode]` (USB only). `mode` is a {@link Transport} value. */
+export function setTransportPayload(mode: number): Uint8Array {
+  assertByte("mode", mode);
+  return Uint8Array.of(ServerMessageType.SET_TRANSPORT, mode);
+}
+
+/** GET_STATUS payload: `[type]` (USB only) — ask the device for a STATUS frame. */
+export function getStatusPayload(): Uint8Array {
+  return Uint8Array.of(ServerMessageType.GET_STATUS);
 }
 
 // ── Device → server decoder ────────────────────────────────────────────────────
@@ -180,12 +284,33 @@ export interface HeartbeatMessage {
   kind: "heartbeat";
 }
 
-export type DeviceMessage = HelloMessage | HeartbeatMessage;
+/** A device's transport/WiFi status, streamed over USB (pushed on change + on GET_STATUS). */
+export interface StatusMessage {
+  kind: "status";
+  /** {@link Transport} value (open enum). */
+  transport: number;
+  /** True if WiFi creds are stored. */
+  credsPresent: boolean;
+  /** {@link WifiState} value. */
+  wifiState: number;
+  /** Signed RSSI in dBm (0 when not applicable). */
+  rssi: number;
+}
+
+/** A framed log line from the device (USB release builds emit these instead of raw text). */
+export interface LogMessage {
+  kind: "log";
+  /** {@link LogLevel} value. */
+  level: number;
+  text: string;
+}
+
+export type DeviceMessage = HelloMessage | HeartbeatMessage | StatusMessage | LogMessage;
 
 /**
- * Decode one unframed device→server payload (as produced by {@link FrameDecoder}).
- * The first byte is the message type. Throws on an unknown type or a payload whose
- * length doesn't match its type.
+ * Decode one unframed device→server payload (as produced by {@link FrameDecoder} on TCP,
+ * or by COBS deframing on USB). The first byte is the message type. Throws on an unknown
+ * type or a payload whose length doesn't match its type. STATUS/LOG only arrive over USB.
  */
 export function decodeDeviceMessage(payload: Uint8Array): DeviceMessage {
   if (payload.length === 0) {
@@ -206,6 +331,26 @@ export function decodeDeviceMessage(payload: Uint8Array): DeviceMessage {
         throw new RangeError(`HEARTBEAT payload must be 1 byte, got ${payload.length}`);
       }
       return { kind: "heartbeat" };
+    }
+    case DeviceMessageType.STATUS: {
+      // [type][transport][credsPresent][wifiState][rssi] — 5 payload bytes
+      if (payload.length !== 5) {
+        throw new RangeError(`STATUS payload must be 5 bytes, got ${payload.length}`);
+      }
+      return {
+        kind: "status",
+        transport: payload[1]!,
+        credsPresent: payload[2] !== 0,
+        wifiState: payload[3]!,
+        rssi: (payload[4]! << 24) >> 24, // sign-extend the byte
+      };
+    }
+    case DeviceMessageType.LOG: {
+      // [type][level][utf8…] — 2+ payload bytes
+      if (payload.length < 2) {
+        throw new RangeError(`LOG payload must be at least 2 bytes, got ${payload.length}`);
+      }
+      return { kind: "log", level: payload[1]!, text: new TextDecoder().decode(payload.subarray(2)) };
     }
     default:
       throw new RangeError(`unknown device message type 0x${type.toString(16).padStart(2, "0")}`);

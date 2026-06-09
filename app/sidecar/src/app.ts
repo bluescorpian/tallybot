@@ -23,9 +23,10 @@ import {
   computeEngine,
 } from "./engine.ts";
 import type { DeviceConfig } from "./store.ts";
-import type { SidecarEvent, SourceScanHit, UiCommand } from "./ipc.ts";
+import type { DeviceTransport, DeviceWifiState, SidecarEvent, SourceScanHit, UiCommand } from "./ipc.ts";
 import { scanNetwork } from "./scanner.ts";
 import { type Color, DEFAULT_BRIGHTNESS, macTail } from "./protocol.ts";
+import { transportModeValue } from "./usb-transport.ts";
 
 // ── Collaborator ports (the concrete classes satisfy these structurally) ─────────
 
@@ -38,6 +39,26 @@ export interface DeviceServerPort {
   on(event: "deviceDisconnected", listener: (info: { mac: string }) => void): unknown;
   on(event: "deviceUnsupported", listener: (info: { mac: string; version: number }) => void): unknown;
   on(event: "error", listener: (err: Error) => void): unknown;
+}
+
+/**
+ * The USB-only provisioning + diagnostics surface, kept separate from the
+ * transport-agnostic {@link DeviceServerPort} so the tally path stays clean. The
+ * {@link CompositeDeviceServer} implements both; tests that don't exercise USB omit it.
+ */
+export interface ProvisioningPort {
+  /** Which transport currently serves a connected MAC (drives the wired indicator). */
+  transportOf(mac: string): DeviceTransport | null;
+  /** Provision WiFi creds over USB and trigger a validating join. */
+  provisionWifi(mac: string, ssid: string, password: string): boolean;
+  /** Set the device's unplugged transport mode (a wire {@link Transport} value). */
+  setTransport(mac: string, mode: number): boolean;
+  on(
+    event: "status",
+    listener: (status: { mac: string; mode: number; credsPresent: boolean; wifiState: DeviceWifiState; rssi: number | null }) => void,
+  ): unknown;
+  on(event: "log", listener: (entry: { mac: string; level: "info" | "warn" | "error"; text: string }) => void): unknown;
+  on(event: "unflashed", listener: (info: { port: string }) => void): unknown;
 }
 
 export interface AtemSourcePort {
@@ -114,6 +135,8 @@ function breatheBrightness(elapsedMs: number, base: number): number {
 export interface SidecarAppDeps {
   atem: AtemSourcePort;
   deviceServer: DeviceServerPort;
+  /** USB provisioning + diagnostics (optional; the composite server supplies it in production). */
+  provisioning?: ProvisioningPort;
   store: StorePort;
   ipc: IpcPort;
   /** Where to log diagnostics (defaults to stderr; stdout is protocol-only). */
@@ -144,6 +167,7 @@ function colorsEqual(a: { color: Color; brightness: number }, b: { color: Color;
 export class SidecarApp {
   readonly #atem: AtemSourcePort;
   readonly #server: DeviceServerPort;
+  readonly #provisioning: ProvisioningPort | null;
   readonly #store: StorePort;
   readonly #ipc: IpcPort;
   readonly #log: (message: string) => void;
@@ -159,6 +183,8 @@ export class SidecarApp {
   readonly #online = new Map<string, number>();
   /** The last colour pushed to each device, to suppress redundant SET_COLORs. */
   readonly #lastColor = new Map<string, { color: Color; brightness: number }>();
+  /** Latest USB STATUS per device (WiFi join progress) — surfaced for the provisioning wizard. */
+  readonly #usbStatus = new Map<string, { wifiState: DeviceWifiState; rssi: number | null }>();
 
   /** Stops the animation clock, or null when nothing is currently animated. */
   #stopAnim: (() => void) | null = null;
@@ -172,6 +198,7 @@ export class SidecarApp {
   constructor(deps: SidecarAppDeps) {
     this.#atem = deps.atem;
     this.#server = deps.deviceServer;
+    this.#provisioning = deps.provisioning ?? null;
     this.#store = deps.store;
     this.#ipc = deps.ipc;
     this.#log = deps.log ?? ((message) => process.stderr.write(`${message}\n`));
@@ -192,6 +219,7 @@ export class SidecarApp {
     this.#server.on("deviceDisconnected", ({ mac }) => {
       this.#online.delete(mac);
       this.#lastColor.delete(mac); // forget it, so a reconnect is sent its colour afresh
+      this.#usbStatus.delete(mac); // stale once it's gone
       this.#log(`device disconnected: ${mac}`);
       this.#sync();
     });
@@ -199,6 +227,20 @@ export class SidecarApp {
       this.#ipc.notice("warn", `Tally ${macTail(mac)} runs old firmware (protocol v${version}); update it.`);
     });
     this.#server.on("error", (err) => this.#log(`device server error: ${err.message}`));
+
+    // USB provisioning + diagnostics (present only when a USB-capable server is wired in).
+    if (this.#provisioning) {
+      this.#provisioning.on("status", ({ mac, wifiState, rssi }) => {
+        this.#usbStatus.set(mac, { wifiState, rssi });
+        this.#sync(); // the wizard reads wifiState/rssi off the snapshot
+      });
+      this.#provisioning.on("log", ({ mac, level, text }) => {
+        this.#ipc.send({ type: "deviceLog", mac, level, text });
+      });
+      this.#provisioning.on("unflashed", ({ port }) => {
+        this.#ipc.send({ type: "unflashedDeviceDetected", port });
+      });
+    }
 
     this.#atem.on("change", (snapshot) => {
       this.#source = snapshot;
@@ -249,6 +291,16 @@ export class SidecarApp {
         await this.#store.setSourceIp(command.ip);
         this.#atem.connect(command.ip); // change event publishes the new connecting state
         break;
+      case "provisionWifi":
+        if (!this.#provisioning?.provisionWifi(command.mac, command.ssid, command.password)) {
+          this.#ipc.notice("info", `Tally ${macTail(command.mac, 2)} isn't on USB — can't provision WiFi.`);
+        }
+        break;
+      case "setTransport":
+        if (!this.#provisioning?.setTransport(command.mac, transportModeValue(command.mode))) {
+          this.#ipc.notice("info", `Tally ${macTail(command.mac, 2)} isn't on USB — can't set its transport.`);
+        }
+        break;
       case "scanSources":
         void this.#scan();
         break;
@@ -288,13 +340,19 @@ export class SidecarApp {
     const records: DeviceRecord[] = [];
     for (const mac of macs) {
       const config = this.#store.device(mac);
+      const online = this.#online.has(mac);
+      const status = this.#usbStatus.get(mac);
       records.push({
         mac,
         macTail: macTail(mac),
-        online: this.#online.has(mac),
+        online,
         protocolVersion: this.#online.get(mac) ?? null,
         inputId: config?.inputId ?? null,
         brightness: config?.brightness ?? DEFAULT_BRIGHTNESS,
+        // Offline/unknown devices default to WiFi; the indicator only flips to "usb" while cabled.
+        transport: (online ? this.#provisioning?.transportOf(mac) : null) ?? "wifi",
+        wifiState: status?.wifiState ?? null,
+        rssi: status?.rssi ?? null,
       });
     }
     return records;

@@ -67,9 +67,7 @@ async function buildStack(stateFile: string): Promise<Stack> {
     }
   });
 
-  // A short blink interval keeps the fault-flash test snappy; it only runs while a
-  // fault is active, so the other tests are unaffected.
-  const app = new SidecarApp({ atem: source, deviceServer: server, store, ipc, blinkIntervalMs: 40, log: () => {} });
+  const app = new SidecarApp({ atem: source, deviceServer: server, store, ipc, log: () => {} });
   await app.start();
 
   return {

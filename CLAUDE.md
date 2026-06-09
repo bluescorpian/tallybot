@@ -37,16 +37,24 @@ Data flow: `ATEM state change → sidecar → TCP → ESP32 → WS2812 LED`.
 
 ## Protocol quick reference
 
-Length-prefixed binary: every message is `[len][payload…]` (`len` = count of payload
-bytes that follow). Full tables in `docs/architecture.md`.
+**Framing is transport-specific; payloads are shared.** The `[type][fields…]` payloads
+ride unchanged over both transports; only the wrapper differs. TCP uses length-prefix
+framing (`[len][payload…]`, `len` = payload byte count); USB-CDC uses COBS (self-syncing on
+a `0x00` delimiter, framed by PacketSerial on the device and a hand-rolled codec in the Rust
+shell). Full tables in `docs/architecture.md`; USB details in `docs/spec/usb-serial-protocol.md`.
 
 - **Discovery (UDP 7001):** device broadcasts `TALLY_FIND`; server replies/broadcasts
   `TALLY_HERE:7000`.
 - **Device → server:** `0x01` HELLO `[type][version][mac×6]`, `0x02` HEARTBEAT `[type]`.
+  USB also: `0x03` STATUS `[transport][creds][wifiState][rssi]`, `0x04` LOG `[level][utf8…]`.
 - **Server → device:** `0x01` SET_COLOR `[type][R][G][B][brightness]`, `0x02` IDENTIFY
-  `[type]`.
+  `[type]`. USB also: `0x03` SET_WIFI, `0x04` SET_TRANSPORT, `0x05` GET_STATUS (`0x07` RELAY
+  reserved for v1.3).
 - **Versioning:** HELLO carries the device's protocol version; the server keeps `CURRENT`
-  + `MIN_SUPPORTED` and adapts to older devices (warns below `MIN_SUPPORTED`).
+  (now **2** — USB provisioning) + `MIN_SUPPORTED` (1) and adapts to older devices (warns
+  below `MIN_SUPPORTED`). Protocol constants are mirrored in three places now: `protocol.ts`
+  (source of truth), `firmware/src/protocol.h`, and `app/src-tauri/src/usb/protocol.rs`
+  (minimal: COBS + HELLO only).
 - **Colours:** Live `255,0,0` · Preview `0,255,0` · Idle `30,30,30` (dim white) ·
   Unassigned `255,255,255` (white, server-driven breathe) · Disconnected `0,0,255` (device-local
   steady blue) · Fault `0,0,255` flashing (server-driven, when the source can't be trusted —
@@ -60,26 +68,7 @@ bytes that follow). Full tables in `docs/architecture.md`.
 
 `flake.nix` provides the whole toolchain: Rust, `cargo-tauri`, Node, pnpm, and the
 `webkit2gtk-4.1` / `librsvg` system libs Tauri needs on Linux. With direnv it loads
-on `cd` (run `direnv allow` once); otherwise prefix commands with `nix develop -c`.
-
-**Use `cargo tauri …`, not `pnpm tauri …`.** This box has only a *stub* nix-ld, so
-the npm `@tauri-apps/cli`'s prebuilt binary can't exec — the flake's nix-built
-`cargo-tauri` is used instead. Related NixOS/pnpm fix lives in
-`app/pnpm-workspace.yaml` (`allowBuilds: esbuild` so pnpm's pre-run deps check
-doesn't fail fatally on the blocked esbuild lifecycle script).
-
-**NVIDIA + Wayland: the window won't open** (`Gdk-Message: Error 71 (Protocol
-error) dispatching to Wayland display`). WebKitGTK's DMA-BUF renderer commits a
-buffer without a Wayland explicit-sync acquire point on the NVIDIA driver; the
-compositor kills the window. It's an unresolved upstream WebKit bug
-([#280210](https://bugs.webkit.org/show_bug.cgi?id=280210)), not a TallyBot/Tauri
-bug — it reproduces in WebKitGTK's own MiniBrowser. The flake's `shellHook` works
-around it by exporting `WEBKIT_DISABLE_DMABUF_RENDERER=1`, but **only** when it
-detects Wayland + a loaded `nvidia` module (so X11 / AMD / Intel keep the
-accelerated path), and only if you haven't set the var yourself. If you're outside
-the dev shell, prefix manually: `WEBKIT_DISABLE_DMABUF_RENDERER=1 cargo tauri dev`.
-The shipped binary is *not* yet covered — packaging for NVIDIA+Wayland end-users
-will need the same env var set (e.g. in `run()`).
+on `cd` (run `direnv allow` once).
 
 ## Commands
 
@@ -114,8 +103,10 @@ cd app/sidecar && pnpm start        # run with FakeAtem
 
 - TypeScript is strict. Networking uses Node built-ins (`net`, `dgram`) — no
   third-party networking libs.
-- Keep the protocol constants in `protocol.ts` (sidecar) and the `#define`s in
-  `main.cpp` (firmware) in sync — they encode the same spec.
+- Keep the protocol constants in sync across the **three** mirrors that encode the same
+  spec: `app/sidecar/src/protocol.ts` (source of truth), `firmware/src/protocol.h`, and
+  `app/src-tauri/src/usb/protocol.rs` (minimal — COBS framing + HELLO parse only; the shell
+  forwards every other payload opaque so `protocol.ts` stays the single payload codec).
 - **Firmware is lean; the sidecar owns connected-state behaviour.** Logic and animation belong
   in the server (easy to change) rather than on the flashed device — the device renders what
   it's told. See `docs/led.md`.
@@ -137,8 +128,10 @@ Docs live in `docs/`. Load them on demand; don't bulk-load.
 | **`docs/atem-connection-notes.md`** | Sharp edges and gotchas with the `atem-connection` library; field-test findings. | Debugging ATEM connectivity, extending the ATEM adapter, or integrating new ATEM state. |
 | **`docs/packaging-windows.md`** | Step-by-step Windows build guide. | Building or testing the Windows portable binary. |
 | **`docs/milestones/v1.1-production-hardening.md`** | **Closed** worklist: diagnostics + LED palette shipped; WiFi-join reliability deferred, transport work pivoted to ESP-NOW. | Reviewing what production-hardening shipped or deferred. |
+| **`docs/milestones/v1.2-zero-friction-onboarding.md`** | **Active** milestone: in-app USB flashing + WiFi/No-TX provisioning over USB-C. | Working on USB onboarding; pair with `docs/spec/usb-serial-protocol.md`. |
 | **`docs/wifi-troubleshooting.md`** | Living runbook for the deferred WiFi-join problem: symptoms, the diagnostics-panel verdict, what's ruled out, current hypothesis, what to try next. | Returning to WiFi-join reliability, or reading a device's SoftAP diagnostics panel. |
-| **`docs/milestones/roadmap.md`** | Deferred / future work (ESP-NOW transport — active focus, OTA, web UI, OBS, multi-switcher). | Evaluating roadmap items or planning the next milestone. |
+| **`docs/milestones/roadmap.md`** | Deferred / future work (ESP-NOW transport, OTA, web UI, OBS, multi-switcher). | Evaluating roadmap items or planning the next milestone. |
+| **`docs/spec/`** | Pre-implementation feature specs: decisions, alternatives rejected, acceptance criteria. One file per feature; written before coding, archived or deleted when shipped. Current: `usb-serial-protocol.md` (v1.2 USB onboarding). | Designing or reviewing a feature before touching code. |
 | **`app/sidecar/SIDECAR.md`** | How the Node.js sidecar process works alongside Tauri: lifecycle, IPC transport, why this pattern. | Working on Tauri ↔ sidecar integration, the sidecar launch/shutdown flow, or IPC transport internals. |
 | **`app/sidecar/README.md`** | Day-to-day sidecar dev guide: how to run, test, and iterate on the sidecar in isolation. | Running or debugging the sidecar standalone, onboarding to sidecar development. |
 | **`tools/README.md`** | Hardware simulators: FakeAtem, fake ESP32 TCP client, sidecar-dev REPL, end-to-end test. | Using or extending the dev tools; hardware-free testing. |
@@ -151,22 +144,43 @@ MVP is complete. Production hardening (v1.1) is **closed**: on-device WiFi diagn
 full LED palette (server-driven flash + breathe; lean firmware) shipped and were verified.
 WiFi-join reliability hit venue access-point *policy* the device can't change (a weak-signal /
 min-RSSI kick) and is **deferred** — see [`docs/wifi-troubleshooting.md`](docs/wifi-troubleshooting.md)
-and the roadmap. The **active focus is now the ESP-NOW transport**
-([`docs/milestones/roadmap.md`](docs/milestones/roadmap.md), item 3); a milestone doc will be cut
-once it's scoped. Closed worklist: [`docs/milestones/v1.1-production-hardening.md`](docs/milestones/v1.1-production-hardening.md).
+and the roadmap. The **active focus is v1.2 + v1.3 in sequence**: USB provisioning of already-flashed
+devices (transport selection + WiFi creds), then ESP-NOW transport — targeting end of week.
+In-app firmware flashing (the original v1.2 differentiator) is **deferred** to a later
+milestone. Work proceeds in pieces: USB comms → No-TX mode → WiFi provisioning → ESP-NOW.
+The v1.2 USB pieces (COBS comms, No-TX mode, WiFi provisioning) are **implemented across
+firmware + Rust shell + sidecar and compile/unit-test clean**. The **USB transport path is
+hardware-verified** on a physical ESP32-C3: detection (HELLO), live `SET_COLOR` over USB, and
+the revert to provisioned mode on unplug (data-USB → power-only). **WiFi provisioning is not
+yet hardware-verified** — it needs the wizard UI to drive `SET_WIFI`/`SET_TRANSPORT` and watch
+the validating join. The Svelte provisioning UI (wizard + wired indicator) is therefore the
+**next piece** — the IPC contract is defined; until it lands, drive provisioning via the
+`tools/` sidecar-dev REPL.
+Milestones: [`v1.2`](docs/milestones/v1.2-zero-friction-onboarding.md) ·
+[`v1.3`](docs/milestones/v1.3-esp-now-transport.md). USB-serial protocol specced in
+[`docs/spec/usb-serial-protocol.md`](docs/spec/usb-serial-protocol.md).
+**Target platforms: Linux (dev) + Windows (release); macOS is out of scope.**
+Closed worklist: [`docs/milestones/v1.1-production-hardening.md`](docs/milestones/v1.1-production-hardening.md).
 
-- **app/sidecar/** — tally engine, device server (TCP/UDP), ATEM adapter (real
-  `atem-connection` behind an `AtemLike` seam), config store, IPC bridge, and the
-  orchestrator — built and tested.
+- **app/sidecar/** — tally engine, device server (now a `CompositeDeviceServer` fanning
+  TCP + USB, dedupe-by-MAC USB-preferred), ATEM adapter (real `atem-connection` behind an
+  `AtemLike` seam), config store, IPC bridge (UI commands + the internal `usb*` shell bridge),
+  `UsbTransport` proxy, and the orchestrator — built and tested.
 - **app/ UI** — the board, settings drawer, and frameless chrome, running on the live
   sidecar IPC stream (`src/lib/ipc.svelte.ts`), with a mock fallback for the `/preview`
   design workflow.
 - **app/ shell** — `src-tauri/src/lib.rs` spawns the Node sidecar via
   `tauri-plugin-shell`, forwards NDJSON stdout to the UI as `"sidecar"` events, and
-  exposes `send_to_sidecar` for UI → sidecar commands. Packaging is solved: single-binary
-  sidecar via `@yao-pkg/pkg`, wired into `cargo tauri build`.
+  exposes `send_to_sidecar` for UI → sidecar commands. It also **owns the serial port(s)**
+  (`src/usb/`, `serialport` crate): a per-port thread COBS-frames, detects HELLO by VID:PID
+  `0x303A:0x1001`, and relays `usb*` messages to/from the sidecar over the same stdio bridge.
+  Packaging is solved: single-binary sidecar via `@yao-pkg/pkg`, wired into `cargo tauri build`.
 - **firmware/** — full tally client: WiFiManager captive-portal provisioning, UDP
-  discovery, TCP binary protocol, LED state machine with per-phase colours. Verified on a
-  physical ESP32-C3. `protocol.h` mirrors `protocol.ts`.
+  discovery, TCP binary protocol, LED state machine with per-phase colours — plus a USB-CDC
+  COBS control channel (PacketSerial) sharing the message dispatch, No-TX mode, and USB WiFi
+  provisioning with a validating join. Two PlatformIO envs: dev (text logs) + `esp32-c3-release`
+  (frames everything). Verified on a physical ESP32-C3: the pre-USB client, and the USB
+  transport path (detect + live `SET_COLOR` + unplug-revert); USB WiFi provisioning still
+  pending hardware verification (needs the wizard UI). `protocol.h` mirrors `protocol.ts`.
 - **tools/** — ATEM simulator (`FakeAtem`), tally-client simulator, `sidecar-dev` REPL,
   and end-to-end test. See `tools/README.md`.
