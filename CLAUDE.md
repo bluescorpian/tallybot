@@ -138,29 +138,7 @@ Docs live in `docs/`. Load them on demand; don't bulk-load.
 
 The `.exploration/` subtree holds vendored source snapshots for research only — don't load it unless reverse-engineering a specific `atem-connection` or `threadedClass` behaviour.
 
-## Status
-
-MVP is complete. Production hardening (v1.1) is **closed**: on-device WiFi diagnostics and the
-full LED palette (server-driven flash + breathe; lean firmware) shipped and were verified.
-WiFi-join reliability hit venue access-point *policy* the device can't change (a weak-signal /
-min-RSSI kick) and is **deferred** — see [`docs/wifi-troubleshooting.md`](docs/wifi-troubleshooting.md)
-and the roadmap. The **active focus is v1.2 + v1.3 in sequence**: USB provisioning of already-flashed
-devices (transport selection + WiFi creds), then ESP-NOW transport — targeting end of week.
-In-app firmware flashing (the original v1.2 differentiator) is **deferred** to a later
-milestone. Work proceeds in pieces: USB comms → No-TX mode → WiFi provisioning → ESP-NOW.
-The v1.2 USB pieces (COBS comms, No-TX mode, WiFi provisioning) are **implemented across
-firmware + Rust shell + sidecar and compile/unit-test clean**. The **USB transport path is
-hardware-verified** on a physical ESP32-C3: detection (HELLO), live `SET_COLOR` over USB, and
-the revert to provisioned mode on unplug (data-USB → power-only). **WiFi provisioning is not
-yet hardware-verified** — it needs the wizard UI to drive `SET_WIFI`/`SET_TRANSPORT` and watch
-the validating join. The Svelte provisioning UI (wizard + wired indicator) is therefore the
-**next piece** — the IPC contract is defined; until it lands, drive provisioning via the
-`tools/` sidecar-dev REPL.
-Milestones: [`v1.2`](docs/milestones/v1.2-zero-friction-onboarding.md) ·
-[`v1.3`](docs/milestones/v1.3-esp-now-transport.md). USB-serial protocol specced in
-[`docs/spec/usb-serial-protocol.md`](docs/spec/usb-serial-protocol.md).
-**Target platforms: Linux (dev) + Windows (release); macOS is out of scope.**
-Closed worklist: [`docs/milestones/v1.1-production-hardening.md`](docs/milestones/v1.1-production-hardening.md).
+## Component status
 
 - **app/sidecar/** — tally engine, device server (now a `CompositeDeviceServer` fanning
   TCP + USB, dedupe-by-MAC USB-preferred), ATEM adapter (real `atem-connection` behind an
