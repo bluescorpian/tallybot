@@ -7,12 +7,7 @@ ATEM Mini switcher state and drives ESP32-C3 LED devices over WiFi.
 decisions, the network/binary protocol, and rationale. Read it before changing anything
 structural. This file is the working guide; keep the two consistent.
 
-> **Keep this file true.** CLAUDE.md is always in context and is the source of truth for
-> project status — including the **active milestone** (see [Status](#status)). If a change
-> you make falsifies a claim here — status moves, a path changes, a gotcha is resolved, a
-> command changes, the active milestone ships — **propose an update to this file in the same
-> turn** rather than letting it drift. Don't silently rewrite it; surface the proposed edit
-> to the user.
+> **Keep this file true.** CLAUDE.md is always in context. If a change you make falsifies a claim here — a path changes, a gotcha is resolved, a command changes — **propose an update to this file in the same turn** rather than letting it drift. Don't silently rewrite it; surface the proposed edit to the user. Record only **durable facts** — what the code *is* and how it behaves. Never write transient status: no dates, no "just rewritten", "pending verification", "software-complete", or "verified on hardware". That kind of note rots within a commit or two; write what stays true so the file rarely needs touching.
 
 ## Repository layout
 
@@ -83,23 +78,13 @@ cd app && pnpm build                # frontend only -> app/build
 
 # Firmware (PlatformIO)
 cd firmware && pio run              # build
-cd firmware && pio run -t upload    # flash
+cd firmware && pio run -e esp32-c3-release -t upload    # flash with the release env (COBS framing + logs)
 cd firmware && pio device monitor   # serial @ 115200
 
 # Sidecar (Node.js) — standalone dev
 cd app/sidecar && pnpm install
 cd app/sidecar && pnpm start        # run with FakeAtem
 ```
-
-## Firmware gotchas (ESP32-C3 SuperMini) — these will bite you
-
-1. **GPIO8 is addressable, not digital.** `digitalWrite(8, ...)` does nothing and the
-   board looks dead. Always drive the LED via FastLED.
-2. **Never sleep.** Deep/light sleep lets the power bank's auto-off cut power
-   (low-current detection). Keep WiFi active (~80–130 mA).
-3. **WiFi TX power.** Start at full power; only fall back to `WIFI_POWER_8_5dBm` after a
-   failed association attempt (older C3 boards with a weak antenna). Never cap it
-   unconditionally — it slashes uplink range on venue APs.
 
 ## Conventions
 
@@ -156,18 +141,17 @@ The `.exploration/` subtree holds vendored source snapshots for research only �
   (`src/usb/`, `serialport` crate): a per-port thread COBS-frames, detects HELLO by VID:PID
   `0x303A:0x1001`, and relays `usb*` messages to/from the sidecar over the same stdio bridge.
   Packaging is solved: single-binary sidecar via `@yao-pkg/pkg`, wired into `cargo tauri build`.
-- **firmware/** — full tally client: WiFiManager captive-portal provisioning, UDP
-  discovery, TCP binary protocol, LED state machine with per-phase colours — plus a USB-CDC
-  COBS control channel (PacketSerial) sharing the message dispatch, No-TX mode, and **save-only**
-  USB WiFi provisioning: `SET_WIFI` persists the creds + `transport=WiFi` and confirms at once
-  (`STATUS` with `credsPresent=1`, `wifiState=idle`) — no live/validating join, so it provisions
+- **firmware/** — full tally client, split into focused modules (`led` / `wifi` / `usb` /
+  `tally` / `control` / `settings` + a thin `main.cpp` orchestrator): WiFiManager captive-portal
+  provisioning, UDP discovery, the TCP binary protocol, and an LED state machine with per-phase
+  colours, plus a USB-CDC COBS control channel (PacketSerial) sharing the message dispatch and
+  No-TX (wired-only) mode. **Save-only USB WiFi provisioning:** `SET_WIFI` persists the creds +
+  `transport=WiFi` and confirms at once via `STATUS` — no live/validating join, so it provisions
   from anywhere. **USB-first boot:** a WiFi-mode device announces HELLO and waits a short grace
-  window for the host before starting the (blocking) WiFi bring-up, so a cabled device always comes
-  up over USB regardless of provisioned mode (it falls through to WiFi only when no host answers, and
-  reverts to WiFi live on USB-host loss). Two PlatformIO envs: dev (text logs) + `esp32-c3-release`
-  (frames everything). The in-app Configure / Wi-Fi wizard is built and wired; the full
-  provision-over-USB flow (save → reboot/unplug → joins) is **software-complete, pending on-hardware
-  verification**. Verified on a physical ESP32-C3: the pre-USB client, and the USB transport path
-  (detect + live `SET_COLOR` + unplug-revert). `protocol.h` mirrors `protocol.ts`.
+  window for a host before starting the (blocking) WiFi bring-up, so a cabled device always comes
+  up over USB regardless of provisioned mode (it falls through to WiFi when no host answers, and
+  reverts to WiFi live on USB-host loss). The radio always runs at full TX power (never capped).
+  Two PlatformIO envs: dev (text logs) + `esp32-c3-release` (frames everything). `protocol.h`
+  mirrors `protocol.ts`.
 - **tools/** — ATEM simulator (`FakeAtem`), tally-client simulator, `sidecar-dev` REPL,
   and end-to-end test. See `tools/README.md`.
