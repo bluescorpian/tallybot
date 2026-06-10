@@ -48,8 +48,8 @@ shell). Full tables in `docs/architecture.md`; USB details in `docs/spec/usb-ser
   `[type]`. USB also: `0x03` SET_WIFI, `0x04` SET_TRANSPORT, `0x05` GET_STATUS (`0x07` RELAY
   reserved for v1.3).
 - **Versioning:** HELLO carries the device's protocol version; the server keeps `CURRENT`
-  (now **2** — USB provisioning) + `MIN_SUPPORTED` (1) and adapts to older devices (warns
-  below `MIN_SUPPORTED`). Protocol constants are mirrored in three places now: `protocol.ts`
+  (**2** — USB provisioning) + `MIN_SUPPORTED` (1) and adapts to older devices (warns
+  below `MIN_SUPPORTED`). Protocol constants are mirrored in three places: `protocol.ts`
   (source of truth), `firmware/src/protocol.h`, and `app/src-tauri/src/usb/protocol.rs`
   (minimal: COBS + HELLO only).
 - **Colours:** Live `255,0,0` · Preview `0,255,0` · Idle `30,30,30` (dim white) ·
@@ -114,8 +114,8 @@ Docs live in `docs/`. Load them on demand; don't bulk-load.
 | **`docs/led.md`** | LED palette: every device state, colour, motion, and the design rules. | Touching LED state logic in firmware or sidecar, or discussing device-visible states. |
 | **`docs/atem-connection-notes.md`** | Sharp edges and gotchas with the `atem-connection` library; field-test findings. | Debugging ATEM connectivity, extending the ATEM adapter, or integrating new ATEM state. |
 | **`docs/packaging-windows.md`** | Step-by-step Windows build guide. | Building or testing the Windows portable binary. |
-| **`docs/milestones/v1.1-production-hardening.md`** | **Closed** worklist: diagnostics + LED palette shipped; WiFi-join reliability deferred, transport work pivoted to ESP-NOW. | Reviewing what production-hardening shipped or deferred. |
-| **`docs/milestones/v1.2-zero-friction-onboarding.md`** | **Active** milestone: in-app USB flashing + WiFi/No-TX provisioning over USB-C. | Working on USB onboarding; pair with `docs/spec/usb-serial-protocol.md`. |
+| **`docs/milestones/v1.1-production-hardening.md`** | Production-hardening worklist: diagnostics + LED palette, WiFi-join reliability (deferred), transport pivot to ESP-NOW. | Reviewing what production-hardening shipped or deferred. |
+| **`docs/milestones/v1.2-zero-friction-onboarding.md`** | Zero-friction onboarding: in-app USB flashing + WiFi/No-TX provisioning over USB-C. | Working on USB onboarding; pair with `docs/spec/usb-serial-protocol.md`. |
 | **`docs/wifi-troubleshooting.md`** | Living runbook for the deferred WiFi-join problem: symptoms, the diagnostics-panel verdict, what's ruled out, current hypothesis, what to try next. | Returning to WiFi-join reliability, or reading a device's SoftAP diagnostics panel. |
 | **`docs/milestones/roadmap.md`** | Deferred / future work (ESP-NOW transport, OTA, web UI, OBS, multi-switcher). | Evaluating roadmap items or planning the next milestone. |
 | **`docs/spec/`** | Pre-implementation feature specs: decisions, alternatives rejected, acceptance criteria. One file per feature; written before coding, archived or deleted when shipped. Current: `usb-serial-protocol.md` (v1.2 USB onboarding). | Designing or reviewing a feature before touching code. |
@@ -124,34 +124,3 @@ Docs live in `docs/`. Load them on demand; don't bulk-load.
 | **`tools/README.md`** | Hardware simulators: FakeAtem, fake ESP32 TCP client, sidecar-dev REPL, end-to-end test. | Using or extending the dev tools; hardware-free testing. |
 
 The `.exploration/` subtree holds vendored source snapshots for research only — don't load it unless reverse-engineering a specific `atem-connection` or `threadedClass` behaviour.
-
-## Component status
-
-- **app/sidecar/** — tally engine, device server (now a `CompositeDeviceServer` fanning
-  TCP + USB, dedupe-by-MAC USB-preferred), ATEM adapter (real `atem-connection` behind an
-  `AtemLike` seam), config store, IPC bridge (UI commands + the internal `usb*` shell bridge),
-  `UsbTransport` proxy, and the orchestrator — built and tested.
-- **app/ UI** — the board, settings drawer, frameless chrome, and the per-device
-  **Configure / Wi-Fi provisioning popover** (transport mode + save-only WiFi creds, wired to
-  live `provisionWifi`/`setTransport`), running on the live sidecar IPC stream
-  (`src/lib/ipc.svelte.ts`), with a mock fallback for the `/preview` design workflow.
-- **app/ shell** — `src-tauri/src/lib.rs` spawns the Node sidecar via
-  `tauri-plugin-shell`, forwards NDJSON stdout to the UI as `"sidecar"` events, and
-  exposes `send_to_sidecar` for UI → sidecar commands. It also **owns the serial port(s)**
-  (`src/usb/`, `serialport` crate): a per-port thread COBS-frames, detects HELLO by VID:PID
-  `0x303A:0x1001`, and relays `usb*` messages to/from the sidecar over the same stdio bridge.
-  Packaging is solved: single-binary sidecar via `@yao-pkg/pkg`, wired into `cargo tauri build`.
-- **firmware/** — full tally client, split into focused modules (`led` / `wifi` / `usb` /
-  `tally` / `control` / `settings` + a thin `main.cpp` orchestrator): WiFiManager captive-portal
-  provisioning, UDP discovery, the TCP binary protocol, and an LED state machine with per-phase
-  colours, plus a USB-CDC COBS control channel (PacketSerial) sharing the message dispatch and
-  No-TX (wired-only) mode. **Save-only USB WiFi provisioning:** `SET_WIFI` persists the creds +
-  `transport=WiFi` and confirms at once via `STATUS` — no live/validating join, so it provisions
-  from anywhere. **USB-first boot:** a WiFi-mode device announces HELLO and waits a short grace
-  window for a host before starting the (blocking) WiFi bring-up, so a cabled device always comes
-  up over USB regardless of provisioned mode (it falls through to WiFi when no host answers, and
-  reverts to WiFi live on USB-host loss). The radio always runs at full TX power (never capped).
-  Two PlatformIO envs: dev (text logs) + `esp32-c3-release` (frames everything). `protocol.h`
-  mirrors `protocol.ts`.
-- **tools/** — ATEM simulator (`FakeAtem`), tally-client simulator, `sidecar-dev` REPL,
-  and end-to-end test. See `tools/README.md`.
