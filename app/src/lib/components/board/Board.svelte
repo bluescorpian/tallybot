@@ -241,12 +241,37 @@
 	const convActive = (i: number) => isLive(i);
 	const divActive = (i: number) => isLive(i) && !override;
 	const anyLive = $derived(inputs.some((i) => i.state === "live"));
-	// Which half of the collector bus carries signal (relative to the centre trunk).
-	const leftLive = $derived(
-		inputs.some((_, i) => isLive(i) && colCx(i) < boardCx),
+	// A collector-bus half lights only from the centre out to the OUTERMOST live
+	// input on that side: signal taps onto the bus at a live input's column and
+	// flows inward to the trunk, so any stretch further out stays grey. Returns
+	// the outer x of the lit span (chamfered at an edge column), or null when no
+	// live input feeds that side. (With an odd input count the centre column sits
+	// exactly on boardCx — it feeds the trunk directly and lights no bus half.)
+	const outerLiveX = (side: "L" | "R"): number | null => {
+		const idx = inputs
+			.map((_, i) => i)
+			.filter((i) =>
+				isLive(i) && (side === "L" ? colCx(i) < boardCx : colCx(i) > boardCx),
+			);
+		if (!idx.length) return null;
+		const i = side === "L" ? Math.min(...idx) : Math.max(...idx);
+		const edge = side === "L" ? 0 : COLS - 1;
+		return i === edge ? colCx(i) + (side === "L" ? BUS_CH : -BUS_CH) : colCx(i);
+	};
+	const leftActiveX = $derived(outerLiveX("L"));
+	const rightActiveX = $derived(outerLiveX("R"));
+	// Cyan overlays drawn on top of the grey base bus — the lit span only.
+	const convBusLActive = $derived(
+		leftActiveX !== null ? `M ${leftActiveX} ${yConvBus} L ${boardCx} ${yConvBus}` : null,
 	);
-	const rightLive = $derived(
-		inputs.some((_, i) => isLive(i) && colCx(i) > boardCx),
+	const convBusRActive = $derived(
+		rightActiveX !== null ? `M ${boardCx} ${yConvBus} L ${rightActiveX} ${yConvBus}` : null,
+	);
+	const divBusLActive = $derived(
+		leftActiveX !== null ? `M ${leftActiveX} ${yDivBus} L ${boardCx} ${yDivBus}` : null,
+	);
+	const divBusRActive = $derived(
+		rightActiveX !== null ? `M ${boardCx} ${yDivBus} L ${rightActiveX} ${yDivBus}` : null,
 	);
 	const gateMode = $derived(
 		!sourceConnected ? "inert" : override ? "cut" : anyLive ? "hot" : "rest",
@@ -301,22 +326,35 @@
 				height={boardH}
 				aria-hidden="true"
 			>
-				<!-- source bus: structural, rest grey -->
+				<!-- Two-layer paint: every wire is drawn once at rest (grey) here,
+				     then the energised segments are redrawn glowing on top below. So
+				     a resting wire never sits over a live one, and each glow (the
+				     trace's own drop-shadow) bleeds beneath its bright core. -->
+				<!-- Resting layer — the full schematic in grey -->
 				<Trace d={srcDrop} />
 				<Trace d={busMain} />
 				{#each inputs as _, i (i)}<Trace d={tap(i)} />{/each}
-				<!-- converge: inputs collect onto a bus, trunk into the gate -->
-				{#each inputs as _, i (i)}<Trace d={convDrop(i)} active={convActive(i)} />{/each}
-				<Trace d={convBusL} active={leftLive} />
-				<Trace d={convBusR} active={rightLive} />
-				<Trace d={convTrunk} active={anyLive} />
-				<!-- diverge: trunk out of the gate, bus, drop into every column -->
-				<Trace d={divTrunk} active={anyLive && !override} />
-				<Trace d={divBusL} active={leftLive && !override} />
-				<Trace d={divBusR} active={rightLive && !override} />
-				{#each inputs as _, i (i)}<Trace d={divTap(i)} active={divActive(i)} />{/each}
+				{#each inputs as _, i (i)}<Trace d={convDrop(i)} />{/each}
+				<Trace d={convBusL} />
+				<Trace d={convBusR} />
+				<Trace d={convTrunk} />
+				<Trace d={divTrunk} />
+				<Trace d={divBusL} />
+				<Trace d={divBusR} />
+				{#each inputs as _, i (i)}<Trace d={divTap(i)} />{/each}
+				<!-- Live layer — only the energised segments, cyan + glowing, on top.
+				     Converge bus halves light only from centre out to the outermost
+				     live input on each side; the diverge mirror goes dark on override. -->
+				{#each inputs as _, i (i)}{#if convActive(i)}<Trace d={convDrop(i)} active />{/if}{/each}
+				{#if convBusLActive}<Trace d={convBusLActive} active />{/if}
+				{#if convBusRActive}<Trace d={convBusRActive} active />{/if}
+				{#if anyLive}<Trace d={convTrunk} active />{/if}
+				{#if anyLive && !override}<Trace d={divTrunk} active />{/if}
+				{#if divBusLActive && !override}<Trace d={divBusLActive} active />{/if}
+				{#if divBusRActive && !override}<Trace d={divBusRActive} active />{/if}
+				{#each inputs as _, i (i)}{#if divActive(i)}<Trace d={divTap(i)} active />{/if}{/each}
 				<!-- override wire-in (v1: only when active) -->
-				{#if override}<Trace d={overrideWire} active={true} />{/if}
+				{#if override}<Trace d={overrideWire} active />{/if}
 			</svg>
 		{/if}
 
