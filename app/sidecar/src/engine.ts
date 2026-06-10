@@ -67,6 +67,14 @@ export interface DeviceRecord {
   wifiState: DeviceWifiState | null;
   /** Last reported RSSI (dBm) while provisioning over USB; null when not applicable. */
   rssi: number | null;
+  /**
+   * Persisted "when unplugged" behaviour the device reports over USB (`"wifi"`/`"notx"`),
+   * or null when never provisioned / not on USB. Optional so existing record literals (and the
+   * pure-engine tests) need no change; the orchestrator always supplies it.
+   */
+  provisionedMode?: "wifi" | "notx" | "espnow" | null;
+  /** SSID the device is provisioned to join when unplugged, or null. Optional (see above). */
+  ssid?: string | null;
 }
 
 /**
@@ -178,6 +186,8 @@ export function computeEngine(
       transport: device.transport,
       wifiState: device.wifiState,
       rssi: device.rssi,
+      provisionedMode: device.provisionedMode ?? null,
+      ssid: device.ssid ?? null,
     });
     if (device.online) {
       const { color, anim } = colorFor(device, source, gate);

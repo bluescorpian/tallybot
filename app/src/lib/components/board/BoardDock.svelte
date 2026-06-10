@@ -19,6 +19,10 @@
 		onflash?: (mac: string) => void;
 		/** Set a device's LED brightness (protocol byte, 0–255). */
 		onbrightness?: (mac: string, value: number) => void;
+		/** Provision a device's Wi-Fi (persist creds; save-only — no live join). */
+		onprovisionwifi?: (mac: string, ssid: string, pass: string) => void;
+		/** Set a device's unplugged transport mode. */
+		onsettransport?: (mac: string, mode: "wifi" | "notx") => void;
 	}
 	let {
 		lights,
@@ -27,6 +31,8 @@
 		onassign,
 		onflash,
 		onbrightness,
+		onprovisionwifi,
+		onsettransport,
 	}: Props = $props();
 </script>
 
@@ -45,9 +51,16 @@
 					inputs={pickerInputs}
 					currentInputId={null}
 					brightness={light.brightness}
+					transport={light.transport}
+					provisionedMode={light.provisionedMode}
+					ssid={light.ssid}
+					wifiState={light.wifiState}
+					rssi={light.rssi}
 					onassign={(id) => onassign?.(light.mac, id)}
 					onflash={() => onflash?.(light.mac)}
 					onbrightness={(v) => onbrightness?.(light.mac, v)}
+					onprovisionwifi={(s, p) => onprovisionwifi?.(light.mac, s, p)}
+					onsettransport={(m) => onsettransport?.(light.mac, m)}
 				/>
 			</div>
 		{/each}

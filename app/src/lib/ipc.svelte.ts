@@ -87,6 +87,14 @@ class SidecarStore {
 	setBrightness(mac: string, brightness: number): void {
 		this.#send({ type: "setBrightness", mac, brightness });
 	}
+	/** Provision a USB device's WiFi creds + kick off the validating join (v1.2). */
+	provisionWifi(mac: string, ssid: string, password: string): void {
+		this.#send({ type: "provisionWifi", mac, ssid, password });
+	}
+	/** Set what a USB device does when unplugged: join WiFi, or stay dark (No-TX). */
+	setTransport(mac: string, mode: "wifi" | "notx"): void {
+		this.#send({ type: "setTransport", mac, mode });
+	}
 	setSource(ip: string): void {
 		this.#send({ type: "setSource", ip });
 	}

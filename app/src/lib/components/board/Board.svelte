@@ -52,6 +52,10 @@
 		onflash?: (mac: string) => void;
 		/** Set a device's LED brightness (protocol byte, 0–255). */
 		onbrightness?: (mac: string, value: number) => void;
+		/** Provision a device's Wi-Fi (persist creds; save-only — no live join). */
+		onprovisionwifi?: (mac: string, ssid: string, pass: string) => void;
+		/** Set a device's unplugged transport mode. */
+		onsettransport?: (mac: string, mode: "wifi" | "notx") => void;
 		/**
 		 * Dev mode only: clicking an input key takes it to program on the fake ATEM.
 		 * When omitted (production / real ATEM) the keys stay non-interactive.
@@ -71,6 +75,8 @@
 		onunassign,
 		onflash,
 		onbrightness,
+		onprovisionwifi,
+		onsettransport,
 		onsetup,
 		oninputclick,
 	}: Props = $props();
@@ -351,10 +357,17 @@
 							inputs={offerInputs}
 							currentInputId={inp.id}
 							brightness={light.brightness}
+							transport={light.transport}
+							provisionedMode={light.provisionedMode}
+							ssid={light.ssid}
+							wifiState={light.wifiState}
+							rssi={light.rssi}
 							onassign={(id) => onassign?.(light.mac, id)}
 							onunassign={() => onunassign?.(light.mac)}
 							onflash={() => flash(light.mac)}
 							onbrightness={(v) => onbrightness?.(light.mac, v)}
+							onprovisionwifi={(s, p) => onprovisionwifi?.(light.mac, s, p)}
+							onsettransport={(m) => onsettransport?.(light.mac, m)}
 						/>
 					</div>
 				{/each}
@@ -382,6 +395,8 @@
 					onassign={(mac, id) => onassign?.(mac, id)}
 					onflash={(mac) => flash(mac)}
 					onbrightness={(mac, v) => onbrightness?.(mac, v)}
+					onprovisionwifi={(mac, s, p) => onprovisionwifi?.(mac, s, p)}
+					onsettransport={(mac, m) => onsettransport?.(mac, m)}
 				/>
 			</div>
 		{/if}

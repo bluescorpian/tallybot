@@ -145,14 +145,29 @@ test("setTransportPayload / getStatusPayload", () => {
 
 // ── Device → host: STATUS / LOG decode (USB only) ───────────────────────────────
 
-test("decodeDeviceMessage reads STATUS, sign-extending RSSI", () => {
-  const payload = Uint8Array.of(DeviceMessageType.STATUS, Transport.WIFI, 1, WifiState.CONNECTED, 0xc4); // -60
+test("decodeDeviceMessage reads STATUS with SSID, sign-extending RSSI", () => {
+  const ssid = "GreenRoom-5G";
+  const payload = Uint8Array.of(
+    DeviceMessageType.STATUS, Transport.WIFI, WifiState.CONNECTED, 0xc4, // rssi -60
+    ssid.length, ...new TextEncoder().encode(ssid),
+  );
   assert.deepEqual(decodeDeviceMessage(payload), {
     kind: "status",
     transport: Transport.WIFI,
-    credsPresent: true,
     wifiState: WifiState.CONNECTED,
     rssi: -60,
+    ssid,
+  });
+});
+
+test("decodeDeviceMessage reads STATUS with no creds (ssidLen 0 → empty SSID)", () => {
+  const payload = Uint8Array.of(DeviceMessageType.STATUS, Transport.NOTX, WifiState.IDLE, 0, 0);
+  assert.deepEqual(decodeDeviceMessage(payload), {
+    kind: "status",
+    transport: Transport.NOTX,
+    wifiState: WifiState.IDLE,
+    rssi: 0,
+    ssid: "",
   });
 });
 
@@ -162,7 +177,9 @@ test("decodeDeviceMessage reads LOG text", () => {
 });
 
 test("decodeDeviceMessage rejects malformed STATUS/LOG", () => {
-  assert.throws(() => decodeDeviceMessage(Uint8Array.of(DeviceMessageType.STATUS, 1, 1, 1)), RangeError); // short
+  assert.throws(() => decodeDeviceMessage(Uint8Array.of(DeviceMessageType.STATUS, 1, 1, 1)), RangeError); // < 5 bytes
+  // ssidLen claims 3 bytes but only 1 follows → truncated tail
+  assert.throws(() => decodeDeviceMessage(Uint8Array.of(DeviceMessageType.STATUS, 1, 1, 1, 3, 0x41)), RangeError);
   assert.throws(() => decodeDeviceMessage(Uint8Array.of(DeviceMessageType.LOG)), RangeError); // no level
 });
 

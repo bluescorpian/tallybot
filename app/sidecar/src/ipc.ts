@@ -84,6 +84,21 @@ export interface Device {
   wifiState: DeviceWifiState | null;
   /** Last reported RSSI in dBm while provisioning over USB; null when not applicable. */
   rssi: number | null;
+  /**
+   * Persisted "when unplugged" behaviour the device reports over USB (the STATUS
+   * frame's transport byte): `"wifi"` joins a network, `"notx"` stays dark (USB-only
+   * install). `null` for a brand-new device that has never been provisioned. Distinct
+   * from `transport`, which is the transport *currently* carrying the device (`"usb"`
+   * while it's plugged in). Optional so pre-v1.2 sidecar builds (which never populate
+   * it) stay valid.
+   */
+  provisionedMode?: "wifi" | "notx" | "espnow" | null;
+  /**
+   * SSID the device is provisioned to join, or null if none. Adopted from the device's
+   * STATUS (read from its NVS), so it's accurate even for a device this host never
+   * provisioned; falls back to the host's own record when the device hasn't reported.
+   */
+  ssid?: string | null;
 }
 
 /**

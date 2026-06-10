@@ -38,6 +38,47 @@ test("assignments and the source IP round-trip across a reload", async () => {
   });
 });
 
+test("a provisioned SSID round-trips, and an SSID-only device survives the prune", async () => {
+  await withTempFile(async (path) => {
+    const store = await ConfigStore.load(path);
+    // No input, default brightness — only the SSID keeps this entry alive through the prune.
+    await store.setSsid("aa:bb:cc:dd:ee:ff", "GreenRoom-5G");
+
+    const reloaded = await ConfigStore.load(path);
+    assert.deepEqual(reloaded.device("aa:bb:cc:dd:ee:ff"), {
+      inputId: null,
+      brightness: DEFAULT_BRIGHTNESS,
+      ssid: "GreenRoom-5G",
+    });
+  });
+});
+
+test("clearing the SSID drops the key (and prunes an otherwise-empty device)", async () => {
+  await withTempFile(async (path) => {
+    const store = await ConfigStore.load(path);
+    await store.setSsid("aa:bb:cc:dd:ee:ff", "GreenRoom-5G");
+    await store.setSsid("aa:bb:cc:dd:ee:ff", null);
+
+    const reloaded = await ConfigStore.load(path);
+    assert.equal(reloaded.device("aa:bb:cc:dd:ee:ff"), undefined); // pruned: nothing left to keep
+  });
+});
+
+test("a device keeps both its input and its SSID across a reload", async () => {
+  await withTempFile(async (path) => {
+    const store = await ConfigStore.load(path);
+    await store.assign("aa:bb:cc:dd:ee:ff", 2);
+    await store.setSsid("aa:bb:cc:dd:ee:ff", "GreenRoom-5G");
+
+    const reloaded = await ConfigStore.load(path);
+    assert.deepEqual(reloaded.device("aa:bb:cc:dd:ee:ff"), {
+      inputId: 2,
+      brightness: DEFAULT_BRIGHTNESS,
+      ssid: "GreenRoom-5G",
+    });
+  });
+});
+
 test("unassigning keeps the device's brightness but clears the input", async () => {
   await withTempFile(async (path) => {
     const store = await ConfigStore.load(path);

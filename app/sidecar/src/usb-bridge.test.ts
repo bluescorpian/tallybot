@@ -28,12 +28,15 @@ test("parseUsbInbound recognises the shell→sidecar vocabulary", () => {
 });
 
 test("decodeUsbFrame decodes an opaque STATUS payload via the shared codec", () => {
-  const payloadHex = toHex(Uint8Array.of(DeviceMessageType.STATUS, Transport.WIFI, 1, WifiState.JOINING, 0));
+  const ssid = "venue";
+  const payloadHex = toHex(
+    Uint8Array.of(DeviceMessageType.STATUS, Transport.WIFI, WifiState.JOINING, 0, ssid.length, ...new TextEncoder().encode(ssid)),
+  );
   assert.deepEqual(decodeUsbFrame({ type: "usbFrame", mac: "a", payloadHex }), {
     kind: "status",
     transport: Transport.WIFI,
-    credsPresent: true,
     wifiState: WifiState.JOINING,
     rssi: 0,
+    ssid,
   });
 });

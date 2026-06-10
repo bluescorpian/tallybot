@@ -47,12 +47,23 @@
 	// light state: assigned-to-live, assigned-to-preview, assigned-to-idle,
 	// offline, and unassigned (dock → setup). When the source drops, the assigned
 	// lights flash FAULT (their input tally goes `unknown`), not idle.
+	// Two are wired over USB (transport "usb") to exercise v1.2 configuration:
+	//   A4:F2 — assigned + already provisioned for Wi-Fi (the reconfigure path)
+	//   D2:44 — docked + never provisioned (the first-time Configure path)
 	let devices = $state<Device[]>([
-		mock("a4:f2:01:00:11:22", "A4:F2", "assigned", 1),
+		mock("a4:f2:01:00:11:22", "A4:F2", "assigned", 1, {
+			transport: "usb",
+			provisionedMode: "wifi",
+			ssid: "GreenRoom-5G",
+			rssi: -61,
+		}),
 		mock("7b:1c:01:00:33:44", "7B:1C", "assigned", 1),
 		mock("3e:90:01:00:55:66", "3E:90", "assigned", 2),
 		mock("c1:08:01:00:77:88", "C1:08", "offline", 3),
-		mock("d2:44:01:00:99:aa", "D2:44", "unassigned", null),
+		mock("d2:44:01:00:99:aa", "D2:44", "unassigned", null, {
+			transport: "usb",
+			wifiState: "idle",
+		}),
 		mock("9f:31:01:00:bb:cc", "9F:31", "unassigned", null),
 	]);
 
@@ -61,6 +72,9 @@
 		macTail: string,
 		state: Device["state"],
 		inputId: number | null,
+		opts: Partial<
+			Pick<Device, "transport" | "provisionedMode" | "ssid" | "wifiState" | "rssi">
+		> = {},
 	): Device {
 		return {
 			mac,
@@ -68,8 +82,13 @@
 			state,
 			inputId,
 			brightness: 128,
-			protocolVersion: 1,
+			protocolVersion: opts.transport === "usb" ? 2 : 1,
 			firmwareOutdated: false,
+			transport: opts.transport ?? "wifi",
+			provisionedMode: opts.provisionedMode ?? null,
+			ssid: opts.ssid ?? null,
+			wifiState: opts.wifiState ?? null,
+			rssi: opts.rssi ?? null,
 		};
 	}
 
@@ -153,6 +172,30 @@
 		const d = devices.find((x) => x.mac === mac || x.macTail === mac);
 		if (d) d.brightness = brightness;
 	}
+
+	// ── v1.2 device provisioning ───────────────────────────────────────────────
+	// Save-only: SET_WIFI persists the credentials and the device confirms at once — there's
+	// no live join, so it works from anywhere (the creds apply when the device is unplugged).
+	// Under Tauri these send the real UiCommand; the device's STATUS streams the provisioned
+	// mode back. Off Tauri (pnpm dev) they mutate the mock device so the pane stays interactive.
+	function provisionWifi(mac: string, ssid: string, pass: string) {
+		if (isTauri) return sidecar.provisionWifi(mac, ssid, pass);
+		const d = devices.find((x) => x.mac === mac || x.macTail === mac);
+		if (!d) return;
+		d.provisionedMode = "wifi";
+		d.ssid = ssid;
+	}
+	function setTransport(mac: string, mode: "wifi" | "notx") {
+		if (isTauri) return sidecar.setTransport(mac, mode);
+		const d = devices.find((x) => x.mac === mac || x.macTail === mac);
+		if (!d) return;
+		if (mode === "notx") {
+			d.provisionedMode = "notx";
+			d.ssid = null;
+		} else {
+			d.provisionedMode = "wifi";
+		}
+	}
 	function setup() {
 		// the SourceChip "Set up your ATEM →" link — opens the settings drawer on
 		// Source (the first group).
@@ -214,6 +257,8 @@
 			onunassign={unassign}
 			onflash={flash}
 			onbrightness={setBrightness}
+			onprovisionwifi={provisionWifi}
+			onsettransport={setTransport}
 			onsetup={setup}
 			oninputclick={devMode ? onInputClick : undefined}
 		/>

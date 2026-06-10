@@ -31,9 +31,15 @@
 		type LightState,
 	} from "$lib/components/board/TallyLightPcb.svelte";
 	import BrightnessBar from "$lib/components/board/BrightnessBar.svelte";
+	import DeviceConfig from "$lib/components/board/DeviceConfig.svelte";
+	import DeviceWifi from "$lib/components/board/DeviceWifi.svelte";
+	import type { ProvisionedMode } from "$lib/components/board/types";
+	import type { DeviceTransport, DeviceWifiState } from "$ipc";
 	import Zap from "@lucide/svelte/icons/zap";
 	import Check from "@lucide/svelte/icons/check";
 	import Unplug from "@lucide/svelte/icons/unplug";
+	import Usb from "@lucide/svelte/icons/usb";
+	import Settings2 from "@lucide/svelte/icons/settings-2";
 
 	interface Props {
 		mac: string;
@@ -46,26 +52,62 @@
 		currentInputId?: string | null;
 		/** This device's LED brightness as the protocol byte (0–255). */
 		brightness?: number;
+		/** Transport currently carrying the device — `"usb"` enables Configure + the wired cuff. */
+		transport?: DeviceTransport;
+		/** Persisted "when unplugged" mode; null until provisioned. */
+		provisionedMode?: ProvisionedMode;
+		/** SSID the device is provisioned to join, or null. */
+		ssid?: string | null;
+		/** Live WiFi join progress while provisioning over USB, or null. */
+		wifiState?: DeviceWifiState | null;
+		/** Last reported RSSI (dBm) while provisioning, or null. */
+		rssi?: number | null;
 		onassign?: (inputId: string) => void;
 		onunassign?: () => void;
 		onflash?: () => void;
 		/** Emits the new brightness byte (0–255) when the level changes. */
 		onbrightness?: (value: number) => void;
+		/** Provision Wi-Fi: persist creds + start the validating join over the cable. */
+		onprovisionwifi?: (ssid: string, pass: string) => void;
+		/** Set the unplugged transport mode. */
+		onsettransport?: (mode: "wifi" | "notx") => void;
 		open?: boolean;
 	}
 	let {
 		mac,
 		label,
-		state = "idle",
+		state: lightState = "idle",
 		inputs,
 		currentInputId = null,
 		brightness = 128,
+		transport = "wifi",
+		provisionedMode = null,
+		ssid = null,
+		wifiState = null,
+		rssi = null,
 		onassign,
 		onunassign,
 		onflash,
 		onbrightness,
+		onprovisionwifi,
+		onsettransport,
 		open = $bindable(false),
 	}: Props = $props();
+
+	// Multi-page popover: the compact menu (assign / flash / brightness), the
+	// Configure pane (transport mode list), and the Wi-Fi credentials page. Only a
+	// wired (USB) device can be configured — provisioning rides the cable — so the
+	// entry only appears then. Reset to the menu on close.
+	let view = $state<"menu" | "config" | "wifi">("menu");
+	const wired = $derived(transport === "usb");
+	$effect(() => {
+		if (!open) view = "menu";
+	});
+
+	// Width per page: compact menu, a slightly roomier mode list, and the Wi-Fi form.
+	const contentClass = $derived(
+		`${view === "wifi" ? "w-[15rem]" : view === "config" ? "w-[14rem]" : "w-[12.8rem]"} gap-0 overflow-hidden p-0`,
+	);
 
 	const dotColor: Record<PickerInput["state"], string> = {
 		live: "var(--live)",
@@ -87,26 +129,62 @@
 	<PopoverTrigger>
 		{#snippet child({ props })}
 			<button {...props} class="light-trigger" aria-label={`Light ${mac} — assign or flash`}>
-				<TallyLightPcb {mac} {label} {state} />
+				<TallyLightPcb {mac} {label} state={lightState} {wired} />
 			</button>
 		{/snippet}
 	</PopoverTrigger>
 
-	<PopoverContent align="center" sideOffset={10} class="w-[12.8rem] gap-0 overflow-hidden p-0">
-		<!-- Header: which light, plus flash-to-identify -->
+	<PopoverContent align="center" sideOffset={10} class={contentClass}>
+		{#if view === "config"}
+			<DeviceConfig
+				{label}
+				{transport}
+				{provisionedMode}
+				{ssid}
+				onwifi={() => (view = "wifi")}
+				{onsettransport}
+				onback={() => (view = "menu")}
+			/>
+		{:else if view === "wifi"}
+			<DeviceWifi {mac} {ssid} {onprovisionwifi} onback={() => (view = "config")} />
+		{:else}
+			<!-- Header: which light, plus flash-to-identify -->
 		<div class="bg-muted/70 flex items-center justify-between gap-2 px-3 pt-3 pb-2.5">
 			<div class="flex flex-col">
-				<span class="text-muted-foreground text-[0.68rem] leading-tight">Tally light</span>
+				<span class="text-muted-foreground flex items-center gap-1.5 text-[0.68rem] leading-tight">
+					Tally light
+					{#if wired}
+						<span class="text-signal inline-flex" title="Connected over USB" aria-label="Connected over USB">
+							<Usb class="size-3.5" />
+						</span>
+					{/if}
+				</span>
 				<span class="font-mono text-sm font-medium tracking-wide">{label}</span>
 			</div>
-			<button
-				type="button"
-				class="text-foreground border-border bg-background hover:bg-accent focus-visible:ring-ring inline-flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium shadow-sm transition-colors outline-none focus-visible:ring-2"
-				onclick={() => onflash?.()}
-			>
-				<Zap class="size-3.5" />
-				Flash
-			</button>
+			<div class="flex items-center gap-1.5">
+				{#if wired}
+					<!-- Configure: per-device settings (v1.2: connection / transport). Icon-only,
+					     beside Flash; only a wired (USB) device can be provisioned. -->
+					<button
+						type="button"
+						aria-label="Configure"
+						title="Configure"
+						class="text-foreground border-border bg-background hover:bg-accent focus-visible:ring-ring inline-flex size-[1.875rem] cursor-pointer items-center justify-center rounded-lg border shadow-sm transition-colors outline-none focus-visible:ring-2"
+						onclick={() => (view = "config")}
+					>
+						<Settings2 class="size-4" />
+					</button>
+				{/if}
+				<button
+					type="button"
+					aria-label="Flash to identify"
+					title="Flash to identify"
+					class="text-foreground border-border bg-background hover:bg-accent focus-visible:ring-ring inline-flex size-[1.875rem] cursor-pointer items-center justify-center rounded-lg border shadow-sm transition-colors outline-none focus-visible:ring-2"
+					onclick={() => onflash?.()}
+				>
+					<Zap class="size-4" />
+				</button>
+			</div>
 		</div>
 
 		<div class="bg-border h-px"></div>
@@ -166,6 +244,7 @@
 					Unassign
 				</button>
 			</div>
+		{/if}
 		{/if}
 	</PopoverContent>
 </Popover>

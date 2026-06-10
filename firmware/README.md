@@ -32,6 +32,26 @@ pio device monitor   # serial @ 115200
 `pio run` on its own validates the firmware, toolchain, and library resolution with no
 hardware attached. The upload/monitor steps need a physical board.
 
+#### Which build target?
+
+There are two PlatformIO envs, and the choice matters once USB is involved:
+
+| Goal | Env | Why |
+|------|-----|-----|
+| Debug firmware at a terminal | `esp32-c3-devkitm-1` (default) | Plain-text logs, so `pio device monitor` is readable and crash backtraces symbolise. |
+| **Test USB comms with the host app** | **`esp32-c3-release`** | Frames *every* byte as COBS, so the host's decoder reads the stream cleanly. |
+
+```bash
+pio run -e esp32-c3-release -t upload   # flash the release build for host USB testing
+```
+
+**Why you can't use the dev build for USB-comms testing:** the dev build prints plain-text
+logs onto the *same* USB wire as the COBS control frames. That's great for a human reading
+the monitor, but it corrupts the host's COBS decoder. Any end-to-end USB test (device
+detect, `SET_COLOR`, WiFi provisioning via the Tauri app) must run the release build. The
+trade-off: release loses symbolised crash backtraces, since the exception decoder needs the
+plain-text stream — so it's two modes, not one strictly-better build.
+
 Expected monitor output (first boot, before WiFi is provisioned):
 
 ```

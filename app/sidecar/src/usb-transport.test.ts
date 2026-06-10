@@ -87,11 +87,12 @@ test("an inbound STATUS frame is decoded into a status event", () => {
   usb.on("status", (s) => statuses.push(s));
   bridge.feed({ type: "usbDeviceConnected", mac: MAC, version: 2 });
 
-  // STATUS [type][transport][creds][wifiState][rssi=-50]
-  const payload = Uint8Array.of(0x03, Transport.WIFI, 1, WifiState.CONNECTED, 0xce);
+  // STATUS [type][transport][wifiState][rssi=-50][ssidLen][ssid…]
+  const ssid = "studio";
+  const payload = Uint8Array.of(0x03, Transport.WIFI, WifiState.CONNECTED, 0xce, ssid.length, ...new TextEncoder().encode(ssid));
   bridge.feed({ type: "usbFrame", mac: MAC, payloadHex: toHex(payload) });
   assert.deepEqual(statuses, [
-    { mac: MAC, mode: Transport.WIFI, credsPresent: true, wifiState: "connected", rssi: -50 },
+    { mac: MAC, mode: Transport.WIFI, wifiState: "connected", rssi: -50, ssid },
   ]);
 });
 

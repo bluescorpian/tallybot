@@ -5,7 +5,7 @@
 	// board surface. Non-interactive so the titlebar drag region still works over it.
 	//
 	// Single home for tuning: the design knobs live as CSS custom properties at the top of
-	// the <style> block — retune the overall size, each segment's size (--wm-tally-size /
+	// the style block below — retune the overall size, each segment's size (--wm-tally-size /
 	// --wm-bot-size, relative to the overall size), the "Tally" outline stroke width/colour,
 	// the "BOT" blue, and the inter-segment gap there.
 </script>

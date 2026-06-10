@@ -289,12 +289,17 @@ export interface StatusMessage {
   kind: "status";
   /** {@link Transport} value (open enum). */
   transport: number;
-  /** True if WiFi creds are stored. */
-  credsPresent: boolean;
   /** {@link WifiState} value. */
   wifiState: number;
   /** Signed RSSI in dBm (0 when not applicable). */
   rssi: number;
+  /**
+   * The device's stored SSID, read from its NVS (`""` when no creds are saved). This is
+   * device-truth — it supersedes the host's own memory, so the SSID stays accurate even
+   * for a device the host never provisioned. Replaces the old `credsPresent` bool
+   * (`ssid !== ""` carries the same signal).
+   */
+  ssid: string;
 }
 
 /** A framed log line from the device (USB release builds emit these instead of raw text). */
@@ -333,16 +338,21 @@ export function decodeDeviceMessage(payload: Uint8Array): DeviceMessage {
       return { kind: "heartbeat" };
     }
     case DeviceMessageType.STATUS: {
-      // [type][transport][credsPresent][wifiState][rssi] — 5 payload bytes
-      if (payload.length !== 5) {
-        throw new RangeError(`STATUS payload must be 5 bytes, got ${payload.length}`);
+      // [type][transport][wifiState][rssi][ssidLen][ssid…] — ≥ 5 payload bytes
+      // (ssidLen is always present, 0 when the device has no stored creds).
+      if (payload.length < 5) {
+        throw new RangeError(`STATUS payload must be at least 5 bytes, got ${payload.length}`);
+      }
+      const ssidLen = payload[4]!;
+      if (payload.length < 5 + ssidLen) {
+        throw new RangeError(`STATUS SSID truncated: need ${5 + ssidLen} bytes, got ${payload.length}`);
       }
       return {
         kind: "status",
         transport: payload[1]!,
-        credsPresent: payload[2] !== 0,
-        wifiState: payload[3]!,
-        rssi: (payload[4]! << 24) >> 24, // sign-extend the byte
+        wifiState: payload[2]!,
+        rssi: (payload[3]! << 24) >> 24, // sign-extend the byte
+        ssid: new TextDecoder().decode(payload.subarray(5, 5 + ssidLen)),
       };
     }
     case DeviceMessageType.LOG: {

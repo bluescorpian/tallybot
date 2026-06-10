@@ -45,10 +45,11 @@ export interface UsbStatus {
   mac: string;
   /** The device's *provisioned* transport mode (open enum: 0 No-TX, 1 WiFi, …). */
   mode: number;
-  credsPresent: boolean;
   wifiState: DeviceWifiState;
   /** RSSI in dBm, or null when not applicable (0 on the wire). */
   rssi: number | null;
+  /** The device's stored SSID read from its NVS (`""` when no creds) — device-truth, persisted host-side. */
+  ssid: string;
 }
 
 const WIFI_STATE_NAME: Record<number, DeviceWifiState> = {
@@ -148,13 +149,13 @@ export class UsbTransport extends EventEmitter {
         break;
       }
       case "usbFrame": {
-        this.#onFrame(message.mac, message);
+        this.#onFrame(message);
         break;
       }
     }
   }
 
-  #onFrame(mac: string, frame: Extract<UsbInbound, { type: "usbFrame" }>): void {
+  #onFrame(frame: Extract<UsbInbound, { type: "usbFrame" }>): void {
     let decoded;
     try {
       decoded = decodeUsbFrame(frame);
@@ -164,14 +165,14 @@ export class UsbTransport extends EventEmitter {
     }
     if (decoded.kind === "status") {
       this.emit("status", {
-        mac,
+        mac: frame.mac,
         mode: decoded.transport,
-        credsPresent: decoded.credsPresent,
         wifiState: WIFI_STATE_NAME[decoded.wifiState] ?? "idle",
         rssi: decoded.rssi === 0 ? null : decoded.rssi,
+        ssid: decoded.ssid,
       });
     } else if (decoded.kind === "log") {
-      this.emit("log", { mac, level: LOG_LEVEL_NAME[decoded.level] ?? "info", text: decoded.text });
+      this.emit("log", { mac: frame.mac, level: LOG_LEVEL_NAME[decoded.level] ?? "info", text: decoded.text });
     }
     // HELLO/HEARTBEAT over USB need no handling here (the shell turns HELLO into usbDeviceConnected).
   }
@@ -180,4 +181,13 @@ export class UsbTransport extends EventEmitter {
 /** Map a UI transport-mode string to its wire {@link Transport} value. */
 export function transportModeValue(mode: "notx" | "wifi"): number {
   return mode === "notx" ? Transport.NOTX : Transport.WIFI;
+}
+
+/**
+ * Map a device's reported wire transport byte to the UI's provisioned-mode name — what the
+ * device does when unplugged. `null` for any value we don't recognise (e.g. a future mode an
+ * older sidecar doesn't model), so the wizard shows "unprovisioned" rather than a wrong mode.
+ */
+export function provisionedModeName(mode: number): "wifi" | "notx" | null {
+  return mode === Transport.WIFI ? "wifi" : mode === Transport.NOTX ? "notx" : null;
 }

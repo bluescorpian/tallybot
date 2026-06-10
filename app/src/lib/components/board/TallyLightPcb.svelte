@@ -21,6 +21,12 @@
 		/** Short 2-octet form shown on the board silkscreen. */
 		label: string;
 		state?: LightState;
+		/**
+		 * Device is talking over the USB-C cable (transport `"usb"`). Lights a cyan
+		 * signal cuff around the port — blue/cyan is "activity" (a live wire), never
+		 * a tally state, so it reads independently of the LED colour above.
+		 */
+		wired?: boolean;
 		onclick?: (event: MouseEvent) => void;
 		class?: string;
 		ariaLabel?: string;
@@ -29,6 +35,7 @@
 		mac,
 		label,
 		state = "idle",
+		wired = false,
 		onclick,
 		class: className = "",
 		ariaLabel,
@@ -41,6 +48,7 @@
 	this={onclick ? "button" : "div"}
 	type={onclick ? "button" : undefined}
 	class="pcb {state} {className}"
+	class:wired
 	{onclick}
 	role={!onclick && ariaLabel ? "img" : undefined}
 	aria-label={ariaLabel ?? `Light ${mac}`}
@@ -146,6 +154,31 @@
 			inset 0 1px 0 oklch(1 0 0 / 0.65),
 			inset 0 -2px 3px oklch(0 0 0 / 0.3),
 			0 1px 2px oklch(0 0 0 / 0.4);
+	}
+
+	/* wired: a cyan signal cuff hugging the USB-C port — "a live cable is seated".
+	   Cyan = activity/signal (never a tally state), so it reads independently of the
+	   LED colour: a wired LIVE light shows red LED glow AND this cuff at once. */
+	.pcb.wired .usb {
+		box-shadow:
+			inset 0 1px 0 oklch(1 0 0 / 0.65),
+			inset 0 -2px 3px oklch(0 0 0 / 0.3),
+			0 1px 2px oklch(0 0 0 / 0.4),
+			0 0 0 1.5px color-mix(in oklch, var(--signal), transparent 20%),
+			0 0 11px 1px color-mix(in oklch, var(--signal), transparent 45%);
+	}
+	/* a short accent bar at the cable mouth, just below the shell */
+	.pcb.wired .usb::after {
+		content: "";
+		position: absolute;
+		left: 50%;
+		bottom: -3px;
+		transform: translateX(-50%);
+		width: 58%;
+		height: 3px;
+		border-radius: 2px;
+		background: var(--signal);
+		box-shadow: 0 0 6px 1px color-mix(in oklch, var(--signal), transparent 35%);
 	}
 
 	/* 5 gold castellated pads down each edge — run edge-to-edge, flanking the USB */

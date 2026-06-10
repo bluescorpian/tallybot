@@ -29,6 +29,21 @@ function shortMac(mac: string): string {
 	return mac.split(":").slice(-2).join(":");
 }
 
+/**
+ * Provisioning fields a light carries straight through from the device snapshot
+ * (the wired indicator + the Configure pane read these). `provisionedMode`/`ssid`
+ * are optional on the wire (older sidecar builds omit them) → default to null.
+ */
+function provisioning(d: Device) {
+	return {
+		transport: d.transport,
+		provisionedMode: d.provisionedMode ?? null,
+		ssid: d.ssid ?? null,
+		wifiState: d.wifiState,
+		rssi: d.rssi,
+	};
+}
+
 export function inputToBoard(i: Input): BoardInput {
 	return { id: String(i.id), n: i.id, label: i.label, state: inputState(i.tally) };
 }
@@ -60,6 +75,7 @@ function dockLight(d: Device): BoardLight {
 		inputId: null,
 		state: d.state === "offline" ? "offline" : "setup",
 		brightness: d.brightness,
+		...provisioning(d),
 	};
 }
 
@@ -95,7 +111,14 @@ export function deviceToBoard(
 		const tally = inputs.find((i) => i.id === d.inputId)?.tally ?? "unknown";
 		state = tally === "unknown" ? "fault" : tally;
 	}
-	return { mac: d.mac, label: shortMac(d.mac), inputId, state, brightness: d.brightness };
+	return {
+		mac: d.mac,
+		label: shortMac(d.mac),
+		inputId,
+		state,
+		brightness: d.brightness,
+		...provisioning(d),
+	};
 }
 
 /**

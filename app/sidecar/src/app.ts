@@ -26,7 +26,7 @@ import type { DeviceConfig } from "./store.ts";
 import type { DeviceTransport, DeviceWifiState, SidecarEvent, SourceScanHit, UiCommand } from "./ipc.ts";
 import { scanNetwork } from "./scanner.ts";
 import { type Color, DEFAULT_BRIGHTNESS, macTail } from "./protocol.ts";
-import { transportModeValue } from "./usb-transport.ts";
+import { provisionedModeName, transportModeValue } from "./usb-transport.ts";
 
 // ── Collaborator ports (the concrete classes satisfy these structurally) ─────────
 
@@ -53,9 +53,11 @@ export interface ProvisioningPort {
   provisionWifi(mac: string, ssid: string, password: string): boolean;
   /** Set the device's unplugged transport mode (a wire {@link Transport} value). */
   setTransport(mac: string, mode: number): boolean;
+  /** Pull a fresh STATUS from a USB device (e.g. right after it connects). */
+  requestStatus(mac: string): boolean;
   on(
     event: "status",
-    listener: (status: { mac: string; mode: number; credsPresent: boolean; wifiState: DeviceWifiState; rssi: number | null }) => void,
+    listener: (status: { mac: string; mode: number; wifiState: DeviceWifiState; rssi: number | null; ssid: string }) => void,
   ): unknown;
   on(event: "log", listener: (entry: { mac: string; level: "info" | "warn" | "error"; text: string }) => void): unknown;
   on(event: "unflashed", listener: (info: { port: string }) => void): unknown;
@@ -77,6 +79,8 @@ export interface StorePort {
   assign(mac: string, inputId: number): Promise<void>;
   unassign(mac: string): Promise<void>;
   setBrightness(mac: string, brightness: number): Promise<void>;
+  /** Remember (or clear, with null) the SSID a device was provisioned to join over USB. */
+  setSsid(mac: string, ssid: string | null): Promise<void>;
   /** Resolve once all queued writes have been flushed to disk. */
   flush(): Promise<void>;
 }
@@ -205,8 +209,11 @@ export class SidecarApp {
   readonly #online = new Map<string, number>();
   /** The last colour pushed to each device, to suppress redundant SET_COLORs. */
   readonly #lastColor = new Map<string, { color: Color; brightness: number }>();
-  /** Latest USB STATUS per device (WiFi join progress) — surfaced for the provisioning wizard. */
-  readonly #usbStatus = new Map<string, { wifiState: DeviceWifiState; rssi: number | null }>();
+  /** Latest USB STATUS per device — surfaced for the provisioning wizard (mode + join progress). */
+  readonly #usbStatus = new Map<
+    string,
+    { mode: number; wifiState: DeviceWifiState; rssi: number | null }
+  >();
 
   /** Stops the animation clock, or null when nothing is currently animated. */
   #stopAnim: (() => void) | null = null;
@@ -239,6 +246,9 @@ export class SidecarApp {
     this.#server.on("deviceConnected", ({ mac, version }) => {
       this.#online.set(mac, version);
       this.#lastColor.delete(mac); // reconnect may skip the disconnect event; always re-push
+      // Pull a fresh STATUS so an already-provisioned device reports its mode/ssid-state at once,
+      // rather than waiting for a spontaneous frame (no-op for non-USB devices).
+      this.#provisioning?.requestStatus(mac);
       this.#log(`device connected: ${mac} (protocol v${version})`);
       this.#sync();
     });
@@ -256,9 +266,15 @@ export class SidecarApp {
 
     // USB provisioning + diagnostics (present only when a USB-capable server is wired in).
     if (this.#provisioning) {
-      this.#provisioning.on("status", ({ mac, wifiState, rssi }) => {
-        this.#usbStatus.set(mac, { wifiState, rssi });
-        this.#sync(); // the wizard reads wifiState/rssi off the snapshot
+      this.#provisioning.on("status", ({ mac, mode, wifiState, rssi, ssid }) => {
+        this.#usbStatus.set(mac, { mode, wifiState, rssi });
+        // The device reports its NVS SSID, so adopt it as the source of truth — this keeps the
+        // stored name accurate even for a device this host never provisioned. `""` means no creds
+        // (clear any stale entry); only write on a change, since STATUS now streams. setSsid mutates
+        // the in-memory config synchronously, so the #sync() below already reflects it.
+        const stored = this.#store.device(mac)?.ssid ?? "";
+        if (ssid !== stored) void this.#store.setSsid(mac, ssid === "" ? null : ssid);
+        this.#sync(); // the wizard reads mode/wifiState/rssi off the snapshot
       });
       this.#provisioning.on("log", ({ mac, level, text }) => {
         this.#ipc.send({ type: "deviceLog", mac, level, text });
@@ -322,12 +338,23 @@ export class SidecarApp {
         this.#atem.connect(command.ip); // change event publishes the new connecting state
         break;
       case "provisionWifi":
-        if (!this.#provisioning?.provisionWifi(command.mac, command.ssid, command.password)) {
+        if (this.#provisioning?.provisionWifi(command.mac, command.ssid, command.password)) {
+          // Record the attempted SSID immediately so the wizard shows it without waiting for the
+          // device's confirming STATUS. (That STATUS now echoes the NVS SSID too and reconciles to
+          // the same value.) A failed join still renders its own `failed` view, and the stored SSID
+          // pre-fills the retry form.
+          await this.#store.setSsid(command.mac, command.ssid);
+          this.#sync();
+        } else {
           this.#ipc.notice("info", `Tally ${macTail(command.mac, 2)} isn't on USB — can't provision WiFi.`);
         }
         break;
       case "setTransport":
-        if (!this.#provisioning?.setTransport(command.mac, transportModeValue(command.mode))) {
+        if (this.#provisioning?.setTransport(command.mac, transportModeValue(command.mode))) {
+          // No-TX has no network — drop any remembered SSID so a re-plug doesn't show a stale one.
+          if (command.mode === "notx") await this.#store.setSsid(command.mac, null);
+          this.#sync();
+        } else {
           this.#ipc.notice("info", `Tally ${macTail(command.mac, 2)} isn't on USB — can't set its transport.`);
         }
         break;
@@ -383,6 +410,10 @@ export class SidecarApp {
         transport: (online ? this.#provisioning?.transportOf(mac) : null) ?? "wifi",
         wifiState: status?.wifiState ?? null,
         rssi: status?.rssi ?? null,
+        // Mode comes from the live USB STATUS (null off-USB); the SSID is the host's memory
+        // (the device never echoes the string), so it survives across transports/restarts.
+        provisionedMode: status ? provisionedModeName(status.mode) : null,
+        ssid: config?.ssid ?? null,
       });
     }
     return records;

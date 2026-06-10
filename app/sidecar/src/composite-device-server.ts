@@ -123,7 +123,6 @@ export class CompositeDeviceServer extends EventEmitter implements DeviceServerP
   // ── Dedup ──────────────────────────────────────────────────────────────────────
 
   #onConnect(index: number, mac: string, version: number): void {
-    const prevOwner = this.#ownerIndex(mac);
     const holders = this.#presence.get(mac) ?? new Map<number, number>();
     holders.set(index, version);
     this.#presence.set(mac, holders);
@@ -135,7 +134,6 @@ export class CompositeDeviceServer extends EventEmitter implements DeviceServerP
     if (owner === index) {
       const ownerVersion = holders.get(owner)!;
       this.emit("deviceConnected", { mac, version: ownerVersion });
-      void prevOwner; // (prevOwner only matters for the disconnect-revert path below)
     }
   }
 

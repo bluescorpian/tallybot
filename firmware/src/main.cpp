@@ -72,12 +72,28 @@
 // USB-CDC control channel (v1.2). The shell owns the port; these govern the device side.
 #define USB_HELLO_INTERVAL_MS 1000   // re-announce HELLO until the host sends its first frame
 #define USB_TALLY_IDLE_MS 5000       // USB silence after which we release USB tally ownership
-#define USB_JOIN_TIMEOUT_MS 15000    // SET_WIFI validating-join window before we report failure
+// USB-first boot: a WiFi-mode device gives USB a chance to claim it before starting the
+// (blocking) WiFi bring-up — "while plugged in, all devices communicate over USB, regardless of
+// provisioned mode." We wait this long for a host *reply* to our HELLO; if none arrives we assume
+// there's no PC (deployed / on a power bank) and start the real WiFi join. This is sized for the
+// host's worst-case latency, not ours: the app must notice the new serial port, read HELLO, and
+// round-trip a frame back. HELLO goes out every second (USB_HELLO_INTERVAL_MS); the window only
+// delays a genuinely host-less device's WiFi start, never HELLO emission, so we keep it generous.
+#define USB_BOOT_GRACE_MS 4000
 
 // WiFi connection policy (the venue-failure mitigations — see ../../FIELD-TEST-FINDINGS.md).
 #define WIFI_COUNTRY "ZA"            // South Africa: 2.4GHz channels 1–13 (the widest legal set here)
 #define WIFI_CONNECT_TIMEOUT_S 10    // per-attempt connect window; enough for association + DHCP
 #define WIFI_CONNECT_RETRIES 2       // attempts per autoConnect pass (clamped 1–10 by the lib)
+
+// USB STATUS streaming (v1.2): STATUS is pushed on change while a host is cabled, not just on
+// request. The throttle bounds how often we re-check; RSSI must move past a threshold to count as
+// a change (so signal jitter doesn't spam frames). FAILED is reported only once a join has failed
+// for this long — comfortably past the ESP32-C3 spurious first-disconnect transient on a *correct*
+// password (see applyWifiCreds), so a good password is never flashed as a failure.
+#define STATUS_EMIT_INTERVAL_MS 500  // change-detector tick while a USB host is listening
+#define STATUS_RSSI_DELTA_DBM 5      // RSSI move (dBm) that counts as a reportable change
+#define WIFI_JOIN_FAIL_MS 12000      // settle window before a stuck join is reported as FAILED
 
 // LED motion timing (ms).
 #define PULSE_PERIOD_MS 1500   // SLOW_PULSE full cycle (joining WiFi, searching for the server)
@@ -129,6 +145,14 @@ enum Motion {
 // Identity + networking
 static uint8_t mac[6];
 static char apSsid[24];  // "TallyLight-XXXXXX"
+// The device's stored SSID, cached ONCE at boot while the radio is initialised (and refreshed on
+// SET_WIFI). The diag panel and statusSsid()'s joining branch read this cache rather than
+// wm.getWiFiSSID(true): WiFiManager's persistent SSID read does esp_wifi_get_config() into an
+// UNINITIALISED stack struct and, unlike its password read, does NOT guard on WIFI_MODE_NULL, so it
+// returns stack garbage (e.g. "0?") whenever the driver isn't initialised. A WiFi-mode device now
+// keeps its radio in STA for life, but a No-TX device's radio is off — so the cache stays the safe,
+// single source for the stored name.
+static char provisionedSsid[33] = {0};  // ≤32-byte SSID + NUL
 static WiFiManager wm;
 static WiFiUDP udp;
 static WiFiClient tcp;
@@ -148,14 +172,38 @@ static bool hostFrameSeen = false;       // a host frame arrived → stop re-ann
 static bool usbTallyActive = false;      // app is driving tally over USB → it wins over local indicators
 static unsigned long lastUsbTallyMsg = 0;
 static unsigned long lastUsbHello = 0;
-// WiFi provisioning-join validation, triggered by SET_WIFI — independent of the discovery SM,
-// so it can validate a join (and stream STATUS) even on a No-TX device while it's on the cable.
-static uint8_t wifiJoinState = WIFI_STATE_IDLE;
-static unsigned long joinStart = 0;
-// Set by onWifiEvent (WiFi-task context) when a validating join hits a definitive auth failure,
-// consumed by serviceWifiJoin (main loop) to report FAILED at once instead of waiting out the
-// full timeout — a wrong password won't become right on the stack's auto-retry.
-static volatile bool joinAuthFailed = false;
+
+// USB-first boot for WiFi-mode devices. setup() does the instant, non-blocking WiFi *config* and
+// starts the non-blocking warm association, but defers the BLOCKING bring-up (connectWithTxPolicy →
+// captive portal) so HELLO can go out over USB first. The loop then decides: a host frame within
+// USB_BOOT_GRACE_MS → USB wins (radio stays warm, tally over USB); otherwise → no PC, run the real
+// WiFi join + tally client. Re-armable so a live unplug (USB host gone, still powered) brings the WiFi
+// tally client up. Only ever set on a wifiEnabled device.
+static bool wifiBringupPending = false;
+static unsigned long bootStart = 0;  // millis() at the start of the USB-first grace window
+// A USB host claimed this cabled session (won the grace window): the device runs tally over USB and
+// the WiFi discovery/TCP state machine stays dormant — but the radio stays in STA and keeps its warm
+// association. This (not WiFi.getMode()) is the gate, so a save-only SET_WIFI re-issuing WiFi.begin()
+// can't pull the device out of its USB-owned session. Cleared on a live USB-host loss (→ revert to
+// the WiFi tally client) or BOOT-reprovision.
+static bool usbSession = false;
+
+// Host-visible WiFi-join lifecycle, for the streamed STATUS wifiState. Set when an association is
+// kicked off (a save-only SET_WIFI over USB, or the operational bring-up); lets currentWifiState()
+// report JOINING/FAILED instead of a bare IDLE/CONNECTED. Independent of usbSession — the SET_WIFI
+// association runs in the background while the device still serves tally over the cable.
+static bool wifiJoinActive = false;
+static unsigned long wifiJoinStart = 0;  // millis() the join began — debounces the FAILED verdict
+// Snapshot of the last STATUS frame put on the wire, so maybeEmitStatus() only re-sends on a real
+// change now that STATUS streams. Reset when a USB session ends so a fresh host re-syncs from zero.
+static struct {
+  bool valid = false;
+  uint8_t transport = 0;
+  uint8_t wifiState = 0;
+  int8_t rssi = 0;
+  char ssid[33] = {0};
+} lastStatus;
+static unsigned long lastStatusEmit = 0;  // throttle clock for the change-detector
 
 // Last WiFi-disconnect diagnostics — surfaced on the SoftAP portal (the "serial monitor over
 // the phone") and persisted so the failure that triggered the portal survives the reboot.
@@ -369,13 +417,6 @@ static const char* reasonToStr(uint16_t r) {
   }
 }
 
-// Disconnect reasons that mean the password is wrong or the WPA mode mismatches (the same set
-// diagVerdict() calls an auth failure). These don't fix themselves on auto-retry, so a validating
-// join can fail fast on them; a transient scan miss (200/201) is left to the timeout instead.
-static bool isJoinAuthFailure(uint16_t r) {
-  return r == 2 || r == 15 || r == 202 || r == 204;
-}
-
 // ── NVS: TX-power policy + diagnostics ───────────────────────────────────────
 
 static uint8_t loadTxPolicy() { return prefs.getUChar("txpol", TXPOL_FULL); }
@@ -467,12 +508,6 @@ static void onWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
     diag.lastSsid[n] = '\0';
   }
   diag.valid = true;
-  // Fail a USB validating join fast on a definitive auth failure (we never associated, and the
-  // reason is wrong-password/handshake) — no point waiting out the timeout for a verdict that
-  // won't change. serviceWifiJoin (main loop) acts on this; we only flip the flag here.
-  if (wifiJoinState == WIFI_STATE_JOINING && !associatedSinceConnect && isJoinAuthFailure(reason)) {
-    joinAuthFailed = true;
-  }
   associatedSinceConnect = false;  // this attempt is over; the next must re-associate to count
   saveDiag();
   TLOG(LOG_LEVEL_WARN, "WiFi disconnect: raw=%u (%s) kept=%u assoc=%d ssid=\"%s\" rssi=%d\n", reason,
@@ -515,7 +550,7 @@ static const char* diagVerdict() {
 static void buildDiagHtml() {
   char macStr[18];
   macToStr(macStr, sizeof(macStr));
-  String stored = wm.getWiFiSSID(true);
+  const char* stored = provisionedSsid;  // cached at boot; see provisionedSsid (don't read the radio here)
   size_t passLen = wm.getWiFiPass(true).length();
 
   diagHtml = "<div class='tdiag'><h3>TallyBot diagnostics</h3>";
@@ -543,7 +578,7 @@ static void buildDiagHtml() {
     diagHtml += "No prior WiFi failure recorded.<br>";
   }
   diagHtml += "<b>Stored SSID:</b> ";
-  diagHtml += (stored.length() ? stored : String("(none)"));
+  diagHtml += (stored[0] ? stored : "(none)");
   diagHtml += "<br><b>Stored password length:</b> ";
   diagHtml += passLen;
   diagHtml += " chars — if shorter than what you typed, a special char (e.g. #) was truncated.<br>";
@@ -641,6 +676,26 @@ static void enterDiscovering(unsigned long now) {
   }
 }
 
+// Tear down and re-open the discovery socket on DISCOVERY_PORT (7001). The UDP socket may not
+// survive an interface bounce / re-bind, so every path that (re-)enters discovery rebinds first.
+static void rebindDiscoverySocket() {
+  udp.stop();
+  udp.begin(DISCOVERY_PORT);  // bind 7001 to catch both the unicast reply and broadcasts
+}
+
+// The real (BLOCKING) WiFi bring-up, factored out of setup() so the deferred USB-first path and
+// the live unplug→WiFi revert share one definition. connectWithTxPolicy() may block on the captive
+// portal; that's fine here because we only call this once we've established there's no USB host to
+// starve. Lands us in DISCOVERING.
+static bool connectWithTxPolicy();  // defined below; forward-declared for startWifiBringup()
+static void startWifiBringup() {
+  wifiBringupPending = false;
+  WiFi.mode(WIFI_STA);            // belt-and-suspenders: the radio is already STA on a WiFi device
+  connectWithTxPolicy();         // saved creds (full→low power), else the SoftAP captive portal
+  rebindDiscoverySocket();
+  enterDiscovering(millis());
+}
+
 // Connect to WiFi with the full-power-first, low-power-fallback policy, persisting whichever
 // level works. Only after both levels fail do we raise the captive portal. Blocking is fine
 // here — with no network the device can't do anything else anyway.
@@ -689,8 +744,7 @@ static void reprovision() {
   state = ST_PROVISIONING;
   setRestingLocal(COLOR_SETUP, LOCAL_BRIGHTNESS, STEADY);  // magenta hint
   connectWithTxPolicy();
-  udp.stop();
-  udp.begin(DISCOVERY_PORT);
+  rebindDiscoverySocket();
   wifiLostSince = 0;
   enterDiscovering(millis());
 }
@@ -703,6 +757,11 @@ static void reprovision() {
 static void forceReprovision() {
   TLOG(LOG_LEVEL_INFO, "Manual re-provision (BOOT held) - opening config portal\n");
   state = ST_PROVISIONING;
+  // A deliberate reprovision is an explicit "bring WiFi up now" — cancel any pending USB-first
+  // grace and end the USB-owned session so the loop runs the WiFi path after this returns.
+  wifiBringupPending = false;
+  usbSession = false;
+  WiFi.mode(WIFI_STA);  // belt-and-suspenders: the radio is already STA on a WiFi device
   if (tcp.connected()) tcp.stop();
   setRestingLocal(COLOR_SETUP, LOCAL_BRIGHTNESS, STEADY);  // magenta (onConfigPortal repaints it too)
   bool reconfigured = wm.startConfigPortal(apSsid);
@@ -710,8 +769,7 @@ static void forceReprovision() {
     TLOG(LOG_LEVEL_INFO, "portal exited without new creds - restoring the saved network\n");
     connectWithTxPolicy();
   }
-  udp.stop();
-  udp.begin(DISCOVERY_PORT);
+  rebindDiscoverySocket();
   wifiLostSince = 0;
   everHadServer = false;  // fresh start: hunt for the server again (cyan), not "lost server"
   enterDiscovering(millis());
@@ -759,33 +817,118 @@ static void onConfigPortal(WiFiManager*) {
 
 // ── USB provisioning + status (v1.2) ─────────────────────────────────────────
 
-// Push a STATUS frame: [transport][credsPresent][wifiState][rssi]. Pushed on any state change
-// and in reply to GET_STATUS — the reliable channel the wizard reads to confirm a join.
-static void emitStatus() {
-  bool creds = wm.getWiFiSSID(true).length() > 0;
-  uint8_t ws = wifiJoinState;
-  if (ws == WIFI_STATE_IDLE && WiFi.status() == WL_CONNECTED) ws = WIFI_STATE_CONNECTED;
-  int8_t rssi = (WiFi.status() == WL_CONNECTED) ? (int8_t)WiFi.RSSI() : 0;
-  uint8_t payload[5];
-  size_t n = encodeStatusPayload(payload, transportMode, creds, ws, rssi);
-  usbSendPayload(payload, n);
+// Mark the start of a host-visible WiFi join (a save-only SET_WIFI association, or the operational
+// bring-up), so the streamed wifiState reads JOINING until it lands or settles into FAILED.
+static void beginWifiJoin() {
+  wifiJoinActive = true;
+  wifiJoinStart = millis();
 }
 
-// SET_WIFI: persist creds and attempt a validating join *now*, so the wizard can confirm
-// "joined, RSSI -60" (or a failure reason) before the cable is pulled. WiFi.begin(persistent)
-// stores the creds where WiFiManager.autoConnect() reads them, so the captive-portal fallback
-// and the BOOT-button reprovision stay intact (we deliberately don't keep a second cred store).
-static void applyWifiCreds(const char* ssid, const char* pass) {
-  TLOG(LOG_LEVEL_INFO, "SET_WIFI: joining \"%s\"\n", ssid);
-  WiFi.persistent(true);   // write creds to the NVS store autoConnect() reads
-  WiFi.mode(WIFI_STA);     // radio on for the validating join — even on a No-TX device, cabled
-  attemptHasDiag = false;  // fresh diagnostics episode (onWifiEvent records this attempt's reason)
-  associatedSinceConnect = false;
-  joinAuthFailed = false;  // fresh validating join — clear any prior fast-fail verdict
-  WiFi.begin(ssid, pass);
-  wifiJoinState = WIFI_STATE_JOINING;
-  joinStart = millis();
+// Start a NON-BLOCKING background association from the stored NVS creds. STA + WiFi.begin() with no
+// args reuses the persisted credentials, so the radio associates in the background while USB may own
+// tally — keeping a provisioned device warm for an instant unplug revert and surfacing live
+// wifiState/rssi in STATUS. Never blocks, never opens the captive portal. Returns false (and starts
+// nothing) when there are no stored creds, so a factory device on USB doesn't trip a doomed join.
+static bool beginWifiAssociation() {
+  if (provisionedSsid[0] == '\0') return false;
+  WiFi.persistent(true);
+  WiFi.mode(WIFI_STA);
+  applyTxPower(loadTxPolicy());  // remembered-good power level (the full→low ladder lives in the blocking path)
+  WiFi.begin();                  // reuse the persisted STA creds — non-blocking
+  attemptHasDiag = false;        // fresh episode: a stale loaded diag can't read as this boot's FAILED
+  beginWifiJoin();               // host-visible JOINING in STATUS
+  return true;
+}
+
+// The live wifiState from the real radio — the full enum, not just IDLE/CONNECTED. Provisioning
+// itself stays save-only (applyWifiCreds never gates on this); this is purely the host-visible read
+// of what the radio is doing, so the wizard can show a join progress live.
+static uint8_t currentWifiState() {
+  if (WiFi.status() == WL_CONNECTED) return WIFI_STATE_CONNECTED;
+  if (!wifiJoinActive) return WIFI_STATE_IDLE;
+  // A join is in flight. Report FAILED only for a settled, pre-association auth/handshake failure
+  // (wrong password / WPA-mode mismatch: reasons 2/15/202/204, same set diagVerdict() categorises)
+  // AFTER the debounce window — never on the C3's spurious first-disconnect transient, and never
+  // for out-of-range (reasons 200/201 stay JOINING, so provisioning away from the AP isn't a fail).
+  bool authFail = diag.valid && !diag.associated &&
+                  (diag.lastReason == 2 || diag.lastReason == 15 || diag.lastReason == 202 ||
+                   diag.lastReason == 204);
+  if (authFail && millis() - wifiJoinStart >= WIFI_JOIN_FAIL_MS) return WIFI_STATE_FAILED;
+  return WIFI_STATE_JOINING;
+}
+
+// The SSID to report in STATUS, read safely regardless of radio state — the single choke point that
+// keeps STATUS from ever streaming garbage. When connected we use the live associated name; when the
+// radio is STA-but-joining we use the boot-cached stored name; when the radio is off (No-TX) we report
+// empty (ssidLen 0). We NEVER fall through to wm.getWiFiSSID(true) on a deinitialised radio, which is
+// the uninitialised-stack read (no WIFI_MODE_NULL guard, unlike WiFiManager's password path) that
+// produced the garbled SSID after an unplug/replug.
+static String statusSsid() {
+  if (WiFi.getMode() == WIFI_MODE_NULL) return String();   // radio off (No-TX): no SSID
+  if (WiFi.status() == WL_CONNECTED) return WiFi.SSID();   // live associated name — always valid
+  return String(provisionedSsid);                          // cached stored name (joining / not yet up)
+}
+
+// Push a STATUS frame: [transport][wifiState][rssi][ssidLen][ssid…]. Sent in reply to GET_STATUS,
+// after a provisioning command, and (via maybeEmitStatus) whenever the data changes while a host is
+// cabled. The SSID comes from statusSsid() so the host's stored name stays device-accurate.
+static void emitStatus() {
+  String ssid = statusSsid();
+  uint8_t ws = currentWifiState();
+  int8_t rssi = (WiFi.status() == WL_CONNECTED) ? (int8_t)WiFi.RSSI() : 0;
+  uint8_t payload[37];  // 4-byte head + 1-byte len + up to 32 SSID bytes
+  size_t n = encodeStatusPayload(payload, transportMode, ws, rssi, ssid.c_str(), (uint8_t)ssid.length());
+  usbSendPayload(payload, n);
+  // Remember what we just sent so the change-detector below suppresses duplicate frames.
+  lastStatus.valid = true;
+  lastStatus.transport = transportMode;
+  lastStatus.wifiState = ws;
+  lastStatus.rssi = rssi;
+  strncpy(lastStatus.ssid, ssid.c_str(), sizeof(lastStatus.ssid) - 1);
+  lastStatus.ssid[sizeof(lastStatus.ssid) - 1] = '\0';
+}
+
+// Emit a STATUS only when something a host cares about changed — gated on a connected USB host, so
+// a deployed device on a power bank never streams into the void (CDC TX is non-blocking regardless).
+// Called on a throttle from loop(), so a live join/drop/RSSI shift reaches the wizard without polling.
+static void maybeEmitStatus() {
+  if (!hostFrameSeen) return;
+  String ssid = statusSsid();
+  uint8_t ws = currentWifiState();
+  int8_t rssi = (WiFi.status() == WL_CONNECTED) ? (int8_t)WiFi.RSSI() : 0;
+  if (lastStatus.valid && ws == lastStatus.wifiState && transportMode == lastStatus.transport &&
+      abs((int)rssi - (int)lastStatus.rssi) < STATUS_RSSI_DELTA_DBM &&
+      strncmp(lastStatus.ssid, ssid.c_str(), sizeof(lastStatus.ssid)) == 0)
+    return;
   emitStatus();
+}
+
+// SET_WIFI: SAVE-ONLY. Persist the creds (and imply "use WiFi when unplugged") and confirm at
+// once — NO live/validating join. The operator must be able to provision from anywhere, not only
+// in range of the target AP, so we never wait on or report a connection result here. This also
+// sidesteps an ESP32-C3 bug where a *correct* password's first disconnect transiently reports
+// reason 2/15 before the radio retries, which made a validating join fail a good password instantly.
+//
+// Persistence: WiFi.begin() with WiFi.persistent(true) writes the creds to the exact esp_wifi STA
+// NVS config that WiFiManager.autoConnect() reads on the next boot — so the captive-portal fallback
+// and BOOT-button reprovision keep working off one cred store. The resulting background association
+// runs harmlessly while cabled; provisioning never gates or waits on it. It IS surfaced as live
+// wifiState (JOINING → CONNECTED/FAILED) via the streamed STATUS, but only as display — the FAILED
+// verdict is debounced past the C3 transient (see currentWifiState), so confirming the save never
+// depends on a join result and a good password is never shown as a failure.
+static void applyWifiCreds(const char* ssid, const char* pass) {
+  TLOG(LOG_LEVEL_INFO, "SET_WIFI: saving creds for \"%s\" (save-only, no validating join)\n", ssid);
+  WiFi.persistent(true);   // write creds to the NVS store autoConnect() reads
+  WiFi.mode(WIFI_STA);     // STA mode so WiFi.begin persists into the STA config
+  WiFi.begin(ssid, pass);  // persists the creds; its association is shown live but never gated on
+  beginWifiJoin();         // the background association is now host-visible as JOINING
+  strncpy(provisionedSsid, ssid, sizeof(provisionedSsid) - 1);  // refresh the cached name on re-provision
+  provisionedSsid[sizeof(provisionedSsid) - 1] = '\0';
+  // Provisioning a network implies "use WiFi when unplugged" — persist transport=WIFI so STATUS
+  // (and the next boot's behaviour) reports WiFi, not whatever transport was set before.
+  saveTransportMode(TRANSPORT_WIFI);
+  transportMode = TRANSPORT_WIFI;
+  emitStatus();            // immediate confirmation: transport=WIFI, ssid set, wifiState=JOINING
 }
 
 // SET_TRANSPORT: persist the unplugged behaviour. The radio change applies on the next boot
@@ -793,27 +936,10 @@ static void applyWifiCreds(const char* ssid, const char* pass) {
 static void setTransportMode(uint8_t mode) {
   saveTransportMode(mode);
   transportMode = mode;
+  if (mode == TRANSPORT_NOTX) wifiJoinActive = false;  // no join lifecycle in No-TX → wifiState IDLE
   TLOG(LOG_LEVEL_INFO, "SET_TRANSPORT: %s (applies on next boot)\n",
        mode == TRANSPORT_NOTX ? "No-TX" : "WiFi");
   emitStatus();
-}
-
-// Poll the SET_WIFI validating join (independent of the discovery state machine, so it runs
-// even on a No-TX device while cabled). Streams a STATUS on success/failure; the existing
-// onWifiEvent/diag machinery supplies the operator-facing failure verdict.
-static void serviceWifiJoin(unsigned long now) {
-  if (wifiJoinState != WIFI_STATE_JOINING) return;
-  if (WiFi.status() == WL_CONNECTED) {
-    wifiJoinState = WIFI_STATE_CONNECTED;
-    TLOG(LOG_LEVEL_INFO, "join ok, RSSI %d\n", (int)WiFi.RSSI());
-    emitStatus();
-  } else if (joinAuthFailed || now - joinStart >= USB_JOIN_TIMEOUT_MS) {
-    // joinAuthFailed → a definitive auth failure already arrived (fast path); otherwise the
-    // window elapsed with no verdict (range/no-AP/transient — the slow path).
-    wifiJoinState = WIFI_STATE_FAILED;
-    TLOG(LOG_LEVEL_ERROR, "join failed: %s\n", diagVerdict());
-    emitStatus();
-  }
 }
 
 // Re-announce HELLO over USB every ~1s until the host sends its first frame (native USB-CDC has
@@ -829,10 +955,41 @@ static void serviceUsbHello(unsigned long now) {
 
 // Release USB tally ownership after the host falls silent (e.g. unplugged from the PC but still
 // powered): local indicators — or a server colour re-pushed over TCP — resume driving the LED.
+//
+// Live unplug→WiFi revert: a WiFi-mode device that won the cabled session (`usbSession`) kept its
+// radio warm (associated in the background) and stopped re-announcing HELLO once hostFrameSeen
+// latched. If the USB host goes quiet on such a device, the cable's data link is gone but power may
+// remain (power bank) — so we hand the device back to its provisioned WiFi transport: end the USB
+// session and re-announce HELLO. Because the association is already warm, the common case goes
+// straight to discovery (no blocking bring-up); if the radio never associated (creds missing / out of
+// range), we fall back to the full bring-up. Either way satisfies the AC "unplug it → it transitions
+// to WiFi" without a reboot. (A No-TX device isn't wifiEnabled, and a deployed WiFi device never set
+// usbSession, so both keep their existing path.)
 static void serviceUsbTally(unsigned long now) {
   if (usbTallyActive && now - lastUsbTallyMsg >= USB_TALLY_IDLE_MS) {
     usbTallyActive = false;
     TLOG(LOG_LEVEL_INFO, "USB tally idle; releasing local indicators\n");
+
+    if (wifiEnabled && usbSession) {
+      usbSession = false;          // hand the session back to the WiFi state machine
+      hostFrameSeen = false;       // re-announce HELLO (in case USB comes back) + allow a fresh win
+      lastStatus.valid = false;    // a future USB session re-syncs STATUS from scratch
+      lastUsbHello = now - USB_HELLO_INTERVAL_MS;  // announce immediately
+      if (WiFi.status() == WL_CONNECTED) {
+        // Warm association already up — go straight to the tally client, no blocking bring-up.
+        TLOG(LOG_LEVEL_INFO, "USB host lost; WiFi already associated, entering discovery\n");
+        rebindDiscoverySocket();
+        enterDiscovering(now);
+      } else {
+        // Not associated yet (creds missing / out of range): run the full bring-up, which applies the
+        // TX-power ladder and, if needed, the captive portal. No grace — the cable's data is gone.
+        TLOG(LOG_LEVEL_INFO, "USB host lost; WiFi not yet associated, starting bring-up\n");
+        beginWifiAssociation();      // (re)start the warm join if we have creds
+        wifiBringupPending = true;   // loop() runs startWifiBringup()
+        bootStart = now - USB_BOOT_GRACE_MS;  // skip the grace window — we already know USB went away
+        setRestingLocal(COLOR_JOINING, LOCAL_BRIGHTNESS, SLOW_PULSE);  // back to the "joining" pulse
+      }
+    }
   }
 }
 
@@ -878,6 +1035,18 @@ void setup() {
   transportMode = loadTransportMode();
   wifiEnabled = (transportMode == TRANSPORT_WIFI);
 
+  // Cache the stored SSID once, now, while we can read it safely — every later read (the diag panel
+  // below, STATUS while joining) uses provisionedSsid, never wm.getWiFiSSID(true) on a possibly-off
+  // radio. A WiFi device needs STA up for the esp_wifi config read to be valid (WiFiManager's
+  // persistent read returns uninitialised stack garbage otherwise); a No-TX device keeps the radio
+  // off and simply has no SSID to show.
+  if (wifiEnabled) {
+    WiFi.mode(WIFI_STA);
+    String stored = wm.getWiFiSSID(true);
+    strncpy(provisionedSsid, stored.c_str(), sizeof(provisionedSsid) - 1);
+    provisionedSsid[sizeof(provisionedSsid) - 1] = '\0';
+  }
+
   // Granular disconnect reasons reach us only via the event (the library exposes coarse status).
   // STA_CONNECTED tells us we associated — the key signal for the "kicked vs never-joined" verdict.
   // Registered unconditionally so a USB-provisioning join (even on a No-TX device) is diagnosed.
@@ -905,7 +1074,7 @@ void setup() {
   state = ST_PROVISIONING;
   if (wifiEnabled) {
     setResting(COLOR_JOINING, LOCAL_BRIGHTNESS, SLOW_PULSE);  // state 2: about to join WiFi
-    WiFi.mode(WIFI_STA);
+    // (radio already in STA from the SSID-cache read above)
 
     // Widen the usable 2.4GHz channels. A manual 1–13 range (vs the chip's cautious "world-safe"
     // default) ensures channels 12/13 are scannable/usable — some venues sit an AP there. cc is
@@ -926,9 +1095,22 @@ void setup() {
 
     // WPA3-SAE transition mode is enabled by default in this core; no code needed. A WPA3-only AP
     // that still fails will surface as reason 202/204 on the diagnostics panel above.
-    connectWithTxPolicy();  // saved creds (full→low power), else the SoftAP captive portal
-    udp.begin(DISCOVERY_PORT);  // bind 7001 to catch both the unicast reply and broadcasts
-    enterDiscovering(millis());
+    //
+    // USB-first boot: do NOT call connectWithTxPolicy()/udp.begin()/enterDiscovering() here — that
+    // path is BLOCKING (autoConnect times out on saved creds, then startConfigPortal() waits on a
+    // human at the SoftAP) and would run before loop() ever services USB, leaving a cabled device
+    // dead on the wire. Instead arm a pending flag and let loop() either hand off to USB (if a host
+    // HELLO-reply arrives within the grace window) or run this same bring-up once the window lapses.
+    // The LED rests on the calm "joining" pulse meanwhile (state 2) — visually identical to the old
+    // immediate-join, so a deployed device looks no different during the ~2.5s grace.
+    //
+    // We DO start the NON-BLOCKING warm association now (if provisioned): it associates in the
+    // background regardless of who wins the cabled session, so an already-provisioned device shows
+    // joining→connected (+RSSI) in STATUS while cabled and is warm for an instant unplug revert. Only
+    // the BLOCKING bring-up (the captive-portal fallback) is deferred to the grace window below.
+    beginWifiAssociation();
+    wifiBringupPending = true;
+    bootStart = millis();
   } else {
     // No-TX: the device lives only on the USB cable. Disable the radio (no wireless attempt when
     // unplugged) and rest on steady blue until the app connects over USB and drives tally.
@@ -946,13 +1128,53 @@ void loop() {
   usbLoop();
   serviceUsbHello(now);   // re-announce HELLO until the host replies
   serviceUsbTally(now);   // release USB tally ownership after idle (unplug-but-powered revert)
-  serviceWifiJoin(now);   // poll a SET_WIFI validating join, independent of discovery
 
   // Hold BOOT to deliberately re-open WiFi setup (e.g. to switch networks), in any state.
   checkReprovisionButton(now);
 
-  // No-TX: USB-only, no WiFi state machine. The LED is driven by USB (app) or the local blue.
-  if (!wifiEnabled) {
+  // Stream STATUS on change while a USB host is cabled (here, before the per-state early returns, so
+  // it runs in every state — a live SET_WIFI join, an RSSI shift, a transport change all reach the
+  // wizard without it polling). Throttled; maybeEmitStatus() self-gates on hostFrameSeen + a real diff.
+  if (now - lastStatusEmit >= STATUS_EMIT_INTERVAL_MS) {
+    lastStatusEmit = now;
+    maybeEmitStatus();
+  }
+
+  // USB-first boot for a WiFi-mode device: decide between handing the cabled session to USB and
+  // starting the (blocking) WiFi join. serviceUsbHello() above has already begun announcing HELLO,
+  // so the host can detect us during this window.
+  if (wifiBringupPending) {
+    if (hostFrameSeen) {
+      // USB won: a host frame arrived, so there's a PC on the cable. Tally now flows over USB via
+      // applyServerMessage()/usbTallyActive. We DON'T park the radio off: the warm association started
+      // in setup keeps running, so STATUS streams live wifiState/rssi/ssid and unplug-revert is
+      // instant. The usbSession gate below (not the radio mode) is what keeps us off the WiFi tally
+      // state machine, so we never double-connect to the sidecar over WiFi while USB owns tally.
+      wifiBringupPending = false;
+      usbSession = true;       // USB owns this session — keep us off the WiFi state machine
+      TLOG(LOG_LEVEL_INFO, "USB host detected at boot; USB owns tally (WiFi association kept warm)\n");
+    } else if (now - bootStart >= USB_BOOT_GRACE_MS) {
+      // No USB host answered in the grace window → deployed / on a power bank. Run the real WiFi
+      // bring-up now (this may block on the captive portal — fine, there's no USB host to starve).
+      TLOG(LOG_LEVEL_INFO, "No USB host within %dms; starting WiFi bring-up\n", USB_BOOT_GRACE_MS);
+      startWifiBringup();
+    }
+    // Still waiting: render the resting "joining" pulse and yield. Don't fall through to the WiFi
+    // state machine — the radio isn't connecting yet.
+    if (wifiBringupPending) {
+      renderLed(now);
+      delay(1);
+      return;
+    }
+    // If USB won we fall through to the early return below (gated on usbSession), which services the
+    // LED over USB while the WiFi association stays warm. If we just started the bring-up, the state
+    // machine runs as usual.
+  }
+
+  // No-TX (or a WiFi device that handed this session to USB): USB-only, no WiFi state machine.
+  // The LED is driven by USB (app) or the local blue. `usbSession` (not the radio mode) gates this,
+  // so a save-only SET_WIFI re-enabling WIFI_STA doesn't yank a cabled device onto the WiFi path.
+  if (!wifiEnabled || usbSession) {
     renderLed(now);
     delay(1);
     return;
@@ -968,8 +1190,7 @@ void loop() {
   if (wifiLostSince != 0) {  // WiFi just came back without needing the portal
     TLOG(LOG_LEVEL_INFO, "WiFi reconnected, IP %s\n", WiFi.localIP().toString().c_str());
     wifiLostSince = 0;
-    udp.stop();
-    udp.begin(DISCOVERY_PORT);  // the socket may not survive an interface bounce
+    rebindDiscoverySocket();
     enterDiscovering(now);
   }
 

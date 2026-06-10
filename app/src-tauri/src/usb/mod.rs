@@ -58,10 +58,11 @@ impl Default for UsbState {
 }
 
 /// Try to handle a sidecar→shell `usb*` stdout line. Returns true when the line was a
-/// USB-targeted message (consumed here, not forwarded to the UI). Cheap-rejects the
-/// common non-USB traffic (state/notice/sourceScan) before parsing JSON.
+/// USB-targeted message (consumed here, not forwarded to the UI). `usbSend` is the only
+/// shell-targeted type, so cheap-reject everything else by that substring before the
+/// authoritative `type` check below parses JSON.
 pub fn handle_outbound(app: &AppHandle, line: &str) -> bool {
-    if !line.contains("\"usb") {
+    if !line.contains("usbSend") {
         return false;
     }
     let value: serde_json::Value = match serde_json::from_str(line) {

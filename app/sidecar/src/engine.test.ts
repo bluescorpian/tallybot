@@ -172,5 +172,16 @@ test("the device snapshot carries identity, assignment, and brightness through",
     transport: "wifi",
     wifiState: null,
     rssi: null,
+    provisionedMode: null,
+    ssid: null,
   });
+});
+
+test("the device snapshot carries the USB provisioned mode and SSID through", () => {
+  const { state } = computeEngine(connectedSource(), INACTIVE_GATE, [
+    device({ transport: "usb", provisionedMode: "wifi", ssid: "GreenRoom-5G" }),
+  ]);
+  assert.equal(state.devices[0]!.transport, "usb");
+  assert.equal(state.devices[0]!.provisionedMode, "wifi");
+  assert.equal(state.devices[0]!.ssid, "GreenRoom-5G");
 });

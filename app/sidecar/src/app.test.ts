@@ -7,14 +7,15 @@ import {
   type AnimationClock,
   type DeviceServerPort,
   type IpcPort,
+  type ProvisioningPort,
   type SidecarAppDeps,
   type StorePort,
   SidecarApp,
 } from "./app.ts";
 import type { SourceSnapshot } from "./engine.ts";
 import type { DeviceConfig } from "./store.ts";
-import type { SidecarEvent, StateEvent } from "./ipc.ts";
-import { type Color, COLORS, DEFAULT_BRIGHTNESS, SETUP_COLOR } from "./protocol.ts";
+import type { DeviceTransport, DeviceWifiState, SidecarEvent, StateEvent } from "./ipc.ts";
+import { type Color, COLORS, DEFAULT_BRIGHTNESS, SETUP_COLOR, Transport } from "./protocol.ts";
 
 // ── In-memory fakes for the orchestrator's ports ─────────────────────────────────
 
@@ -124,6 +125,12 @@ class FakeStore implements StorePort {
     this.#ensure(mac).brightness = brightness;
     return Promise.resolve();
   }
+  setSsid(mac: string, ssid: string | null): Promise<void> {
+    const device = this.#ensure(mac);
+    if (ssid === null) delete device.ssid;
+    else device.ssid = ssid;
+    return Promise.resolve();
+  }
   flush(): Promise<void> {
     return Promise.resolve();
   }
@@ -134,6 +141,44 @@ class FakeStore implements StorePort {
       this.#devices.set(mac, device);
     }
     return device;
+  }
+}
+
+/**
+ * The USB provisioning surface. Records outbound calls and lets a test push STATUS frames the
+ * way a cabled device would. `transportOf` reports "usb" only for MACs the test marks wired, so
+ * tests that never touch USB see the same `transport: "wifi"` default as before.
+ */
+class FakeProvisioning extends EventEmitter implements ProvisioningPort {
+  readonly provisioned: Array<{ mac: string; ssid: string; password: string }> = [];
+  readonly transports: Array<{ mac: string; mode: number }> = [];
+  readonly statusRequested: string[] = [];
+  /** MACs currently reachable over USB (drives `transportOf` + the boolean returns). */
+  readonly wired = new Set<string>();
+
+  transportOf(mac: string): DeviceTransport | null {
+    return this.wired.has(mac) ? "usb" : null;
+  }
+  provisionWifi(mac: string, ssid: string, password: string): boolean {
+    if (!this.wired.has(mac)) return false;
+    this.provisioned.push({ mac, ssid, password });
+    return true;
+  }
+  setTransport(mac: string, mode: number): boolean {
+    if (!this.wired.has(mac)) return false;
+    this.transports.push({ mac, mode });
+    return true;
+  }
+  requestStatus(mac: string): boolean {
+    this.statusRequested.push(mac);
+    return this.wired.has(mac);
+  }
+  // Test driver: stream a STATUS frame as the device would over the cable.
+  emitStatus(
+    mac: string,
+    fields: { mode: number; wifiState: DeviceWifiState; rssi: number | null; ssid: string },
+  ): void {
+    this.emit("status", { mac, ...fields });
   }
 }
 
@@ -182,6 +227,7 @@ interface Harness {
   atem: FakeAtemSource;
   ipc: FakeIpc;
   store: FakeStore;
+  provisioning: FakeProvisioning;
   anim: FakeAnimClock;
   refresh: FakeAnimClock;
 }
@@ -194,11 +240,13 @@ function setup(
   const atem = new FakeAtemSource(source);
   const ipc = new FakeIpc();
   const store = new FakeStore();
+  const provisioning = new FakeProvisioning();
   const anim = new FakeAnimClock();
   const refresh = new FakeAnimClock();
   const app = new SidecarApp({
     atem,
     deviceServer: server,
+    provisioning,
     store,
     ipc,
     animClock: anim,
@@ -207,7 +255,7 @@ function setup(
     log: () => {},
     ...overrides,
   });
-  return { app, server, atem, ipc, store, anim, refresh };
+  return { app, server, atem, ipc, store, provisioning, anim, refresh };
 }
 
 /** Let an async command handler (which awaits the store) settle. */
@@ -456,4 +504,98 @@ test("scanSources reports a sweep failure as an error result", async () => {
   assert.equal(done?.status, "done");
   assert.equal(done?.error, "no interface");
   assert.deepEqual(done?.found, []);
+});
+
+// ── v1.2 USB provisioning ────────────────────────────────────────────────────
+
+test("provisionWifi sends the creds, persists the SSID, and surfaces it in the snapshot", async () => {
+  const { app, server, ipc, provisioning, store } = setup();
+  await app.start();
+  provisioning.wired.add(MAC);
+  server.connectDevice(MAC, 2);
+
+  ipc.command({ type: "provisionWifi", mac: MAC, ssid: "GreenRoom-5G", password: "hunter2" });
+  await tick();
+
+  assert.deepEqual(provisioning.provisioned, [{ mac: MAC, ssid: "GreenRoom-5G", password: "hunter2" }]);
+  assert.equal(store.device(MAC)?.ssid, "GreenRoom-5G"); // remembered host-side
+  assert.equal(ipc.lastState()!.state.devices.find((d) => d.mac === MAC)!.ssid, "GreenRoom-5G");
+});
+
+test("provisionWifi on a device that isn't on USB warns and persists nothing", async () => {
+  const { app, ipc, provisioning, store } = setup();
+  await app.start();
+  // MAC is not in provisioning.wired → provisionWifi returns false.
+
+  ipc.command({ type: "provisionWifi", mac: MAC, ssid: "Net", password: "pw" });
+  await tick();
+
+  assert.deepEqual(provisioning.provisioned, []);
+  assert.equal(store.device(MAC)?.ssid, undefined);
+  assert.ok(ipc.notices.some((n) => /can't provision WiFi/.test(n.message)));
+});
+
+test("a USB STATUS frame surfaces provisionedMode / wifiState / rssi and adopts the device's SSID", async () => {
+  const { app, server, ipc, provisioning, store } = setup();
+  await app.start();
+  provisioning.wired.add(MAC);
+  server.connectDevice(MAC, 2);
+
+  provisioning.emitStatus(MAC, {
+    mode: Transport.WIFI,
+    wifiState: "connected" as DeviceWifiState,
+    rssi: -58,
+    ssid: "BackdropAP",
+  });
+  await tick();
+
+  const device = ipc.lastState()!.state.devices.find((d) => d.mac === MAC)!;
+  assert.equal(device.transport, "usb"); // wired → indicator
+  assert.equal(device.provisionedMode, "wifi");
+  assert.equal(device.wifiState, "connected");
+  assert.equal(device.rssi, -58);
+  assert.equal(device.ssid, "BackdropAP"); // adopted from the device's NVS-reported SSID
+  assert.equal(store.device(MAC)?.ssid, "BackdropAP"); // …and persisted host-side
+});
+
+test("a STATUS with an empty SSID clears a stale stored SSID (device has no creds)", async () => {
+  const { app, server, ipc, provisioning, store } = setup();
+  await app.start();
+  provisioning.wired.add(MAC);
+  server.connectDevice(MAC, 2);
+  // Seed a host-side SSID, then have the device report it has no creds.
+  ipc.command({ type: "provisionWifi", mac: MAC, ssid: "OldNet", password: "pw" });
+  await tick();
+  assert.equal(store.device(MAC)?.ssid, "OldNet");
+
+  provisioning.emitStatus(MAC, { mode: Transport.NOTX, wifiState: "idle" as DeviceWifiState, rssi: null, ssid: "" });
+  await tick();
+
+  assert.equal(store.device(MAC)?.ssid, undefined); // cleared to match device truth
+  assert.equal(ipc.lastState()!.state.devices.find((d) => d.mac === MAC)!.ssid, null);
+});
+
+test("setTransport(notx) sets the mode and clears any remembered SSID", async () => {
+  const { app, server, ipc, provisioning, store } = setup();
+  await app.start();
+  provisioning.wired.add(MAC);
+  server.connectDevice(MAC, 2);
+  ipc.command({ type: "provisionWifi", mac: MAC, ssid: "GreenRoom-5G", password: "pw" });
+  await tick();
+
+  ipc.command({ type: "setTransport", mac: MAC, mode: "notx" });
+  await tick();
+
+  assert.deepEqual(provisioning.transports, [{ mac: MAC, mode: Transport.NOTX }]);
+  assert.equal(store.device(MAC)?.ssid, undefined); // SSID dropped — No-TX has no network
+});
+
+test("a connecting USB device is asked for a fresh STATUS at once", async () => {
+  const { app, server, provisioning } = setup();
+  await app.start();
+  provisioning.wired.add(MAC);
+
+  server.connectDevice(MAC, 2);
+
+  assert.ok(provisioning.statusRequested.includes(MAC));
 });

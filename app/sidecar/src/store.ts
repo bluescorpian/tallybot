@@ -26,6 +26,13 @@ export interface DeviceConfig {
   inputId: number | null;
   /** Per-device LED brightness, 0–255. */
   brightness: number;
+  /**
+   * SSID the device was provisioned to join over USB. The device's STATUS frame reports
+   * only *whether* creds are present, never the SSID string, so the host remembers it here
+   * to show "On <network>" when the device is re-plugged. Omitted when unset (so a device
+   * with no WiFi config keeps the minimal `{ inputId, brightness }` shape).
+   */
+  ssid?: string;
 }
 
 /** Current on-disk schema version, so a future format change can migrate. */
@@ -44,11 +51,14 @@ function isByte(value: unknown): value is number {
 /** Coerce one parsed device entry, or null if it has nothing usable. */
 function coerceDevice(value: unknown): DeviceConfig | null {
   if (typeof value !== "object" || value === null) return null;
-  const raw = value as { inputId?: unknown; brightness?: unknown };
+  const raw = value as { inputId?: unknown; brightness?: unknown; ssid?: unknown };
   const inputId =
     typeof raw.inputId === "number" && Number.isInteger(raw.inputId) ? raw.inputId : null;
   const brightness = isByte(raw.brightness) ? raw.brightness : DEFAULT_BRIGHTNESS;
-  return { inputId, brightness };
+  const device: DeviceConfig = { inputId, brightness };
+  // Keep the key absent when there's no SSID, so a non-WiFi device stays `{ inputId, brightness }`.
+  if (typeof raw.ssid === "string" && raw.ssid !== "") device.ssid = raw.ssid;
+  return device;
 }
 
 /** A full MAC: six colon-separated two-hex-digit octets, e.g. `e8:3d:c1:85:dc:6c`. */
@@ -153,6 +163,14 @@ export class ConfigStore {
     return this.#persist();
   }
 
+  /** Remember (or clear) the SSID a device was provisioned to join over USB. */
+  setSsid(mac: string, ssid: string | null): Promise<void> {
+    const device = this.#ensure(mac);
+    if (ssid === null || ssid === "") delete device.ssid;
+    else device.ssid = ssid;
+    return this.#persist();
+  }
+
   #ensure(mac: string): DeviceConfig {
     let device = this.#devices.get(mac);
     if (!device) {
@@ -174,8 +192,11 @@ export class ConfigStore {
     // Prune entries that carry no real configuration so the file stays tidy.
     const devices: Record<string, DeviceConfig> = {};
     for (const [mac, config] of this.#devices) {
-      if (config.inputId === null && config.brightness === DEFAULT_BRIGHTNESS) continue;
-      devices[mac] = { inputId: config.inputId, brightness: config.brightness };
+      if (config.inputId === null && config.brightness === DEFAULT_BRIGHTNESS && config.ssid == null)
+        continue;
+      const entry: DeviceConfig = { inputId: config.inputId, brightness: config.brightness };
+      if (config.ssid != null) entry.ssid = config.ssid; // omit when unset (keeps the file minimal)
+      devices[mac] = entry;
     }
     const payload: PersistedShape = { version: SCHEMA_VERSION, sourceIp: this.#sourceIp, devices };
     const json = `${JSON.stringify(payload, null, 2)}\n`;

@@ -46,7 +46,9 @@ shell). Full tables in `docs/architecture.md`; USB details in `docs/spec/usb-ser
 - **Discovery (UDP 7001):** device broadcasts `TALLY_FIND`; server replies/broadcasts
   `TALLY_HERE:7000`.
 - **Device → server:** `0x01` HELLO `[type][version][mac×6]`, `0x02` HEARTBEAT `[type]`.
-  USB also: `0x03` STATUS `[transport][creds][wifiState][rssi]`, `0x04` LOG `[level][utf8…]`.
+  USB also: `0x03` STATUS `[transport][wifiState][rssi][ssidLen][ssid…]`, `0x04` LOG
+  `[level][utf8…]`. STATUS carries the device's NVS SSID (host adopts it as truth) and the
+  full `wifiState` enum, and is pushed on change while cabled (not just on `GET_STATUS`).
 - **Server → device:** `0x01` SET_COLOR `[type][R][G][B][brightness]`, `0x02` IDENTIFY
   `[type]`. USB also: `0x03` SET_WIFI, `0x04` SET_TRANSPORT, `0x05` GET_STATUS (`0x07` RELAY
   reserved for v1.3).
@@ -144,9 +146,10 @@ The `.exploration/` subtree holds vendored source snapshots for research only �
   TCP + USB, dedupe-by-MAC USB-preferred), ATEM adapter (real `atem-connection` behind an
   `AtemLike` seam), config store, IPC bridge (UI commands + the internal `usb*` shell bridge),
   `UsbTransport` proxy, and the orchestrator — built and tested.
-- **app/ UI** — the board, settings drawer, and frameless chrome, running on the live
-  sidecar IPC stream (`src/lib/ipc.svelte.ts`), with a mock fallback for the `/preview`
-  design workflow.
+- **app/ UI** — the board, settings drawer, frameless chrome, and the per-device
+  **Configure / Wi-Fi provisioning popover** (transport mode + save-only WiFi creds, wired to
+  live `provisionWifi`/`setTransport`), running on the live sidecar IPC stream
+  (`src/lib/ipc.svelte.ts`), with a mock fallback for the `/preview` design workflow.
 - **app/ shell** — `src-tauri/src/lib.rs` spawns the Node sidecar via
   `tauri-plugin-shell`, forwards NDJSON stdout to the UI as `"sidecar"` events, and
   exposes `send_to_sidecar` for UI → sidecar commands. It also **owns the serial port(s)**
@@ -155,10 +158,16 @@ The `.exploration/` subtree holds vendored source snapshots for research only �
   Packaging is solved: single-binary sidecar via `@yao-pkg/pkg`, wired into `cargo tauri build`.
 - **firmware/** — full tally client: WiFiManager captive-portal provisioning, UDP
   discovery, TCP binary protocol, LED state machine with per-phase colours — plus a USB-CDC
-  COBS control channel (PacketSerial) sharing the message dispatch, No-TX mode, and USB WiFi
-  provisioning with a validating join. Two PlatformIO envs: dev (text logs) + `esp32-c3-release`
-  (frames everything). Verified on a physical ESP32-C3: the pre-USB client, and the USB
-  transport path (detect + live `SET_COLOR` + unplug-revert); USB WiFi provisioning still
-  pending hardware verification (needs the wizard UI). `protocol.h` mirrors `protocol.ts`.
+  COBS control channel (PacketSerial) sharing the message dispatch, No-TX mode, and **save-only**
+  USB WiFi provisioning: `SET_WIFI` persists the creds + `transport=WiFi` and confirms at once
+  (`STATUS` with `credsPresent=1`, `wifiState=idle`) — no live/validating join, so it provisions
+  from anywhere. **USB-first boot:** a WiFi-mode device announces HELLO and waits a short grace
+  window for the host before starting the (blocking) WiFi bring-up, so a cabled device always comes
+  up over USB regardless of provisioned mode (it falls through to WiFi only when no host answers, and
+  reverts to WiFi live on USB-host loss). Two PlatformIO envs: dev (text logs) + `esp32-c3-release`
+  (frames everything). The in-app Configure / Wi-Fi wizard is built and wired; the full
+  provision-over-USB flow (save → reboot/unplug → joins) is **software-complete, pending on-hardware
+  verification**. Verified on a physical ESP32-C3: the pre-USB client, and the USB transport path
+  (detect + live `SET_COLOR` + unplug-revert). `protocol.h` mirrors `protocol.ts`.
 - **tools/** — ATEM simulator (`FakeAtem`), tally-client simulator, `sidecar-dev` REPL,
   and end-to-end test. See `tools/README.md`.

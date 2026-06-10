@@ -182,15 +182,20 @@ inline size_t encodeHelloPayload(uint8_t* out, const uint8_t mac[6]) {
   return 8;
 }
 
-// STATUS payload: [type][transport][credsPresent][wifiState][rssi] — 5 bytes. `out` ≥ 5.
-inline size_t encodeStatusPayload(uint8_t* out, uint8_t transport, bool credsPresent,
-                                  uint8_t wifiState, int8_t rssi) {
+// STATUS payload: [type][transport][wifiState][rssi][ssidLen][ssid…]. The SSID (the device's
+// stored network, read from NVS) replaces the old credsPresent bool — the host derives
+// "has creds" from ssidLen > 0, and keeps the name accurate even for a device it never
+// provisioned. `ssidLen` is capped at 32 (802.11 max); `out` must hold ≥ 5 + min(ssidLen, 32).
+inline size_t encodeStatusPayload(uint8_t* out, uint8_t transport, uint8_t wifiState, int8_t rssi,
+                                  const char* ssid, uint8_t ssidLen) {
+  if (ssidLen > 32) ssidLen = 32;  // clamp; SSIDs are ≤ 32 bytes
   out[0] = MSG_STATUS;
   out[1] = transport;
-  out[2] = credsPresent ? 1 : 0;
-  out[3] = wifiState;
-  out[4] = (uint8_t)rssi;  // signed byte on the wire; host sign-extends
-  return 5;
+  out[2] = wifiState;
+  out[3] = (uint8_t)rssi;  // signed byte on the wire; host sign-extends
+  out[4] = ssidLen;
+  for (uint8_t i = 0; i < ssidLen; i++) out[5 + i] = (uint8_t)ssid[i];
+  return 5 + ssidLen;
 }
 
 // LOG payload: [type][level][utf8…]. Copies up to `maxOut-2` message bytes. Returns the

@@ -94,7 +94,7 @@ additive. Each row is the COBS frame payload (`[type]` is the first byte).
 |---|---|---|---|
 | HELLO | `0x01` | `[type][version][MAC×6]` | **Unchanged.** Emitted on USB connect (and repeated ~1 s until a host message arrives — the discovery-retry pattern). How the app learns the MAC and that TallyBot firmware (not a bare board) is running. |
 | HEARTBEAT | `0x02` | `[type]` | **Unchanged**, but **unused over USB** — port-close is the liveness/disconnect signal. |
-| STATUS | `0x03` | `[type][transport][credsPresent][wifiState][rssi]` | transport: 0=No-TX, 1=WiFi. credsPresent 0/1. wifiState enum {idle, joining, connected, failed}. rssi signed byte (0 if N/A). Reply to `GET_STATUS`; pushed on any state change. |
+| STATUS | `0x03` | `[type][transport][wifiState][rssi][ssidLen][ssid…]` | transport: 0=No-TX, 1=WiFi. wifiState enum {idle, joining, connected, failed}. rssi signed byte (0 if N/A). `ssid` is the device's **NVS SSID** (`ssidLen=0` → no creds), so the host adopts it as truth rather than relying on its own memory — and it supersedes the old `credsPresent` bool (`ssidLen>0` carries that signal). Reply to `GET_STATUS`; **streamed on change** while a host is cabled (wifiState/rssi/ssid/transport), throttled, gated on a connected host. |
 | LOG | `0x04` | `[type][level][utf8…]` | level 0=info,1=warn,2=error. Replaces raw `Serial.print` in release builds. |
 | SCAN_RESULT | `0x05` | `[type][count] then count × [rssi][ssidLen][ssid…]` | Reply to `SCAN_WIFI`. **Deferred post-v1.2** (type byte reserved); the user types the SSID in v1.2. |
 
@@ -104,18 +104,31 @@ additive. Each row is the COBS frame payload (`[type]` is the first byte).
 |---|---|---|---|
 | SET_COLOR | `0x01` | `[type][R][G][B][brightness]` | **Unchanged.** Byte-identical to TCP — same palette, same server-driven flash/breathe frames, device still gamma-corrects. |
 | IDENTIFY | `0x02` | `[type]` | **Unchanged.** |
-| SET_WIFI | `0x03` | `[type][ssidLen][ssid…][passLen][pass…]` | Persist creds to the **existing WiFi NVS** WiFiManager reads (captive-portal fallback + saved-creds path stay intact). Triggers a background join attempt (below). |
+| SET_WIFI | `0x03` | `[type][ssidLen][ssid…][passLen][pass…]` | **Save-only.** Persist creds to the **existing WiFi NVS** WiFiManager reads (captive-portal fallback + saved-creds path stay intact) and persist `transport=WiFi`, then emit `STATUS` at once. The confirm never gates on the join; the background association streams as non-gating `wifiState` (below). |
 | SET_TRANSPORT | `0x04` | `[type][mode]` | mode 0=No-TX (USB-only), 1=WiFi. Persist to NVS. |
 | GET_STATUS | `0x05` | `[type]` | Request a `STATUS` frame. |
 | SCAN_WIFI | `0x06` | `[type]` | Request a WiFi scan → `SCAN_RESULT`. **Deferred post-v1.2** (type byte reserved). |
 
-### Provisioning validates the join *before* the user unplugs
+### Provisioning is save-only (no live join)
 
-`SET_WIFI` doesn't just store creds — the device attempts the join immediately and streams
-`LOG` + `STATUS(wifiState)` so the wizard can confirm **"Joined ✓ (RSSI −60)"** or
-**"Couldn't join — auth failed"** while the cable is still attached. This is the milestone's
-strongest safeguard against the venue min-RSSI / weak-signal kick that got WiFi-join deferred:
-the operator sees real signal *at the deploy spot* before trusting it wirelessly.
+`SET_WIFI` **persists** the creds (and `transport=WiFi`) and the device confirms immediately —
+`STATUS(transport=WiFi, ssid=…, wifiState=joining)` — and **never gates or waits on** the join
+result. The creds apply when the device is unplugged and deployed.
+
+> **Why not validate the join first?** An earlier draft *gated provisioning* on a cabled join so the
+> wizard would confirm "Joined ✓ (RSSI −60)" before letting the operator unplug. Field-testing
+> reversed that gate: it forced the operator to provision *in range* of the target AP, and the
+> ESP32-C3 emits transient auth-style disconnects (reason 2/15) on the first attempt that surfaced as
+> instant **false** "auth failed" verdicts on a correct password.
+>
+> Provisioning is therefore **save-only and non-blocking** — confirming the save never depends on a
+> join result. But the background association `SET_WIFI` kicks off *is* now surfaced as **live,
+> non-gating** `wifiState` over the streamed `STATUS`: `joining` → `connected` (+ RSSI) or, only for a
+> *settled, pre-association auth failure* (reasons 2/15/202/204) **after a debounce window**,
+> `failed`. The debounce steps past the C3 transient, and out-of-range (reasons 200/201) stays
+> `joining` — so a good password is never shown as a failure and provisioning still works from
+> anywhere. Deeper signal confirmation at the deploy spot still lives on the SoftAP diagnostics panel
+> (BOOT-hold) and any future `SCAN_WIFI`.
 
 ---
 
@@ -144,8 +157,13 @@ The device persists a `transport` setting (NVS): `WIFI` or `NOTX`.
 
 No new **LED states**: a USB session presents to the LED state machine exactly like "server
 connected"; the wired/USB indicator is **UI-side only** ([`docs/led.md`](../led.md) palette
-unchanged). A WiFi device that's plugged in may keep its WiFi association warm for instant
-revert on unplug, but tally comes from USB while connected.
+unchanged). A plugged-in WiFi device **keeps its radio in STA and its association warm**
+throughout the USB session (only the discovery/TCP tally client is gated off, so it never
+double-connects to the sidecar) — tally comes from USB while connected, but the warm association
+makes unplug-revert instant and keeps the streamed `wifiState`/`rssi`/`ssid` live and accurate.
+A No-TX device keeps its radio off (ssidLen 0). The firmware never deinitialises the radio for a
+USB session, which is what keeps `STATUS` SSID reads valid (an earlier `WiFi.mode(WIFI_OFF)` park
+made `wm.getWiFiSSID(true)` return uninitialised-stack garbage after a replug).
 
 ---
 
@@ -299,8 +317,10 @@ them in v1.2; don't actually build ESP-NOW (YAGNI).**
 - Every byte on the USB pipe is a COBS frame, including logs; a release device's stream
   decodes cleanly with no raw text, and the host resyncs past an injected garbage/panic-text run.
 - `pio device monitor` on a dev-build (`TALLYBOT_USB_TEXT_LOG`) device still shows plain text.
-- `SET_WIFI` persists creds to the existing WiFi NVS, triggers a join attempt, and the device
-  streams `LOG`/`STATUS` reflecting join success + RSSI before unplug.
+- `SET_WIFI` persists creds (+ `transport=WiFi`) to the existing WiFi NVS and the device emits
+  `STATUS(transport=WiFi, ssid=…, wifiState=joining)` at once (save-only — the confirm never gates
+  on the join); the background association then streams `joining → connected/failed` as live,
+  non-gating `wifiState`, and the creds apply when unplugged.
 - `SET_TRANSPORT` persists the mode; USB wins while plugged; the device reverts correctly on
   unplug (WiFi → wireless tally; No-TX → unpowered).
 - `SET_COLOR`/`IDENTIFY` over USB are byte-identical to TCP and render the same palette/animation.
