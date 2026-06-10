@@ -13,7 +13,6 @@ import {
   FrameDecoder,
   decodeDeviceMessage,
   encodeDiscoveryResponse,
-  encodeIdentify,
   encodeSetColor,
 } from "../../app/sidecar/src/protocol.ts";
 import { randomMac } from "./device-protocol.ts";
@@ -77,25 +76,6 @@ test("the client decodes a SET_COLOR and emits setColor", async () => {
 
     assert.deepEqual(color, { r: 255, g: 0, b: 0 });
     assert.equal(brightness, 200);
-  } finally {
-    client.close();
-    server.close();
-  }
-});
-
-test("the client decodes an IDENTIFY and emits identify", async () => {
-  const { server, port } = await startServer();
-  const client = new TallyClient({ mac: randomMac(), heartbeatIntervalMs: 60_000 });
-
-  try {
-    const connection = once(server, "connection");
-    client.connect("127.0.0.1", port);
-    const [socket] = (await connection) as [Socket];
-    await once(client, "connected");
-
-    const identify = once(client, "identify");
-    socket.write(encodeIdentify());
-    await identify; // resolves only if the client decoded IDENTIFY
   } finally {
     client.close();
     server.close();

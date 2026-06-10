@@ -102,8 +102,8 @@ additive. Each row is the COBS frame payload (`[type]` is the first byte).
 
 | Message | Type | Payload | Notes |
 |---|---|---|---|
-| SET_COLOR | `0x01` | `[type][R][G][B][brightness]` | **Unchanged.** Byte-identical to TCP — same palette, same server-driven flash/breathe frames, device still gamma-corrects. |
-| IDENTIFY | `0x02` | `[type]` | **Unchanged.** |
+| SET_COLOR | `0x01` | `[type][R][G][B][brightness]` | **Unchanged.** Byte-identical to TCP — same palette, same server-driven flash/breathe/locate frames, device still gamma-corrects. |
+| ~~IDENTIFY~~ | `0x02` | — | **Retired.** Locate is now a server-streamed white/off SET_COLOR burst, not a device event; `0x02` is unused. |
 | SET_WIFI | `0x03` | `[type][ssidLen][ssid…][passLen][pass…]` | **Save-only.** Persist creds to the **existing WiFi NVS** WiFiManager reads (captive-portal fallback + saved-creds path stay intact) and persist `transport=WiFi`, then emit `STATUS` at once. The confirm never gates on the join; the background association streams as non-gating `wifiState` (below). |
 | SET_TRANSPORT | `0x04` | `[type][mode]` | mode 0=No-TX (USB-only), 1=WiFi. Persist to NVS. |
 | GET_STATUS | `0x05` | `[type]` | Request a `STATUS` frame. |
@@ -238,13 +238,14 @@ it extends the message vocabulary on the **existing shell↔sidecar NDJSON stdin
 - **Shell → sidecar** (over the channel the shell already writes for `send_to_sidecar`):
   `usbDeviceConnected {mac, version}`, `usbDeviceDisconnected {mac}`, `usbLog`, `usbStatus`.
 - **Sidecar → shell** (the shell already reads the sidecar's stdout to forward to the UI; it
-  now also demuxes serial-targeted messages): `usbSendColor {mac, …}`, `usbIdentify {mac}`,
+  now also demuxes serial-targeted messages): `usbSendColor {mac, …}`,
   `usbProvisionWifi {port, ssid, pass}`, `usbSetTransport {port, mode}`, `usbFlash {port}`.
 
 In the sidecar, the `CompositeDeviceServer`'s `UsbTransport` implements `DeviceServerPort` as a
-thin proxy over this bridge: `sendColor`/`identify` write a command down it; inbound device
-messages raise the `deviceConnected`/`deviceDisconnected` events the orchestrator already
-consumes. The orchestrator stays transport-agnostic.
+thin proxy over this bridge: `sendColor` writes a command down it (locate flashes ride this same
+path as white/off SET_COLORs); inbound device messages raise the
+`deviceConnected`/`deviceDisconnected` events the orchestrator already consumes. The orchestrator
+stays transport-agnostic.
 
 ### IPC additions (`app/sidecar/src/ipc.ts`)
 
@@ -323,7 +324,8 @@ them in v1.2; don't actually build ESP-NOW (YAGNI).**
   non-gating `wifiState`, and the creds apply when unplugged.
 - `SET_TRANSPORT` persists the mode; USB wins while plugged; the device reverts correctly on
   unplug (WiFi → wireless tally; No-TX → unpowered).
-- `SET_COLOR`/`IDENTIFY` over USB are byte-identical to TCP and render the same palette/animation.
+- `SET_COLOR` over USB is byte-identical to TCP and renders the same palette/animation (the
+  locate flash included, since it's just a streamed SET_COLOR burst).
 - The same MAC plugged in over USB while also on WiFi appears **once** on the board (USB), with
   a wired indicator.
 - A bare ESP32-C3 is detected (no HELLO within timeout) and flashed in-app via `espflash`; the

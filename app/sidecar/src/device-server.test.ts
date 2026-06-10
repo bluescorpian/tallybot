@@ -141,28 +141,10 @@ test("sendColor delivers a SET_COLOR to the addressed device", async () => {
   }
 });
 
-test("identify delivers an IDENTIFY to the addressed device", async () => {
-  const { server } = await startServer();
-  const socket = connect(server);
-  try {
-    const connected = once(server, "deviceConnected");
-    socket.write(helloFrame("aa:bb:cc:dd:ee:ff"));
-    await connected;
-
-    const incoming = nextServerFrame(socket);
-    assert.equal(server.identify("aa:bb:cc:dd:ee:ff"), true);
-    assert.equal((await incoming).type, ServerMessageType.IDENTIFY);
-  } finally {
-    socket.destroy();
-    await server.stop();
-  }
-});
-
 test("sending to an unknown device returns false", async () => {
   const { server } = await startServer();
   try {
     assert.equal(server.sendColor("00:00:00:00:00:99", COLORS.idle, 128), false);
-    assert.equal(server.identify("00:00:00:00:00:99"), false);
   } finally {
     await server.stop();
   }

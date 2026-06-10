@@ -219,7 +219,7 @@ test("two devices on different inputs show different colours", async () => {
   });
 });
 
-test("identify reaches the addressed device as an IDENTIFY", async () => {
+test("identify drives a server-streamed locate strobe (white/off SET_COLORs)", async () => {
   await withStack(async (stack) => {
     const mac = "aa:bb:cc:dd:ee:05";
     const client = new TallyClient({ mac, heartbeatIntervalMs: 60_000 });
@@ -230,9 +230,15 @@ test("identify reaches the addressed device as an IDENTIFY", async () => {
       client.connect(LOCAL, stack.server.tcpPort);
       await ready;
 
-      const flashed = once(client, "identify");
+      // The strobe's dark phase ({0,0,0}) is unique to the locate flash — no resting state is
+      // ever fully off — so receiving it proves the server is driving the flash over SET_COLOR.
+      const dark = new Promise<void>((resolve) => {
+        client.on("setColor", (color) => {
+          if (color.r === 0 && color.g === 0 && color.b === 0) resolve();
+        });
+      });
       stack.command({ type: "identifyDevice", mac });
-      await flashed; // resolves only if the client decoded an IDENTIFY
+      await dark;
     } finally {
       client.close();
     }

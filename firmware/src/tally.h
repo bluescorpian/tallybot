@@ -5,7 +5,7 @@
 #include "protocol.h"
 
 // The WiFi tally client: UDP discovery of the sidecar, a TCP connection, HELLO + periodic
-// HEARTBEAT, and the inbound SET_COLOR/IDENTIFY stream. Assumes WiFi is up (the caller gates on
+// HEARTBEAT, and the inbound SET_COLOR stream. Assumes WiFi is up (the caller gates on
 // that). Decoded server commands are handed to the handler passed to init().
 namespace tally {
 

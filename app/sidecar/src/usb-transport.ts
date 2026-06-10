@@ -6,11 +6,12 @@
  *   • inbound  `usbDeviceConnected/Disconnected` → the `deviceConnected/deviceDisconnected`
  *     events the orchestrator already consumes (so it stays transport-agnostic);
  *   • inbound  `usbFrame` → decoded STATUS/LOG → `status`/`log` events (provisioning UX);
- *   • outbound `sendColor`/`identify`/`provisionWifi`/`setTransport` → a `usbSend` with the
+ *   • outbound `sendColor`/`provisionWifi`/`setTransport` → a `usbSend` with the
  *     payload built by the shared `protocol.ts` codecs and hex-wrapped for the bridge.
  *
- * SET_COLOR/IDENTIFY are byte-identical to TCP — literally the same payload builders —
- * so a USB device renders the same palette/animation frames the server streams.
+ * SET_COLOR is byte-identical to TCP — literally the same payload builder — so a USB
+ * device renders the same palette/animation frames (including the locate strobe) the
+ * server streams.
  */
 
 import { EventEmitter } from "node:events";
@@ -21,7 +22,6 @@ import {
   Transport,
   WifiState,
   getStatusPayload,
-  identifyPayload,
   isSupportedVersion,
   setColorPayload,
   setTransportPayload,
@@ -100,10 +100,6 @@ export class UsbTransport extends EventEmitter {
 
   sendColor(mac: string, color: Color, brightness: number): boolean {
     return this.#send(mac, setColorPayload(color, brightness));
-  }
-
-  identify(mac: string): boolean {
-    return this.#send(mac, identifyPayload());
   }
 
   /** Provision WiFi creds and kick off a validating join (USB only). */

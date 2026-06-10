@@ -106,7 +106,8 @@ Configuration of **lights and inputs happens here, on the canvas**, never in set
 - **Unassigned** connected devices sit in the dock in the setup colour; clicking one opens
   the same picker to wire it into a column.
 - **Flash-to-identify** lives in that popover (a flash action): it blinks the light
-  (IDENTIFY) so the operator can find the physical unit. Housing it here is why a plain
+  (the sidecar streams a white/off SET_COLOR burst) so the operator can find the physical
+  unit. Housing it here is why a plain
   click opens the popover rather than assigning directly. Since lights have no names (just
   a MAC tail), flashing is the only reliable way to tell apart lights that share an input.
 - **Per-device brightness** sits in the same popover, between the MAC header and the

@@ -12,7 +12,7 @@
 //!       {"type":"usbFrame","mac":..,"payloadHex":..}   // STATUS/LOG/other device→host payloads
 //!       {"type":"unflashedDeviceDetected","port":..}
 //!   • sidecar → shell (read off the sidecar's stdout, intercepted before the UI):
-//!       {"type":"usbSend","mac":..,"payloadHex":..}     // SET_COLOR/IDENTIFY/SET_WIFI/SET_TRANSPORT/GET_STATUS
+//!       {"type":"usbSend","mac":..,"payloadHex":..}     // SET_COLOR/SET_WIFI/SET_TRANSPORT/GET_STATUS
 //!
 //! One device per USB port is a v1.2 assumption (a v1.3 ESP-NOW bridge would relay to
 //! many lights behind one port — the RELAY type byte is reserved for it).

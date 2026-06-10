@@ -21,7 +21,6 @@ import { type Color, COLORS, DEFAULT_BRIGHTNESS, SETUP_COLOR, Transport } from "
 
 class FakeDeviceServer extends EventEmitter implements DeviceServerPort {
   readonly sent: Array<{ mac: string; color: Color; brightness: number }> = [];
-  readonly identified: string[] = [];
   readonly #connected = new Set<string>();
 
   start(): Promise<void> {
@@ -33,11 +32,6 @@ class FakeDeviceServer extends EventEmitter implements DeviceServerPort {
   sendColor(mac: string, color: Color, brightness: number): boolean {
     if (!this.#connected.has(mac)) return false;
     this.sent.push({ mac, color, brightness });
-    return true;
-  }
-  identify(mac: string): boolean {
-    if (!this.#connected.has(mac)) return false;
-    this.identified.push(mac);
     return true;
   }
   // Test drivers:
@@ -421,19 +415,31 @@ test("an unassigned device breathes the setup colour (server-driven brightness e
   assert.ok(b1 > b0 && b2 > b1, "brightness swells across the breathe");
 });
 
-test("identify reaches a connected device, and warns when offline", async () => {
-  const { app, server, ipc } = setup();
+test("identify drives a server-streamed locate strobe, and warns when offline", async () => {
+  const { app, server, ipc, anim } = setup();
   await app.start();
 
   ipc.command({ type: "identifyDevice", mac: MAC }); // not connected yet
   await tick();
-  assert.equal(server.identified.length, 0);
+  assert.equal(server.sentTo(MAC).length, 0, "nothing is streamed to an offline device");
   assert.equal(ipc.notices.at(-1)?.level, "info");
 
   server.connectDevice(MAC);
+  ipc.command({ type: "assignDevice", mac: MAC, inputId: 3 }); // input 3 is idle (program 1, preview 2)
+  await tick();
+  assert.deepEqual(server.sentTo(MAC).at(-1)?.color, COLORS.idle, "resting on idle before the flash");
+
   ipc.command({ type: "identifyDevice", mac: MAC });
   await tick();
-  assert.deepEqual(server.identified, [MAC]);
+  assert.deepEqual(server.sentTo(MAC).at(-1)?.color, { r: 255, g: 255, b: 255 }, "strobe starts lit (white)");
+  assert.ok(anim.running, "the strobe arms the animation clock");
+
+  anim.step(); // into the strobe's dark phase
+  assert.deepEqual(server.sentTo(MAC).at(-1)?.color, { r: 0, g: 0, b: 0 }, "strobe's dark phase");
+
+  anim.step(); // past the burst → the device's real colour resumes and the clock disarms
+  assert.deepEqual(server.sentTo(MAC).at(-1)?.color, COLORS.idle, "idle resumes once the strobe ends");
+  assert.ok(!anim.running, "the clock stops when the strobe is the last animation");
 });
 
 test("setSource persists the IP and connects the ATEM", async () => {

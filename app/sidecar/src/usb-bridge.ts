@@ -46,7 +46,7 @@ export type UsbInbound = UsbDeviceConnected | UsbDeviceDisconnected | UsbFrame |
 
 // ── sidecar → shell (written on the sidecar's stdout, intercepted before the UI) ──
 
-/** A host→device payload (SET_COLOR/IDENTIFY/SET_WIFI/…), hex-encoded, to COBS-frame + write. */
+/** A host→device payload (SET_COLOR/SET_WIFI/…), hex-encoded, to COBS-frame + write. */
 export interface UsbSend {
   type: "usbSend";
   mac: string;

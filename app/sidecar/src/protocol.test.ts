@@ -14,12 +14,10 @@ import {
   WifiState,
   decodeDeviceMessage,
   encodeDiscoveryResponse,
-  encodeIdentify,
   encodeSetColor,
   formatMac,
   frame,
   getStatusPayload,
-  identifyPayload,
   isDiscoveryRequest,
   isSupportedVersion,
   macTail,
@@ -63,7 +61,7 @@ test("FrameDecoder reassembles a frame split across chunks, one byte at a time",
 
 test("FrameDecoder splits multiple frames coalesced into one chunk", () => {
   const decoder = new FrameDecoder();
-  const a = encodeIdentify();
+  const a = encodeSetColor(COLORS.live);
   const b = encodeSetColor(COLORS.idle);
   const merged = new Uint8Array(a.length + b.length);
   merged.set(a);
@@ -106,21 +104,12 @@ test("encodeSetColor rejects out-of-range channels", () => {
   assert.throws(() => encodeSetColor({ r: 0, g: 0, b: 1.5 }), RangeError);
 });
 
-test("encodeIdentify frames just the type byte", () => {
-  assert.deepEqual(encodeIdentify(), Uint8Array.of(1, ServerMessageType.IDENTIFY));
-});
-
 // ── Shared payload builders (the unframed body — wrapped by TCP frame() or USB COBS) ──
 
 test("encodeSetColor == frame(setColorPayload) — TCP wraps the shared payload", () => {
   const payload = setColorPayload({ r: 255, g: 180, b: 0 }, 64);
   assert.deepEqual(payload, Uint8Array.of(ServerMessageType.SET_COLOR, 255, 180, 0, 64));
   assert.deepEqual(encodeSetColor({ r: 255, g: 180, b: 0 }, 64), frame(payload));
-});
-
-test("identifyPayload is the bare type byte", () => {
-  assert.deepEqual(identifyPayload(), Uint8Array.of(ServerMessageType.IDENTIFY));
-  assert.deepEqual(encodeIdentify(), frame(identifyPayload()));
 });
 
 test("setWifiPayload lays out [type][ssidLen][ssid][passLen][pass]", () => {

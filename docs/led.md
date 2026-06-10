@@ -29,7 +29,7 @@ must be related (the two blues; the amber WiFi family).
    from across the room without guessing.
 2. **Motion is meaningful, not decoration.** Pulse = "working on it"; slow blink =
    "searching"; fast blink = "lost something, retrying"; steady = "settled in this state";
-   flash burst = IDENTIFY.
+   flash burst = locate (find this device).
 3. **Colour tells you *which box to go look at*.**
    - **Magenta** → the **device** needs setup (join its SoftAP).
    - **Amber** → a **WiFi/network** problem (check the AP / range).
@@ -54,7 +54,7 @@ must be related (the two blues; the amber WiFi family).
 | 8 | **Idle** | Dim white `30,30,30` | Steady | server | Assigned, not selected, **source trusted** ("you're clear"). |
 | 9 | **Fault** | Blue `0,0,255` | Flashing | server | Assigned, but the **source can't be trusted** (ATEM down/unknown). Don't trust this light. |
 | 10 | **Lost the server** | Blue `0,0,255` | Steady | device | WiFi is fine but the TallyBot server went away (app closed / PC asleep / sidecar crashed). **PC/app problem** — check the computer. Auto-rediscovers. |
-| 11 | **IDENTIFY** | White `255,255,255` | ~6 flashes | server-triggered | Locate this physical device. Flashes over the current colour, then restores it. |
+| 11 | **Locate** | White `255,255,255` | ~6 flashes | server | Find this physical device. The server streams a white/off burst over the current colour, then resumes it. |
 
 \* **State 5** is **server-driven**: the sidecar holds the white setup colour and streams the
 breathe as a brightness envelope over the wire (the same mechanism as the fault flash — see
@@ -68,7 +68,7 @@ it renders itself), so there is no blue flash at hand-off.
 White now appears in three states, all kept apart without a hue change:
 - **Idle (8)** — *dim* (`30,30,30`), **steady**. The only "you're clear" signal; never moves.
 - **Unassigned (5)** — *full* white, **slow breathe** (~10s). Obviously alive and in motion.
-- **IDENTIFY (11)** — *full* white, **sharp flash burst** (~6 fast toggles), then restores.
+- **Locate (11)** — *full* white, **sharp flash burst** (~6 fast toggles), then restores.
 
 A steady dim glow, a slow swell, and a rapid strobe read as three different things at a
 glance. Idle stays the only static white, preserving the "never a false clear" rule.
@@ -101,7 +101,7 @@ So the operator's first read — amber vs blue — already routes them to the ri
 ## Decisions locked (June 2026)
 
 - **Unassigned = white, slow breathe (~10s).** Distinguished from idle (dim, steady) and
-  IDENTIFY (sharp flash) by brightness + motion, per above.
+  the locate strobe (sharp flash) by brightness + motion, per above.
 - **Amber = the WiFi family** (joining = pulse, lost-WiFi = fast blink); **blue = server-side**
   (lost server steady / fault flashing). First read amber-vs-blue routes the operator to the
   AP vs the PC.

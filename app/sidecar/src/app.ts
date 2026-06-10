@@ -34,7 +34,6 @@ export interface DeviceServerPort {
   start(): Promise<void>;
   stop(): Promise<void>;
   sendColor(mac: string, color: Color, brightness: number): boolean;
-  identify(mac: string): boolean;
   on(event: "deviceConnected", listener: (info: { mac: string; version: number }) => void): unknown;
   on(event: "deviceDisconnected", listener: (info: { mac: string }) => void): unknown;
   on(event: "deviceUnsupported", listener: (info: { mac: string; version: number }) => void): unknown;
@@ -125,6 +124,16 @@ const BREATHE_FLOOR = 0.1;
 /** The "off" phase of the fault flash — the LED dark between blue pulses. */
 const FLASH_OFF: Color = { r: 0, g: 0, b: 0 };
 /**
+ * The locate strobe — the server-driven replacement for the retired device IDENTIFY. When the
+ * operator asks to find a light we stream a bright white/off burst (overriding its normal frame)
+ * for {@link IDENTIFY_DURATION_MS}, toggling every {@link IDENTIFY_HALF_MS}, then let its real
+ * colour resume. Keeping this on the server is the whole point: the firmware stays dumb and only
+ * ever renders the colours it's sent.
+ */
+const IDENTIFY_COLOR: Color = { r: 255, g: 255, b: 255 };
+const IDENTIFY_HALF_MS = 150;
+const IDENTIFY_DURATION_MS = IDENTIFY_HALF_MS * 6; // three white/off cycles (~0.9 s)
+/**
  * How often to re-assert every connected device's current colour, regardless of change. Treats
  * SET_COLOR as periodic *state* rather than a one-shot *event*: a packet lost in flight self-heals
  * on the next tick. Reliable transports (TCP, USB-CDC) don't need it, but the cost is trivial
@@ -209,6 +218,8 @@ export class SidecarApp {
   readonly #online = new Map<string, number>();
   /** The last colour pushed to each device, to suppress redundant SET_COLORs. */
   readonly #lastColor = new Map<string, { color: Color; brightness: number }>();
+  /** Devices mid locate-strobe → elapsed ms into the burst; cleared when it ends (see {@link IDENTIFY_DURATION_MS}). */
+  readonly #identifying = new Map<string, number>();
   /** Latest USB STATUS per device — surfaced for the provisioning wizard (mode + join progress). */
   readonly #usbStatus = new Map<
     string,
@@ -325,9 +336,8 @@ export class SidecarApp {
         this.#sync();
         break;
       case "identifyDevice":
-        if (!this.#server.identify(command.mac)) {
-          this.#ipc.notice("info", `Tally ${macTail(command.mac, 2)} is offline — can't flash it.`);
-        }
+        if (this.#online.has(command.mac)) this.#startIdentify(command.mac);
+        else this.#ipc.notice("info", `Tally ${macTail(command.mac, 2)} is offline — can't flash it.`);
         break;
       case "setBrightness":
         await this.#store.setBrightness(command.mac, command.brightness);
@@ -432,8 +442,24 @@ export class SidecarApp {
    * steady rig quiet — only animated devices re-send.
    */
   #applyColors(colors: ReadonlyArray<DeviceColor>, force = false): void {
-    let anyAnimated = false;
+    // A locate strobe keeps the clock armed for its whole duration even when no engine
+    // animation is active, so the burst ticks to completion on a steady rig too.
+    let anyAnimated = this.#identifying.size > 0;
     for (const target of colors) {
+      // The locate strobe overrides the device's normal frame for its whole duration, so a
+      // live (streamed) tally colour can't drown out the flash — the server, not the device,
+      // decides every frame.
+      const idElapsed = this.#identifying.get(target.mac);
+      if (idElapsed !== undefined) {
+        const lit = Math.floor(idElapsed / IDENTIFY_HALF_MS) % 2 === 0;
+        this.#pushColor(
+          lit
+            ? { mac: target.mac, color: IDENTIFY_COLOR, brightness: DEFAULT_BRIGHTNESS }
+            : { mac: target.mac, color: FLASH_OFF, brightness: 0 },
+          force,
+        );
+        continue;
+      }
       switch (target.anim) {
         case "flash": {
           anyAnimated = true;
@@ -470,8 +496,31 @@ export class SidecarApp {
   /** Advance animation time and re-push colours — but emit no UI snapshot for a mere animation tick. */
   #tickAnim(): void {
     this.#animMs += this.#animTickMs;
+    // Advance each locate strobe; when one finishes, forget it and drop its last colour so the
+    // device's real frame is re-pushed (not suppressed by the diff) on the applyColors below.
+    for (const [mac, elapsed] of this.#identifying) {
+      const next = elapsed + this.#animTickMs;
+      if (next >= IDENTIFY_DURATION_MS) {
+        this.#identifying.delete(mac);
+        this.#lastColor.delete(mac);
+      } else {
+        this.#identifying.set(mac, next);
+      }
+    }
     const { colors } = computeEngine(this.#source, this.#gate, this.#deviceRecords());
     this.#applyColors(colors);
+  }
+
+  /**
+   * Begin the locate strobe for one device (the server-driven replacement for the retired
+   * device IDENTIFY). Streams a white/off SET_COLOR burst that overrides the device's normal
+   * frame; {@link #applyColors} arms the animation clock and {@link #tickAnim} runs it to
+   * completion, after which the real colour resumes.
+   */
+  #startIdentify(mac: string): void {
+    this.#identifying.set(mac, 0);
+    const { colors } = computeEngine(this.#source, this.#gate, this.#deviceRecords());
+    this.#applyColors(colors); // first lit frame now; #setAnimating arms the clock
   }
 
   /**

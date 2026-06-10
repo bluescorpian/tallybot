@@ -10,7 +10,6 @@ import {
   PROTOCOL_VERSION,
   SETUP_COLOR,
   decodeDeviceMessage,
-  encodeIdentify,
   encodeSetColor,
   formatMac,
 } from "../../app/sidecar/src/protocol.ts";
@@ -74,14 +73,10 @@ test("decodeServerMessage sees the default brightness when the sidecar omits it"
   assert.equal((msg as { brightness: number }).brightness, DEFAULT_BRIGHTNESS);
 });
 
-test("decodeServerMessage reads an IDENTIFY the sidecar encoded", () => {
-  assert.deepEqual(decodeServerMessage(unframe(encodeIdentify())), { kind: "identify" });
-});
-
 test("decodeServerMessage rejects malformed payloads", () => {
   assert.throws(() => decodeServerMessage(new Uint8Array(0)), RangeError); // no type byte
   assert.throws(() => decodeServerMessage(Uint8Array.of(0x01, 1, 2, 3)), RangeError); // short SET_COLOR
-  assert.throws(() => decodeServerMessage(Uint8Array.of(0x02, 0)), RangeError); // long IDENTIFY
+  assert.throws(() => decodeServerMessage(Uint8Array.of(0x02, 0)), RangeError); // retired/unknown type
   assert.throws(() => decodeServerMessage(Uint8Array.of(0x7f)), RangeError); // unknown type
 });
 

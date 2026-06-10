@@ -18,9 +18,6 @@ class FakeTransport extends EventEmitter implements DeviceServerPort {
     this.colors.push({ mac, color, brightness });
     return true;
   }
-  identify(): boolean {
-    return true;
-  }
   connect(mac: string, version = 2): void {
     this.emit("deviceConnected", { mac, version });
   }

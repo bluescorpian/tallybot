@@ -3,9 +3,9 @@
  * server-side `app/sidecar/src/protocol.ts`.
  *
  * `protocol.ts` is deliberately the *server* half: it encodes server→device
- * (SET_COLOR / IDENTIFY) and decodes device→server (HELLO / HEARTBEAT). A
- * simulated device needs the opposite — encode HELLO/HEARTBEAT, decode
- * SET_COLOR/IDENTIFY — so that half lives here. The two reference the **same**
+ * (SET_COLOR) and decodes device→server (HELLO / HEARTBEAT). A simulated device
+ * needs the opposite — encode HELLO/HEARTBEAT, decode SET_COLOR — so that half
+ * lives here. The two reference the **same**
  * constants, framing, and `FrameDecoder` from `protocol.ts`, so there is one
  * source of truth for the wire format; only the direction differs.
  *
@@ -87,12 +87,7 @@ export interface SetColorMessage {
   brightness: number;
 }
 
-/** IDENTIFY — flash so the operator can physically locate this device. */
-export interface IdentifyMessage {
-  kind: "identify";
-}
-
-export type ServerMessage = SetColorMessage | IdentifyMessage;
+export type ServerMessage = SetColorMessage;
 
 /**
  * Decode one unframed server→device payload (as produced by {@link FrameDecoder}).
@@ -115,13 +110,6 @@ export function decodeServerMessage(payload: Uint8Array): ServerMessage {
         color: { r: payload[1]!, g: payload[2]!, b: payload[3]! },
         brightness: payload[4]!,
       };
-    }
-    case ServerMessageType.IDENTIFY: {
-      // [type] — 1 payload byte
-      if (payload.length !== 1) {
-        throw new RangeError(`IDENTIFY payload must be 1 byte, got ${payload.length}`);
-      }
-      return { kind: "identify" };
     }
     default:
       throw new RangeError(`unknown server message type 0x${type.toString(16).padStart(2, "0")}`);

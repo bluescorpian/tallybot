@@ -73,7 +73,6 @@ class DeviceRunner {
     });
     this.client.on("connected", () => log(mac, `connected — sent HELLO v${options.version}`));
     this.client.on("setColor", (color, brightness) => log(mac, describeSetColor(color, brightness)));
-    this.client.on("identify", () => log(mac, "IDENTIFY — flashing to locate"));
     this.client.on("error", (err) => log(mac, `socket error: ${err.message}`));
   }
 

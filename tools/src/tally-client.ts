@@ -3,7 +3,7 @@
  *
  * It does what the firmware does on the wire (Phase 3): discover the server over
  * UDP, open a TCP connection, send HELLO then periodic HEARTBEATs, and act on the
- * SET_COLOR / IDENTIFY commands the server sends back. That lets the whole
+ * SET_COLOR commands the server sends back. That lets the whole
  * server-side path — discovery, the TCP server, the tally engine — be exercised
  * without an ESP32 on the bench.
  *
@@ -51,19 +51,17 @@ export interface TallyClient {
   on(event: "connected", listener: () => void): this;
   on(event: "disconnected", listener: (hadError: boolean) => void): this;
   on(event: "setColor", listener: (color: Color, brightness: number) => void): this;
-  on(event: "identify", listener: () => void): this;
   on(event: "error", listener: (err: Error) => void): this;
   emit(event: "connected"): boolean;
   emit(event: "disconnected", hadError: boolean): boolean;
   emit(event: "setColor", color: Color, brightness: number): boolean;
-  emit(event: "identify"): boolean;
   emit(event: "error", err: Error): boolean;
 }
 
 /**
  * One device's connection to the server. Open it with {@link connect}; it sends
- * HELLO, heartbeats on its interval, and emits `setColor` / `identify` for the
- * commands it receives. It does **not** reconnect on its own — that policy lives
+ * HELLO, heartbeats on its interval, and emits `setColor` for the commands it
+ * receives. It does **not** reconnect on its own — that policy lives
  * in the CLI — so the session stays simple and easy to test.
  */
 export class TallyClient extends EventEmitter {
@@ -132,8 +130,7 @@ export class TallyClient extends EventEmitter {
         this.emit("error", err as Error);
         continue;
       }
-      if (message.kind === "setColor") this.emit("setColor", message.color, message.brightness);
-      else this.emit("identify");
+      this.emit("setColor", message.color, message.brightness);
     }
   }
 

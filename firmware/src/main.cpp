@@ -2,8 +2,8 @@
 //
 // A TCP client (see ARCHITECTURE.md): it provisions WiFi via a captive portal, discovers the
 // sidecar over UDP, opens a TCP connection, sends HELLO then HEARTBEATs, and drives the onboard
-// WS2812 from the server's SET_COLOR / IDENTIFY. A USB-CDC control channel (v1.2) carries the
-// same payloads while cabled, plus provisioning (SET_WIFI / SET_TRANSPORT) and STATUS.
+// WS2812 from the server's SET_COLOR. A USB-CDC control channel (v1.2) carries the same payloads
+// while cabled, plus provisioning (SET_WIFI / SET_TRANSPORT) and STATUS.
 //
 // Board facts this firmware respects (CLAUDE.md): GPIO8 is an addressable WS2812 (FastLED only);
 // never sleep (the loop stays busy so a power bank's auto-off can't cut power); Serial reaches

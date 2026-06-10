@@ -66,7 +66,7 @@ and the UI should all use these same nouns.
 - **Device** — a physical tally light, **identified by MAC, with no user-given name**,
   assigned to one input. Several devices may share one input (e.g. front and back lights
   on one camera); they're told apart by a short **MAC tail** and by **flashing** them
-  (IDENTIFY).
+  (the locate strobe).
 
 - **Device states** — a device is *assigned* (shows its input's tally), *unassigned*
   (connected but not yet bound to an input), or *offline* (known but not currently
@@ -91,8 +91,8 @@ These are settled product decisions; they have wide impact on the schema and UX.
    the exception — it stays in the schema from v1, so adding OBS as an override is cheap;
    adding it as a source is the refactor.)*
 3. **Setup is flash-to-identify.** To locate the physical light behind an on-screen
-   device, the operator flashes it (IDENTIFY). With no device names, this is also the only
-   way to tell apart lights that share an input.
+   device, the operator flashes it (the sidecar streams a white/off burst). With no device
+   names, this is also the only way to tell apart lights that share an input.
 4. **Input names come from the source.** TallyBot mirrors the ATEM's own input labels
    rather than asking the user to name everything.
 5. **Unassigned devices get a distinct setup colour** (white, slow breathe — see

@@ -28,9 +28,9 @@ export const DISCOVERY_PORT = 7001;
 
 // ── Message types (the first payload byte) ──────────────────────────────────
 // Device→server and server→device type spaces are independent; both start at 0x01.
-// HELLO/HEARTBEAT/SET_COLOR/IDENTIFY travel over both transports; the rest are
-// USB-only provisioning/diagnostics frames (a USB device is by definition new
-// enough to speak them — see the versioning note below).
+// HELLO/HEARTBEAT/SET_COLOR travel over both transports; the rest are USB-only
+// provisioning/diagnostics frames (a USB device is by definition new enough to
+// speak them — see the versioning note below).
 
 /** Device → server (a.k.a. device → host) message types. */
 export const DeviceMessageType = {
@@ -47,7 +47,7 @@ export const DeviceMessageType = {
 /** Server → device (a.k.a. host → device) message types. */
 export const ServerMessageType = {
   SET_COLOR: 0x01,
-  IDENTIFY: 0x02,
+  // 0x02 retired (was IDENTIFY): flashing is now driven server-side over SET_COLOR.
   /** Persist WiFi creds + trigger a validating join attempt (USB). */
   SET_WIFI: 0x03,
   /** Persist the transport mode (No-TX / WiFi) (USB). */
@@ -132,7 +132,7 @@ export const COLORS = {
  * Colour shown on a connected-but-unassigned device so it's visibly alive and clearly
  * needs configuring (GOALS.md, decision 5). Full white: the firmware renders it as a slow
  * "breathe" locally (the wire SET_COLOR is static — see `docs/led.md` state 5), which keeps
- * it distinct from steady dim-white idle and the IDENTIFY flash burst.
+ * it distinct from steady dim-white idle and the white locate strobe (a server-streamed flash).
  *
  * NB: this is the *unassigned* colour. It is unrelated to the firmware's `COLOR_SETUP`
  * (magenta), which is the device-local *provisioning* hint — keeping the two apart is the
@@ -222,16 +222,6 @@ export function setColorPayload(color: Color, brightness: number = DEFAULT_BRIGH
  */
 export function encodeSetColor(color: Color, brightness: number = DEFAULT_BRIGHTNESS): Uint8Array {
   return frame(setColorPayload(color, brightness));
-}
-
-/** IDENTIFY payload: `[type]`. */
-export function identifyPayload(): Uint8Array {
-  return Uint8Array.of(ServerMessageType.IDENTIFY);
-}
-
-/** IDENTIFY (TCP frame) — flash the device briefly so the user can physically locate it. */
-export function encodeIdentify(): Uint8Array {
-  return frame(identifyPayload());
 }
 
 /**

@@ -30,10 +30,6 @@ void control::dispatch(const ServerMessage& msg) {
       led::setTally(msg.r, msg.g, msg.b, msg.brightness, led::STEADY);
       TLOG(LOG_LEVEL_INFO, "SET_COLOR rgb(%u,%u,%u) bri=%u\n", msg.r, msg.g, msg.b, msg.brightness);
       break;
-    case ServerMessage::IDENTIFY:
-      led::identify();
-      TLOG(LOG_LEVEL_INFO, "IDENTIFY\n");
-      break;
     case ServerMessage::SET_WIFI:
       wifi::provision(msg.ssid, msg.pass);
       settings::setTransportMode(TRANSPORT_WIFI);  // provisioning implies "use WiFi when unplugged"

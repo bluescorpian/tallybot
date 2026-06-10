@@ -14,7 +14,7 @@
  *     `deviceConnected` for the new owner (the device "reverts", e.g. USB unplugged → WiFi);
  *   • the last transport dropping ⇒ emit `deviceDisconnected`.
  *
- * Outgoing `sendColor`/`identify` route to the current owner. Provisioning + diagnostics
+ * Outgoing `sendColor` routes to the current owner. Provisioning + diagnostics
  * (USB-only) are delegated to the supplied `UsbTransport`.
  */
 
@@ -99,11 +99,6 @@ export class CompositeDeviceServer extends EventEmitter implements DeviceServerP
   sendColor(mac: string, color: Color, brightness: number): boolean {
     const owner = this.#ownerIndex(mac);
     return owner < 0 ? false : this.#members[owner]!.port.sendColor(mac, color, brightness);
-  }
-
-  identify(mac: string): boolean {
-    const owner = this.#ownerIndex(mac);
-    return owner < 0 ? false : this.#members[owner]!.port.identify(mac);
   }
 
   // ── Provisioning + diagnostics (USB-only) ───────────────────────────────────────

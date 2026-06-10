@@ -26,7 +26,7 @@ drift as the project grows.
   program/preview state into `SET_COLOR` commands.
 - **Svelte UI** talks to the sidecar over Tauri IPC (schema shape set in `docs/goals.md` / `docs/design.md`).
 - **Firmware** is a TCP *client*: it discovers the server, connects, sends `HELLO`
-  then `HEARTBEAT`s, and applies `SET_COLOR` / `IDENTIFY` commands to the LED.
+  then `HEARTBEAT`s, and renders the `SET_COLOR` commands the server streams.
 
 Data flow: `ATEM state change → sidecar → TCP → ESP32 → WS2812 LED`.
 
@@ -44,9 +44,9 @@ shell). Full tables in `docs/architecture.md`; USB details in `docs/spec/usb-ser
   USB also: `0x03` STATUS `[transport][wifiState][rssi][ssidLen][ssid…]`, `0x04` LOG
   `[level][utf8…]`. STATUS carries the device's NVS SSID (host adopts it as truth) and the
   full `wifiState` enum, and is pushed on change while cabled (not just on `GET_STATUS`).
-- **Server → device:** `0x01` SET_COLOR `[type][R][G][B][brightness]`, `0x02` IDENTIFY
-  `[type]`. USB also: `0x03` SET_WIFI, `0x04` SET_TRANSPORT, `0x05` GET_STATUS (`0x07` RELAY
-  reserved for v1.3).
+- **Server → device:** `0x01` SET_COLOR `[type][R][G][B][brightness]` (`0x02` retired — locate
+  flash is now a server-streamed SET_COLOR burst, not a device event). USB also: `0x03` SET_WIFI,
+  `0x04` SET_TRANSPORT, `0x05` GET_STATUS (`0x07` RELAY reserved for v1.3).
 - **Versioning:** HELLO carries the device's protocol version; the server keeps `CURRENT`
   (**2** — USB provisioning) + `MIN_SUPPORTED` (1) and adapts to older devices (warns
   below `MIN_SUPPORTED`). Protocol constants are mirrored in three places: `protocol.ts`
@@ -57,8 +57,8 @@ shell). Full tables in `docs/architecture.md`; USB details in `docs/spec/usb-ser
   steady blue) · Fault `0,0,255` flashing (server-driven, when the source can't be trusted —
   never idle). Default brightness `128`. Full palette in `docs/led.md`.
 - **Animation lives in the server.** Connected-state motion (the fault flash, the unassigned
-  breathe) is driven by the sidecar streaming frames; the firmware renders static `SET_COLOR`s
-  and only animates device-local bring-up states (no server connected yet).
+  breathe, the locate strobe) is driven by the sidecar streaming frames; the firmware renders
+  static `SET_COLOR`s and only animates device-local bring-up states (no server connected yet).
 - **Identity:** devices are keyed by MAC address.
 
 ## Dev environment (NixOS)

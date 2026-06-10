@@ -2,7 +2,7 @@
 
 #include <FastLED.h>
 
-#include "protocol.h"  // DEFAULT_BRIGHTNESS, LOCAL_BRIGHTNESS
+#include "protocol.h"  // LOCAL_BRIGHTNESS
 
 namespace {
 constexpr uint8_t kPin = 8;
@@ -12,8 +12,6 @@ constexpr unsigned long kPulsePeriodMs = 1500;
 constexpr unsigned long kBreathePeriodMs = 10000;
 constexpr unsigned long kFastBlinkMs = 200;
 constexpr unsigned long kBootStepMs = 250;
-constexpr unsigned long kIdentifyToggleMs = 150;
-constexpr unsigned long kIdentifyToggles = 6;
 constexpr float kGamma = 2.5f;
 
 CRGB g_leds[kCount];
@@ -23,13 +21,10 @@ CRGB g_leds[kCount];
 bool g_shownValid = false;
 uint8_t g_shownR, g_shownG, g_shownB, g_shownBri;
 
-// The resting colour + motion. IDENTIFY flashes over it, then restores it.
+// The resting colour + motion the loop re-renders each tick.
 uint8_t g_r = 0, g_g = 0, g_b = 0, g_bri = LOCAL_BRIGHTNESS;
 led::Motion g_motion = led::STEADY;
 bool g_suppressLocal = false;
-
-bool g_identify = false;
-unsigned long g_identifyStart = 0;
 
 void show(uint8_t r, uint8_t g, uint8_t b, uint8_t bri) {
   if (g_shownValid && r == g_shownR && g == g_shownG && b == g_shownB && bri == g_shownBri) return;
@@ -69,7 +64,7 @@ void setResting(uint8_t r, uint8_t g, uint8_t b, uint8_t bri, led::Motion m) {
   g_b = b;
   g_bri = bri;
   g_motion = m;
-  if (!g_identify) show(r, g, b, motionBrightness(m, bri, millis()));
+  show(r, g, b, motionBrightness(m, bri, millis()));
 }
 }  // namespace
 
@@ -96,24 +91,6 @@ void led::setLocal(uint8_t r, uint8_t g, uint8_t b, uint8_t bri, Motion m) {
 
 void led::suppressLocal(bool on) { g_suppressLocal = on; }
 
-void led::identify() {
-  g_identify = true;
-  g_identifyStart = millis();
-}
-
 void led::render(unsigned long now) {
-  if (g_identify) {
-    unsigned long phase = (now - g_identifyStart) / kIdentifyToggleMs;
-    if (phase < kIdentifyToggles) {
-      // Crisp white/off strobe that overrides the resting colour for its whole duration, so a
-      // live (streamed) tally colour can't drown out the locate flash.
-      if (phase % 2 == 0)
-        show(255, 255, 255, DEFAULT_BRIGHTNESS);
-      else
-        show(0, 0, 0, 0);
-      return;
-    }
-    g_identify = false;  // strobe done — resume the resting colour
-  }
   show(g_r, g_g, g_b, motionBrightness(g_motion, g_bri, now));
 }

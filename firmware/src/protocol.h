@@ -18,7 +18,6 @@
 //   HELLO      08 01 02 <mac0..mac5>      (device → server)   [version is now 2]
 //   HEARTBEAT  01 02                      (device → server)
 //   SET_COLOR  05 01 <R> <G> <B> <bri>    (server → device)
-//   IDENTIFY   01 02                      (server → device)
 //   STATUS/LOG and SET_WIFI/SET_TRANSPORT/GET_STATUS are USB-only — see below.
 
 #pragma once
@@ -42,8 +41,8 @@
 
 // ── Message types (the first payload byte) ───────────────────────────────────
 // Device→server and server→device type spaces are independent; both start at 0x01.
-// HELLO/HEARTBEAT/SET_COLOR/IDENTIFY travel over both transports; the rest are
-// USB-only provisioning/diagnostics frames.
+// HELLO/HEARTBEAT/SET_COLOR travel over both transports; the rest are USB-only
+// provisioning/diagnostics frames.
 #define MSG_HELLO 0x01      // device → server (both transports)
 #define MSG_HEARTBEAT 0x02  // device → server (TCP; unused over USB — port close is liveness)
 #define MSG_STATUS 0x03     // device → host  (USB): transport/WiFi status snapshot
@@ -51,7 +50,7 @@
 #define MSG_SCAN_RESULT 0x05  // device → host (USB): reserved, deferred post-v1.2
 
 #define MSG_SET_COLOR 0x01     // server → device (both transports)
-#define MSG_IDENTIFY 0x02      // server → device (both transports)
+// 0x02 retired (was IDENTIFY): flashing is now driven server-side over SET_COLOR.
 #define MSG_SET_WIFI 0x03      // host → device  (USB): persist creds + validating join
 #define MSG_SET_TRANSPORT 0x04  // host → device (USB): persist transport mode
 #define MSG_GET_STATUS 0x05    // host → device  (USB): request a STATUS frame
@@ -107,10 +106,10 @@
 // ── Framing ──────────────────────────────────────────────────────────────────
 #define MAX_PAYLOAD_BYTES 255  // largest payload a single length byte can frame
 
-// A decoded server → device message. SET_COLOR/IDENTIFY arrive over both transports;
+// A decoded server → device message. SET_COLOR arrives over both transports;
 // SET_WIFI/SET_TRANSPORT/GET_STATUS are USB-only provisioning frames.
 struct ServerMessage {
-  enum Kind { SET_COLOR, IDENTIFY, SET_WIFI, SET_TRANSPORT, GET_STATUS, UNKNOWN } kind;
+  enum Kind { SET_COLOR, SET_WIFI, SET_TRANSPORT, GET_STATUS, UNKNOWN } kind;
   uint8_t r, g, b, brightness;  // valid only when kind == SET_COLOR
   char ssid[33];                // valid only when kind == SET_WIFI (≤32 chars + NUL)
   char pass[64];                // valid only when kind == SET_WIFI (≤63 chars + NUL)
@@ -247,10 +246,6 @@ inline bool decodeServerMessage(const uint8_t* payload, size_t len, ServerMessag
       out->g = payload[2];
       out->b = payload[3];
       out->brightness = payload[4];
-      return true;
-    case MSG_IDENTIFY:  // [type] — 1 payload byte
-      if (len != 1) break;
-      out->kind = ServerMessage::IDENTIFY;
       return true;
     case MSG_SET_WIFI: {  // [type][ssidLen][ssid…][passLen][pass…] — USB only
       if (len < 3) break;  // need at least type + ssidLen + passLen

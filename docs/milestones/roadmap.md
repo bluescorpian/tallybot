@@ -25,7 +25,7 @@ makes no wireless attempt when unplugged — for permanent wired installations).
 
 The protocol is COBS-framed binary over USB-CDC, specified in
 [`docs/spec/usb-serial-protocol.md`](../spec/usb-serial-protocol.md). Key messages:
-`SET_WIFI`, `SET_TRANSPORT`, `GET_STATUS` / `STATUS`, `SET_COLOR` / `IDENTIFY` (byte-identical
+`SET_WIFI`, `SET_TRANSPORT`, `GET_STATUS` / `STATUS`, `SET_COLOR` (byte-identical
 to TCP). Logs become `LOG` frames; no raw text on the wire in release builds.
 
 The Rust shell owns the serial port (flash + detect + comms on a dedicated thread via

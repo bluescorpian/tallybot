@@ -207,7 +207,11 @@ export interface UnassignDeviceCommand {
   mac: string;
 }
 
-/** Flash a device so the operator can physically locate it (IDENTIFY). */
+/**
+ * Flash a device so the operator can physically locate it. The sidecar serves this by
+ * streaming a white/off SET_COLOR burst to the device (see app.ts) — there's no device-level
+ * IDENTIFY event; the firmware just renders the strobe like any other colour.
+ */
 export interface IdentifyDeviceCommand {
   type: "identifyDevice";
   mac: string;

@@ -139,10 +139,12 @@ socket is closed.
 | Message | Type | Payload (follows `len`) | On the wire |
 |---|---|---|---|
 | SET_COLOR | 0x01 | `[type][R][G][B][brightness]` | 6 bytes |
-| IDENTIFY | 0x02 | `[type]` | 2 bytes |
 
-SET_COLOR sets the WS2812 LED (R/G/B and brightness each 0-255). IDENTIFY causes the
-device to flash briefly so the user can physically locate it during setup.
+SET_COLOR sets the WS2812 LED (R/G/B and brightness each 0-255). Type `0x02` is retired:
+it was IDENTIFY, a one-shot "flash to locate" the device drew itself. Locating is now a
+server concern — to flash a device the sidecar streams a white/off SET_COLOR burst (see the
+locate strobe in `app.ts`), so the firmware stays dumb and only ever renders the colours it's
+sent.
 
 **SET_COLOR is idempotent state, not a one-shot event.** The sidecar re-asserts every
 connected device's current colour on a ~1 s keyframe tick (in addition to sending on change),
@@ -251,7 +253,7 @@ The MAC is included in every TCP message from the device. The server stores a ma
 the Node.js sidecar so assignments survive app restarts.
 
 Devices have **no user-given name**: a device is identified by its MAC (shown as a short
-tail in the UI) and located physically with IDENTIFY (a flash). Human-readable labels come
+tail in the UI) and located physically with a flash (the locate strobe). Human-readable labels come
 from the **input** — the ATEM's own input names — not from the device. See
 [`docs/goals.md`](goals.md) for the rationale.
 

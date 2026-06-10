@@ -10,7 +10,7 @@
  * quiet. Reconnects re-send HELLO; a fresh socket for a known MAC replaces the old.
  *
  * This module owns sockets and framing only — it knows nothing about tally or the
- * ATEM. It emits connection lifecycle events and exposes `sendColor` / `identify`
+ * ATEM. It emits connection lifecycle events and exposes `sendColor`
  * for the orchestrator (`src/app.ts`) to route outgoing commands by MAC.
  */
 
@@ -24,7 +24,6 @@ import {
   FrameDecoder,
   SERVER_PORT,
   encodeDiscoveryResponse,
-  encodeIdentify,
   encodeSetColor,
   isDiscoveryRequest,
   isSupportedVersion,
@@ -150,11 +149,6 @@ export class DeviceServer extends EventEmitter {
   /** Send SET_COLOR to one device. Returns false if it isn't connected. */
   sendColor(mac: string, color: Color, brightness: number): boolean {
     return this.#write(mac, encodeSetColor(color, brightness));
-  }
-
-  /** Send IDENTIFY (flash) to one device. Returns false if it isn't connected. */
-  identify(mac: string): boolean {
-    return this.#write(mac, encodeIdentify());
   }
 
   #write(mac: string, frame: Uint8Array): boolean {

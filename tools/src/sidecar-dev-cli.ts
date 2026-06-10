@@ -118,7 +118,7 @@ const USAGE = `commands:
   name <id> <text>   rename an input
   assign <mac> <n>   assign a device to input n     (mac = full or tail)
   unassign <mac>     return a device to the dock
-  flash <mac>        flash a device (IDENTIFY)
+  flash <mac>        flash a device to locate it
   bright <mac> <n>   set a device's brightness (0–255)
   ls                 reprint the board
   ?                  this help
