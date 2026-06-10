@@ -104,12 +104,16 @@ void led::identify() {
 void led::render(unsigned long now) {
   if (g_identify) {
     unsigned long phase = (now - g_identifyStart) / kIdentifyToggleMs;
-    if (phase >= kIdentifyToggles) {
-      g_identify = false;  // done — fall through to the resting colour
-    } else if (phase % 2 == 0) {
-      show(255, 255, 255, DEFAULT_BRIGHTNESS);  // bright white locate flash
+    if (phase < kIdentifyToggles) {
+      // Crisp white/off strobe that overrides the resting colour for its whole duration, so a
+      // live (streamed) tally colour can't drown out the locate flash.
+      if (phase % 2 == 0)
+        show(255, 255, 255, DEFAULT_BRIGHTNESS);
+      else
+        show(0, 0, 0, 0);
       return;
     }
+    g_identify = false;  // strobe done — resume the resting colour
   }
   show(g_r, g_g, g_b, motionBrightness(g_motion, g_bri, now));
 }
