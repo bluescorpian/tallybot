@@ -47,8 +47,8 @@ the network/binary protocol and the rationale.
 2. Never sleep. Deep or light sleep causes the power bank's auto-off to cut power
    (low-current detection). Keep the device in active WiFi mode (~80–130 mA average).
 
-3. WiFi TX power: start at full power; only retry at `WIFI_POWER_8_5dBm` after a failed
-   association attempt (older C3 boards with weak antenna). Never cap it unconditionally.
+3. WiFi TX power: run at full power (`WIFI_POWER_19_5dBm`) and never cap it. Capping slashes
+   uplink range on venue APs.
 
 ---
 

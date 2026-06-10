@@ -5,12 +5,14 @@ ESP32-C3 device firmware — the **tally light** end of TallyBot. On the wire it
 and applies `SET_COLOR` / `IDENTIFY` commands to the onboard LED. See
 [`docs/architecture.md`](../docs/architecture.md) for the protocol.
 
-> **Status — tally client (Phase 3).** [`src/main.cpp`](src/main.cpp) is the full
-> device: WiFi provisioning via a captive portal, UDP discovery, the TCP binary
-> protocol (`HELLO` / `HEARTBEAT` / `SET_COLOR` / `IDENTIFY`), and the LED state
-> machine. The wire format lives in [`src/protocol.h`](src/protocol.h), the C++
-> mirror of [`../app/sidecar/src/protocol.ts`](../app/sidecar/src/protocol.ts) — keep
-> the two in lockstep.
+> **Status — tally client.** The firmware is split into focused modules under `src/`:
+> `led` (rendering + state machine), `wifi` (connection, captive portal, diagnostics),
+> `usb` (USB-CDC COBS control channel), `tally` (UDP discovery + TCP client), `control`
+> (message dispatch + STATUS), and `settings` (NVS), wired by `main.cpp`. Together they
+> give WiFi provisioning via a captive portal, UDP discovery, the TCP binary protocol
+> (`HELLO` / `HEARTBEAT` / `SET_COLOR` / `IDENTIFY`), USB provisioning, and the LED state
+> machine. The wire format lives in [`src/protocol.h`](src/protocol.h), the C++ mirror of
+> [`../app/sidecar/src/protocol.ts`](../app/sidecar/src/protocol.ts) — keep the two in lockstep.
 
 ## Hardware
 
@@ -55,19 +57,17 @@ plain-text stream — so it's two modes, not one strictly-better build.
 Expected monitor output (first boot, before WiFi is provisioned):
 
 ```
-=== TallyBot tally light ===
-chip: ESP32-C3 rev 4
-MAC:  aa:bb:cc:dd:ee:ff   AP: TallyLight-DDEEFF
-Config portal up — join WiFi AP "TallyLight-DDEEFF", then open 192.168.4.1
+=== TallyBot === AP TallyLight-DDEEFF
+Config portal up - join "TallyLight-DDEEFF", then open 192.168.4.1
 ```
 
 Once provisioned and a server is found:
 
 ```
 WiFi connected, IP 192.168.1.42
-Found server at 192.168.1.10:7000
-Connected to 192.168.1.10:7000; HELLO sent
-SET_COLOR rgb(255,0,0) brightness=128
+Found server 192.168.1.10:7000
+Connected 192.168.1.10:7000; HELLO sent
+SET_COLOR rgb(255,0,0) bri=128
 ```
 
 ### Test it without hardware on the bench
@@ -103,8 +103,8 @@ changes the LED; triggering IDENTIFY flashes it; killing the runner turns it ste
    them and the board flashes fine but the monitor stays blank.
 3. **Never sleep.** Deep/light sleep lets a USB power bank's auto-off cut power
    (low-current detection). Keep busy; the hello-world `loop()` never sleeps.
-4. **WiFi TX-power fallback (Phase 3).** On older C3 boards, call
-   `WiFi.setTxPower(WIFI_POWER_8_5dBm)` before `WiFi.begin()` if WiFi won't connect.
+4. **WiFi runs at full TX power, never capped.** Capping (`WIFI_POWER_8_5dBm`) slashes
+   uplink range on venue APs. The firmware sets `WIFI_POWER_19_5dBm` and leaves it there.
 
 If `pio device monitor` can't find the port, list candidates with `pio device list`
 (typically `/dev/ttyACM0` for the native-USB C3).

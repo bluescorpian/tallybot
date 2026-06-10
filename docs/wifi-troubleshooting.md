@@ -7,8 +7,10 @@ transport. Pick up here when returning to it.
 
 - **Historical record** of the venue tests (full ranked-cause analysis): [`archive/field-test-venue-1.md`](archive/field-test-venue-1.md).
 - **Closed milestone** that shipped the firmware hardening: [`milestones/v1.1-production-hardening.md`](milestones/v1.1-production-hardening.md).
-- **Firmware** that produces the diagnostics: [`../firmware/src/main.cpp`](../firmware/src/main.cpp)
-  (`onWifiEvent`, `onWifiConnected`, `buildDiagHtml`, `diagVerdict`, `connectWithTxPolicy`).
+- **Firmware** that produces the diagnostics: [`../firmware/src/wifi.cpp`](../firmware/src/wifi.cpp)
+  (`onDisconnected`, `onConnected`, `buildDiagHtml`, `verdict`, `connectBlocking`). The panel is now
+  **live-only** — the last-failure verdict is captured in RAM and shown on the portal, but no longer
+  persisted across the reboot that raises the portal.
 
 ---
 
@@ -42,9 +44,6 @@ teardown disconnect was suppressed in favour of the real failure (see [Gotcha: r
 
 - **Password special-char truncation (the `#` theory)** — *ruled out at venue 2.* The panel
   showed a stored-password length of 12 (full length); a truncated `#` would read short.
-- **Unconditional low TX power** — *fixed.* The radio now starts at full power and only drops to
-  8.5 dBm as a conditional retry (and never on a deauth/leave, where low power makes a min-RSSI
-  kick worse). This was the likely venue-1 cause.
 - **Channels 12/13 unreachable** — *addressed.* `esp_wifi_set_country()` sets a manual 1–13 range
   (the validated `esp_wifi_set_country_code("ZA")` path rejects "ZA").
 

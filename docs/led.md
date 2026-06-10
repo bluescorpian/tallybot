@@ -4,8 +4,8 @@
 > palette, from the field test (see
 > [`docs/archive/field-test-venue-1.md`](archive/field-test-venue-1.md), Issue 3). The
 > **device-local** states (boot self-test, provisioning, joining/lost-WiFi, searching,
-> lost-server, the 10% local brightness, the connect-gap breathe) are live in
-> [`firmware/src/main.cpp`](../firmware/src/main.cpp); the **server-driven** states
+> lost-server, the 10% local brightness, the connect-gap breathe) are live in the firmware's
+> [`led.cpp`](../firmware/src/led.cpp) + [`indicators.h`](../firmware/src/indicators.h); the **server-driven** states
 > (live/preview/idle steady, the fault flash, and the unassigned white breathe) are live in the
 > sidecar ([`app/sidecar/src/app.ts`](../app/sidecar/src/app.ts),
 > [`engine.ts`](../app/sidecar/src/engine.ts)), with `SETUP_COLOR` now white in

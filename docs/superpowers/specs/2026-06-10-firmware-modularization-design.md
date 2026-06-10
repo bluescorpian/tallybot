@@ -1,7 +1,7 @@
 # Firmware modularization — design
 
 **Date:** 2026-06-10
-**Status:** approved-in-substance, pending spec review
+**Status:** implemented — both PlatformIO envs compile clean; pending on-hardware re-verification
 
 ## Problem
 
@@ -29,8 +29,6 @@ hardware workarounds that don't apply to this board.
 
 ## Constraints (do not regress these)
 
-- **GPIO8 is addressable** — LED driven via FastLED only.
-- **Never sleep** — the loop stays busy so a power bank's auto-off can't cut power.
 - **Full TX power, never capped** — start and stay at `WIFI_POWER_19_5dBm`.
 - **`Serial.setTxTimeoutMs(0)`** — mandatory, or CDC TX stalls the render loop (arduino-esp32 #7779).
 - Two PlatformIO envs stay valid: dev (`TALLYBOT_USB_TEXT_LOG`, plain Serial) and release (COBS-framed logs).

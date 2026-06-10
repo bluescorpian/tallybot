@@ -65,9 +65,8 @@ navigate to `192.168.4.1` to enter your network credentials.
    drive the LED via FastLED.
 2. **Never sleep** — deep/light sleep lets the power bank's auto-off cut power (low-current
    detection). Keep WiFi active.
-3. **WiFi TX power** — start at full power; only fall back to `WIFI_POWER_8_5dBm` after
-   a failed association attempt (a workaround for older C3 board variants). Never cap it
-   unconditionally.
+3. **WiFi TX power** — run at full power (`WIFI_POWER_19_5dBm`) and never cap it. Capping
+   slashes uplink range on venue APs.
 
 ## Docs
 
