@@ -284,6 +284,8 @@
 		flashingMac === l.mac && !flashOn ? "idle" : l.state;
 
 	function flash(mac: string) {
+		// Guard against spamming: ignore while a flash is already in flight.
+		if (flashingMac !== null) return;
 		onflash?.(mac);
 		flashingMac = mac;
 		flashOn = true;
