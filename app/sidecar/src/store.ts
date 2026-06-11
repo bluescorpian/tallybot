@@ -41,6 +41,12 @@ const SCHEMA_VERSION = 1;
 interface PersistedShape {
   version: number;
   sourceIp: string | null;
+  /**
+   * MAC of the device designated as *the* ESP-NOW bridge, or null. Session-level (like
+   * `sourceIp`), not per-device — there is one bridge at a time, and the designation must
+   * survive restarts so a replugged bridge re-asserts automatically (v1.3 spec).
+   */
+  bridgeMac: string | null;
   devices: Record<string, DeviceConfig>;
 }
 
@@ -67,11 +73,18 @@ function isFullMac(mac: string): boolean {
 }
 
 /** Salvage whatever is recognisable from a parsed file; unknown shapes → defaults. */
-function coerceShape(value: unknown): { sourceIp: string | null; devices: Map<string, DeviceConfig> } {
+function coerceShape(value: unknown): {
+  sourceIp: string | null;
+  bridgeMac: string | null;
+  devices: Map<string, DeviceConfig>;
+} {
   const devices = new Map<string, DeviceConfig>();
-  if (typeof value !== "object" || value === null) return { sourceIp: null, devices };
-  const raw = value as { sourceIp?: unknown; devices?: unknown };
+  if (typeof value !== "object" || value === null) return { sourceIp: null, bridgeMac: null, devices };
+  const raw = value as { sourceIp?: unknown; bridgeMac?: unknown; devices?: unknown };
   const sourceIp = typeof raw.sourceIp === "string" ? raw.sourceIp : null;
+  // A stored bridge MAC must be a full MAC to be trusted (anything else is garbage from a hand-
+  // edited or corrupt file); fall back to "no bridge" rather than re-asserting onto a bogus MAC.
+  const bridgeMac = typeof raw.bridgeMac === "string" && isFullMac(raw.bridgeMac) ? raw.bridgeMac : null;
   if (typeof raw.devices === "object" && raw.devices !== null) {
     for (const [mac, entry] of Object.entries(raw.devices)) {
       // Drop keys that aren't a full MAC. Devices are keyed by their 6-octet MAC;
@@ -82,19 +95,26 @@ function coerceShape(value: unknown): { sourceIp: string | null; devices: Map<st
       if (device) devices.set(mac, device);
     }
   }
-  return { sourceIp, devices };
+  return { sourceIp, bridgeMac, devices };
 }
 
 export class ConfigStore {
   readonly #filePath: string;
   #sourceIp: string | null;
+  #bridgeMac: string | null;
   readonly #devices: Map<string, DeviceConfig>;
   /** Serialises writes so two saves can't interleave on the temp file. */
   #writeChain: Promise<void> = Promise.resolve();
 
-  private constructor(filePath: string, sourceIp: string | null, devices: Map<string, DeviceConfig>) {
+  private constructor(
+    filePath: string,
+    sourceIp: string | null,
+    bridgeMac: string | null,
+    devices: Map<string, DeviceConfig>,
+  ) {
     this.#filePath = filePath;
     this.#sourceIp = sourceIp;
+    this.#bridgeMac = bridgeMac;
     this.#devices = devices;
   }
 
@@ -108,7 +128,7 @@ export class ConfigStore {
       text = await readFile(filePath, "utf8");
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        return new ConfigStore(filePath, null, new Map());
+        return new ConfigStore(filePath, null, null, new Map());
       }
       throw err;
     }
@@ -118,14 +138,19 @@ export class ConfigStore {
     } catch {
       parsed = null; // corrupt JSON → start from defaults rather than refuse to launch
     }
-    const { sourceIp, devices } = coerceShape(parsed);
-    return new ConfigStore(filePath, sourceIp, devices);
+    const { sourceIp, bridgeMac, devices } = coerceShape(parsed);
+    return new ConfigStore(filePath, sourceIp, bridgeMac, devices);
   }
 
   // ── Reads ──────────────────────────────────────────────────────────────────
 
   get sourceIp(): string | null {
     return this.#sourceIp;
+  }
+
+  /** MAC of the designated ESP-NOW bridge, or null when none is designated. */
+  get bridgeMac(): string | null {
+    return this.#bridgeMac;
   }
 
   /** The persisted config for one device, if any. */
@@ -142,6 +167,12 @@ export class ConfigStore {
 
   setSourceIp(ip: string | null): Promise<void> {
     this.#sourceIp = ip;
+    return this.#persist();
+  }
+
+  /** Designate (or clear, with null) the ESP-NOW bridge — one per session, survives restarts. */
+  setBridgeMac(mac: string | null): Promise<void> {
+    this.#bridgeMac = mac;
     return this.#persist();
   }
 
@@ -198,7 +229,12 @@ export class ConfigStore {
       if (config.ssid != null) entry.ssid = config.ssid; // omit when unset (keeps the file minimal)
       devices[mac] = entry;
     }
-    const payload: PersistedShape = { version: SCHEMA_VERSION, sourceIp: this.#sourceIp, devices };
+    const payload: PersistedShape = {
+      version: SCHEMA_VERSION,
+      sourceIp: this.#sourceIp,
+      bridgeMac: this.#bridgeMac,
+      devices,
+    };
     const json = `${JSON.stringify(payload, null, 2)}\n`;
     this.#writeChain = this.#writeChain.then(() => this.#writeAtomically(json));
     return this.#writeChain;

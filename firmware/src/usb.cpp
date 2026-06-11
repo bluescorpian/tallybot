@@ -11,6 +11,7 @@
 namespace {
 constexpr unsigned long kHelloIntervalMs = 1000;  // re-announce HELLO until the host replies
 constexpr unsigned long kTallyIdleMs = 5000;       // USB silence after which we release tally
+constexpr unsigned long kSessionIdleMs = 5000;     // any-frame silence after which the host is gone
 
 PacketSerial g_packet;
 usb::MessageHandler g_handler = nullptr;
@@ -19,12 +20,14 @@ uint8_t g_mac[6];
 bool g_hostSeen = false;
 bool g_tallyActive = false;
 unsigned long g_lastTally = 0;
+unsigned long g_lastFrame = 0;  // any host frame — drives the session-lost edge (bridge teardown)
 unsigned long g_lastHello = 0;
 
 void onPacket(const uint8_t* payload, size_t len) {
   ServerMessage msg;
   if (!decodeServerMessage(payload, len, &msg)) return;
   g_hostSeen = true;  // any host frame stops the HELLO re-announce
+  g_lastFrame = millis();
   if (msg.kind == ServerMessage::SET_COLOR) {
     g_tallyActive = true;  // the app drives tally now; local indicators step aside
     g_lastTally = millis();
@@ -64,6 +67,14 @@ bool usb::loop(unsigned long now) {
 
 bool usb::hostPresent() { return g_hostSeen; }
 bool usb::tallyActive() { return g_tallyActive; }
+
+// Bridge teardown cue: the host has been silent past the session timeout. Unlike the tally-idle
+// edge above (SET_COLOR only), this watches *any* host frame, so a bridge that only relays (no
+// direct tally) still detects the host vanishing. Caller resets the session, which clears
+// g_hostSeen so this can't re-fire until a new host appears.
+bool usb::sessionLost(unsigned long now) {
+  return g_hostSeen && now - g_lastFrame >= kSessionIdleMs;
+}
 
 void usb::resetSession() {
   g_hostSeen = false;

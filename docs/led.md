@@ -47,13 +47,13 @@ must be related (the two blues; the amber WiFi family).
 | 1 | **Provisioning** | Magenta `255,0,255` | Steady | device | No saved WiFi. SoftAP `TallyLight-XXXXXX` is up — join it and enter WiFi creds at `192.168.4.1`. |
 | 2 | **Joining WiFi** | Amber `255,120,0` | Slow pulse | device | Has creds, associating with the saved AP. |
 | 3 | **Lost WiFi** | Amber `255,120,0` | Fast blink | device | Had WiFi, the AP/range dropped. **Network problem** — check the access point. Auto-reconnects; after a sustained outage falls back to Provisioning (1). |
-| 4 | **Searching for server** | Cyan `0,255,255` | Smooth pulse | device | WiFi is up; broadcasting discovery + opening TCP to the sidecar. Never reached the server *yet*. Smooth (not blinking) to stay low-distraction in a live venue. |
+| 4 | **Searching for server** | Cyan `0,255,255` | Smooth pulse | device | WiFi is up; broadcasting discovery + opening TCP to the sidecar. Never reached the server *yet*. Smooth (not blinking) to stay low-distraction in a live venue. (An ESP-NOW light hunting for its bridge shows this same state — the bridge *is* its path to the server.) |
 | 5 | **Connected, unassigned** | White `255,255,255` | Slow breathe, ~10s | server* | Online and talking to TallyBot, but not assigned to an ATEM input. Assign it in the app. |
 | 6 | **Live** | Red `255,0,0` | Steady | server | Assigned input is on Program. |
 | 7 | **Preview** | Green `0,255,0` | Steady | server | Assigned input is on Preview. |
 | 8 | **Idle** | Dim white `30,30,30` | Steady | server | Assigned, not selected, **source trusted** ("you're clear"). |
 | 9 | **Fault** | Blue `0,0,255` | Flashing | server | Assigned, but the **source can't be trusted** (ATEM down/unknown). Don't trust this light. |
-| 10 | **Lost the server** | Blue `0,0,255` | Steady | device | WiFi is fine but the TallyBot server went away (app closed / PC asleep / sidecar crashed). **PC/app problem** — check the computer. Auto-rediscovers. |
+| 10 | **Lost the server** | Blue `0,0,255` | Steady | device | WiFi is fine but the TallyBot server went away (app closed / PC asleep / sidecar crashed). **PC/app problem** — check the computer. Auto-rediscovers. (An ESP-NOW light that loses its bridge link shows this same state: its upstream is the bridge at the PC, so the operator's "check the computer" read stays correct. The amber states never apply to ESP-NOW lights — they have no AP.) |
 | 11 | **Locate** | White `255,255,255` | ~6 flashes | server | Find this physical device. The server streams a white/off burst over the current colour, then resumes it. |
 
 \* **State 5** is **server-driven**: the sidecar holds the white setup colour and streams the

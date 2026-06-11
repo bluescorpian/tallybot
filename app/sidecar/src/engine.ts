@@ -75,6 +75,12 @@ export interface DeviceRecord {
   provisionedMode?: "wifi" | "notx" | "espnow" | null;
   /** SSID the device is provisioned to join when unplugged, or null. Optional (see above). */
   ssid?: string | null;
+  /**
+   * True while this device is the designated ESP-NOW bridge *and* has confirmed bridge mode via
+   * its STATUS `bridging` byte. Designation lives in the store; this is the device-confirmed state the
+   * UI shows. Optional so pure-engine record literals need no change.
+   */
+  bridge?: boolean;
 }
 
 /**
@@ -188,6 +194,7 @@ export function computeEngine(
       rssi: device.rssi,
       provisionedMode: device.provisionedMode ?? null,
       ssid: device.ssid ?? null,
+      bridge: device.bridge ?? false,
     });
     if (device.online) {
       const { color, anim } = colorFor(device, source, gate);

@@ -47,4 +47,12 @@ export interface BoardLight {
 	wifiState: DeviceWifiState | null;
 	/** Last reported RSSI (dBm) while provisioning over USB, or null. */
 	rssi: number | null;
+	/**
+	 * Protocol version from the device's HELLO, or null if it has never connected.
+	 * Gates the v1.3 affordances (the ESP-NOW transport row + bridge designation only
+	 * appear for firmware reporting ≥ 3).
+	 */
+	protocolVersion: number | null;
+	/** True while this device is the designated, device-confirmed ESP-NOW bridge. */
+	bridge: boolean;
 }

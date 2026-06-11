@@ -12,6 +12,11 @@ void begin(const char* apSsid);  // configure WiFiManager + disconnect events; b
 void enableRadio();              // STA mode + channel widening + cache the stored SSID (a WiFi device)
 void disableRadio();             // radio off (a No-TX device)
 
+// ESP-NOW radio helpers (v1.3). ESP-NOW runs on the STA interface (peer == HELLO MAC), so the
+// espnow module borrows these to bring the radio up the same way the WiFi path does.
+void espnowRadioUp(uint8_t channel);  // STA + country + full TX power, then pin the given ESP-NOW channel, no association
+void dropAssociation();  // disconnect STA (a warm association would drag the radio off the pinned channel)
+
 bool connected();
 void connectBlocking();  // full-power autoConnect → captive-portal fallback (blocks)
 void openPortal();       // force the captive portal now, restoring the saved network if cancelled (blocks)

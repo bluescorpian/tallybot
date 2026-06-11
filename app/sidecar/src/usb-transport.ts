@@ -19,10 +19,12 @@ import { EventEmitter } from "node:events";
 import type { DeviceWifiState } from "./ipc.ts";
 import {
   type Color,
+  ESPNOW_CHANNEL,
   Transport,
   WifiState,
   getStatusPayload,
   isSupportedVersion,
+  setBridgePayload,
   setColorPayload,
   setTransportPayload,
   setWifiPayload,
@@ -50,6 +52,13 @@ export interface UsbStatus {
   rssi: number | null;
   /** The device's stored SSID read from its NVS (`""` when no creds) — device-truth, persisted host-side. */
   ssid: string;
+  /** The device's stored ESP-NOW channel, or null when the device reports none (pre-v3 firmware). */
+  channel: number | null;
+  /**
+   * True while the device confirms it is in bridge mode (STATUS `[bridging]` byte). The host
+   * uses it to confirm `SET_BRIDGE 1` took effect; absent on older firmware → false.
+   */
+  bridge: boolean;
 }
 
 const WIFI_STATE_NAME: Record<number, DeviceWifiState> = {
@@ -69,6 +78,12 @@ export interface UsbTransport {
   on(event: "status", listener: (status: UsbStatus) => void): this;
   on(event: "log", listener: (entry: { mac: string; level: "info" | "warn" | "error"; text: string }) => void): this;
   on(event: "unflashed", listener: (info: { port: string }) => void): this;
+  /**
+   * An ESP-NOW frame a bridge received and forwarded up (RELAY envelope). `bridgeMac` is the
+   * USB device the frame arrived on; `inner` is an unframed device→server payload the
+   * {@link EspNowTransport} runs back through `decodeDeviceMessage`.
+   */
+  on(event: "relayed", listener: (info: { bridgeMac: string; srcMac: string; inner: Uint8Array }) => void): this;
   on(event: "error", listener: (err: Error) => void): this;
 }
 
@@ -107,14 +122,36 @@ export class UsbTransport extends EventEmitter {
     return this.#send(mac, setWifiPayload(ssid, password));
   }
 
-  /** Set the device's unplugged transport mode (a {@link Transport} value). */
+  /**
+   * Set the device's unplugged transport mode (a {@link Transport} value). ESP-NOW also carries
+   * the channel byte ({@link ESPNOW_CHANNEL}); No-TX/WiFi send the bare `[type][mode]`.
+   */
   setTransport(mac: string, mode: number): boolean {
-    return this.#send(mac, setTransportPayload(mode));
+    const channel = mode === Transport.ESPNOW ? ESPNOW_CHANNEL : undefined;
+    return this.#send(mac, setTransportPayload(mode, channel));
+  }
+
+  /**
+   * Enter (or leave) ESP-NOW bridge mode. Runtime-only on the device — the sidecar persists the
+   * designation and re-asserts it on every USB (re)connect (see {@link SidecarApp}). Sent only to
+   * version ≥ 3 devices by the caller; the device confirms via the STATUS `bridging` byte.
+   */
+  setBridge(mac: string, enabled: boolean): boolean {
+    return this.#send(mac, setBridgePayload(enabled, ESPNOW_CHANNEL));
   }
 
   /** Ask the device for a fresh STATUS frame. */
   requestStatus(mac: string): boolean {
     return this.#send(mac, getStatusPayload());
+  }
+
+  /**
+   * Send a pre-built RELAY payload (`relayPayload(targetMac, inner)`) to a connected bridge over
+   * USB. The {@link EspNowTransport} builds the envelope; this is just the online-guarded write to
+   * the bridge's cable. Returns false when the bridge isn't on USB.
+   */
+  sendBridgeRelay(bridgeMac: string, relayFramePayload: Uint8Array): boolean {
+    return this.#send(bridgeMac, relayFramePayload);
   }
 
   #send(mac: string, payload: Uint8Array): boolean {
@@ -166,17 +203,31 @@ export class UsbTransport extends EventEmitter {
         wifiState: WIFI_STATE_NAME[decoded.wifiState] ?? "idle",
         rssi: decoded.rssi === 0 ? null : decoded.rssi,
         ssid: decoded.ssid,
+        channel: decoded.channel,
+        bridge: decoded.bridge,
       });
     } else if (decoded.kind === "log") {
       this.emit("log", { mac: frame.mac, level: LOG_LEVEL_NAME[decoded.level] ?? "info", text: decoded.text });
+    } else if (decoded.kind === "relayed") {
+      // A bridge unwrapped a peer's ESP-NOW frame and forwarded it up. The bridge MAC is the USB
+      // device the frame arrived on; the EspNowTransport decodes `inner` itself (the envelope is
+      // the only layer the bridge adds), so we just re-emit rather than dispatch here.
+      this.emit("relayed", { bridgeMac: frame.mac, srcMac: decoded.srcMac, inner: decoded.inner });
     }
     // HELLO/HEARTBEAT over USB need no handling here (the shell turns HELLO into usbDeviceConnected).
   }
 }
 
 /** Map a UI transport-mode string to its wire {@link Transport} value. */
-export function transportModeValue(mode: "notx" | "wifi"): number {
-  return mode === "notx" ? Transport.NOTX : Transport.WIFI;
+export function transportModeValue(mode: "notx" | "wifi" | "espnow"): number {
+  switch (mode) {
+    case "notx":
+      return Transport.NOTX;
+    case "wifi":
+      return Transport.WIFI;
+    case "espnow":
+      return Transport.ESPNOW;
+  }
 }
 
 /**
@@ -184,6 +235,12 @@ export function transportModeValue(mode: "notx" | "wifi"): number {
  * device does when unplugged. `null` for any value we don't recognise (e.g. a future mode an
  * older sidecar doesn't model), so the wizard shows "unprovisioned" rather than a wrong mode.
  */
-export function provisionedModeName(mode: number): "wifi" | "notx" | null {
-  return mode === Transport.WIFI ? "wifi" : mode === Transport.NOTX ? "notx" : null;
+export function provisionedModeName(mode: number): "wifi" | "notx" | "espnow" | null {
+  return mode === Transport.WIFI
+    ? "wifi"
+    : mode === Transport.NOTX
+      ? "notx"
+      : mode === Transport.ESPNOW
+        ? "espnow"
+        : null;
 }

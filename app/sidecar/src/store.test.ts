@@ -146,6 +146,42 @@ test("a partially-valid file salvages its good entries", async () => {
   });
 });
 
+// ── v1.3 ESP-NOW bridge designation ───────────────────────────────────────────
+
+test("the designated bridge MAC round-trips across a reload", async () => {
+  await withTempFile(async (path) => {
+    const store = await ConfigStore.load(path);
+    assert.equal(store.bridgeMac, null); // none by default
+    await store.setBridgeMac("aa:bb:cc:dd:ee:ff");
+
+    const reloaded = await ConfigStore.load(path);
+    assert.equal(reloaded.bridgeMac, "aa:bb:cc:dd:ee:ff");
+  });
+});
+
+test("clearing the bridge designation persists as null", async () => {
+  await withTempFile(async (path) => {
+    const store = await ConfigStore.load(path);
+    await store.setBridgeMac("aa:bb:cc:dd:ee:ff");
+    await store.setBridgeMac(null);
+
+    const reloaded = await ConfigStore.load(path);
+    assert.equal(reloaded.bridgeMac, null);
+  });
+});
+
+test("a non-MAC bridgeMac in the file is coerced away (don't re-assert onto junk)", async () => {
+  await withTempFile(async (path) => {
+    await writeFile(
+      path,
+      JSON.stringify({ version: 1, sourceIp: null, bridgeMac: "not-a-mac", devices: {} }),
+      "utf8",
+    );
+    const store = await ConfigStore.load(path);
+    assert.equal(store.bridgeMac, null);
+  });
+});
+
 test("an atomic write leaves no stray temp file behind", async () => {
   await withTempFile(async (path) => {
     const store = await ConfigStore.load(path);

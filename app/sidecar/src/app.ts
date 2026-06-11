@@ -52,14 +52,37 @@ export interface ProvisioningPort {
   provisionWifi(mac: string, ssid: string, password: string): boolean;
   /** Set the device's unplugged transport mode (a wire {@link Transport} value). */
   setTransport(mac: string, mode: number): boolean;
+  /**
+   * Enter/leave ESP-NOW bridge mode on a USB device (runtime-only on the device — re-asserted by
+   * the host). Sent only to version ≥ 3 devices by the caller. Returns false when the MAC isn't on USB.
+   */
+  setBridge(mac: string, enabled: boolean): boolean;
   /** Pull a fresh STATUS from a USB device (e.g. right after it connects). */
   requestStatus(mac: string): boolean;
   on(
     event: "status",
-    listener: (status: { mac: string; mode: number; wifiState: DeviceWifiState; rssi: number | null; ssid: string }) => void,
+    listener: (status: {
+      mac: string;
+      mode: number;
+      wifiState: DeviceWifiState;
+      rssi: number | null;
+      ssid: string;
+      channel: number | null;
+      bridge: boolean;
+    }) => void,
   ): unknown;
   on(event: "log", listener: (entry: { mac: string; level: "info" | "warn" | "error"; text: string }) => void): unknown;
   on(event: "unflashed", listener: (info: { port: string }) => void): unknown;
+}
+
+/**
+ * The seam the orchestrator uses to tell the ESP-NOW transport which bridge MAC to route relayed
+ * colours through. Kept narrow + optional so tests that don't exercise ESP-NOW omit it; the
+ * production {@link EspNowTransport} satisfies it.
+ */
+export interface EspNowBridgePort {
+  /** Point outbound RELAY frames at this bridge MAC (null = no bridge designated). */
+  setBridgeMac(mac: string | null): void;
 }
 
 export interface AtemSourcePort {
@@ -72,9 +95,13 @@ export interface AtemSourcePort {
 
 export interface StorePort {
   readonly sourceIp: string | null;
+  /** MAC of the designated ESP-NOW bridge, or null when none. Persisted (survives restarts). */
+  readonly bridgeMac: string | null;
   device(mac: string): DeviceConfig | undefined;
   devices(): Array<[string, DeviceConfig]>;
   setSourceIp(ip: string | null): Promise<void>;
+  /** Designate (or clear, with null) the ESP-NOW bridge. */
+  setBridgeMac(mac: string | null): Promise<void>;
   assign(mac: string, inputId: number): Promise<void>;
   unassign(mac: string): Promise<void>;
   setBrightness(mac: string, brightness: number): Promise<void>;
@@ -162,6 +189,11 @@ export interface SidecarAppDeps {
   deviceServer: DeviceServerPort;
   /** USB provisioning + diagnostics (optional; the composite server supplies it in production). */
   provisioning?: ProvisioningPort;
+  /**
+   * The ESP-NOW transport's bridge-designation seam (optional; production supplies the
+   * {@link EspNowTransport}). Told which bridge MAC to route relayed colours through.
+   */
+  espnow?: EspNowBridgePort;
   store: StorePort;
   ipc: IpcPort;
   /** Where to log diagnostics (defaults to stderr; stdout is protocol-only). */
@@ -201,6 +233,7 @@ export class SidecarApp {
   readonly #atem: AtemSourcePort;
   readonly #server: DeviceServerPort;
   readonly #provisioning: ProvisioningPort | null;
+  readonly #espnow: EspNowBridgePort | null;
   readonly #store: StorePort;
   readonly #ipc: IpcPort;
   readonly #log: (message: string) => void;
@@ -225,6 +258,11 @@ export class SidecarApp {
     string,
     { mode: number; wifiState: DeviceWifiState; rssi: number | null }
   >();
+  /**
+   * MACs whose latest STATUS confirmed bridge mode (its trailing `bridging` byte). The store holds the *designation*;
+   * this is the device-confirmed flag the UI surfaces as `Device.bridge`. Cleared on disconnect.
+   */
+  readonly #bridgeConfirmed = new Set<string>();
 
   /** Stops the animation clock, or null when nothing is currently animated. */
   #stopAnim: (() => void) | null = null;
@@ -241,6 +279,7 @@ export class SidecarApp {
     this.#atem = deps.atem;
     this.#server = deps.deviceServer;
     this.#provisioning = deps.provisioning ?? null;
+    this.#espnow = deps.espnow ?? null;
     this.#store = deps.store;
     this.#ipc = deps.ipc;
     this.#log = deps.log ?? ((message) => process.stderr.write(`${message}\n`));
@@ -260,6 +299,9 @@ export class SidecarApp {
       // Pull a fresh STATUS so an already-provisioned device reports its mode/ssid-state at once,
       // rather than waiting for a spontaneous frame (no-op for non-USB devices).
       this.#provisioning?.requestStatus(mac);
+      // SET_BRIDGE is runtime-only on the device, so the host re-asserts it on every (re)connect of
+      // the designated bridge — a replug or reboot re-enters bridge mode without operator action.
+      this.#assertBridgeIfDesignated(mac, version);
       this.#log(`device connected: ${mac} (protocol v${version})`);
       this.#sync();
     });
@@ -267,6 +309,7 @@ export class SidecarApp {
       this.#online.delete(mac);
       this.#lastColor.delete(mac); // forget it, so a reconnect is sent its colour afresh
       this.#usbStatus.delete(mac); // stale once it's gone
+      this.#bridgeConfirmed.delete(mac); // device-confirmed bridge flag is stale once it's gone
       this.#log(`device disconnected: ${mac}`);
       this.#sync();
     });
@@ -277,8 +320,12 @@ export class SidecarApp {
 
     // USB provisioning + diagnostics (present only when a USB-capable server is wired in).
     if (this.#provisioning) {
-      this.#provisioning.on("status", ({ mac, mode, wifiState, rssi, ssid }) => {
+      this.#provisioning.on("status", ({ mac, mode, wifiState, rssi, ssid, bridge }) => {
         this.#usbStatus.set(mac, { mode, wifiState, rssi });
+        // Track the device-confirmed bridge flag so the snapshot's `Device.bridge` reflects the
+        // device's own STATUS, not just our designation intent (the two can briefly disagree).
+        if (bridge) this.#bridgeConfirmed.add(mac);
+        else this.#bridgeConfirmed.delete(mac);
         // The device reports its NVS SSID, so adopt it as the source of truth — this keeps the
         // stored name accurate even for a device this host never provisioned. `""` means no creds
         // (clear any stale entry); only write on a change, since STATUS now streams. setSsid mutates
@@ -307,6 +354,9 @@ export class SidecarApp {
     await this.#server.start();
     const ip = this.#store.sourceIp;
     if (ip) this.#atem.connect(ip); // emits a `change` that will publish; #sync below covers the no-ip case
+    // Route relayed colours to the persisted bridge MAC from the off (re-asserting SET_BRIDGE waits
+    // for the device to (re)connect over USB, handled in the deviceConnected listener).
+    this.#espnow?.setBridgeMac(this.#store.bridgeMac);
     this.#sync();
     // Begin the periodic keyframe re-send (runs for the app's whole life — see REFRESH_PERIOD_MS).
     this.#stopRefresh = this.#refreshClock.start(this.#refreshMs, () => this.#refresh());
@@ -368,6 +418,9 @@ export class SidecarApp {
           this.#ipc.notice("info", `Tally ${macTail(command.mac, 2)} isn't on USB — can't set its transport.`);
         }
         break;
+      case "setBridge":
+        await this.#designateBridge(command.mac);
+        break;
       case "scanSources":
         void this.#scan();
         break;
@@ -378,6 +431,50 @@ export class SidecarApp {
         this.#sync();
         break;
     }
+  }
+
+  /** Minimum protocol version that understands SET_BRIDGE / RELAY (the v1.3 frames). */
+  static readonly #BRIDGE_MIN_VERSION = 3;
+
+  /**
+   * Apply a new bridge designation (or clear it, with null): persist it, leave the previous
+   * designee's bridge mode (SET_BRIDGE 0) and enter the new one's (SET_BRIDGE 1) where each is
+   * USB-connected and new enough, and point the ESP-NOW transport's relay routing at the new MAC.
+   * Designating a new MAC replaces the old — one bridge per session (v1.3 spec).
+   */
+  async #designateBridge(mac: string | null): Promise<void> {
+    const previous = this.#store.bridgeMac;
+    if (previous === mac) {
+      // Idempotent re-designation: still re-assert (the runtime flag may have been lost) and sync.
+      if (mac !== null) this.#assertBridgeIfDesignated(mac, this.#online.get(mac));
+      this.#sync();
+      return;
+    }
+    await this.#store.setBridgeMac(mac);
+    // Stand the old bridge down so two devices never both relay (only matters while it's cabled).
+    if (previous !== null) {
+      this.#bridgeConfirmed.delete(previous);
+      this.#sendBridge(previous, false, this.#online.get(previous));
+    }
+    // Bring the new one up, and route relayed colours through it from now on.
+    if (mac !== null) this.#sendBridge(mac, true, this.#online.get(mac));
+    this.#espnow?.setBridgeMac(mac);
+    this.#sync();
+  }
+
+  /** Re-assert SET_BRIDGE 1 if `mac` is the designated bridge — used on every (re)connect. */
+  #assertBridgeIfDesignated(mac: string, version: number | undefined): void {
+    if (this.#store.bridgeMac === mac) this.#sendBridge(mac, true, version);
+  }
+
+  /**
+   * Send SET_BRIDGE to a device, but only when it's USB-connected and reports version ≥ 3 (the
+   * floor for the v1.3 frames). A no-op otherwise — an offline or old device simply can't be a
+   * bridge, and the designation is re-asserted when it next connects with a new-enough version.
+   */
+  #sendBridge(mac: string, enabled: boolean, version: number | undefined): void {
+    if (version === undefined || version < SidecarApp.#BRIDGE_MIN_VERSION) return;
+    this.#provisioning?.setBridge(mac, enabled);
   }
 
   /**
@@ -424,6 +521,9 @@ export class SidecarApp {
         // (the device never echoes the string), so it survives across transports/restarts.
         provisionedMode: status ? provisionedModeName(status.mode) : null,
         ssid: config?.ssid ?? null,
+        // The device is the bridge only while it's the designated MAC *and* its STATUS confirms
+        // bridge mode (a designation we can't yet confirm — offline, or mid-handshake — reads false).
+        bridge: mac === this.#store.bridgeMac && this.#bridgeConfirmed.has(mac),
       });
     }
     return records;

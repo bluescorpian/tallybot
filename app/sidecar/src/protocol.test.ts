@@ -6,6 +6,7 @@ import {
   DEFAULT_BRIGHTNESS,
   DISCOVERY_REQUEST,
   DeviceMessageType,
+  ESPNOW_CHANNEL,
   FrameDecoder,
   LogLevel,
   PROTOCOL_VERSION,
@@ -22,6 +23,9 @@ import {
   isSupportedVersion,
   macTail,
   parseDiscoveryResponse,
+  parseMac,
+  relayPayload,
+  setBridgePayload,
   setColorPayload,
   setTransportPayload,
   setWifiPayload,
@@ -127,8 +131,14 @@ test("setWifiPayload handles empty creds and UTF-8 byte length (not char length)
 });
 
 test("setTransportPayload / getStatusPayload", () => {
+  // No-TX/WiFi: bare [type][mode], no channel byte.
   assert.deepEqual(setTransportPayload(Transport.NOTX), Uint8Array.of(ServerMessageType.SET_TRANSPORT, 0));
   assert.deepEqual(setTransportPayload(Transport.WIFI), Uint8Array.of(ServerMessageType.SET_TRANSPORT, 1));
+  // ESP-NOW: a channel byte rides along.
+  assert.deepEqual(
+    setTransportPayload(Transport.ESPNOW, ESPNOW_CHANNEL),
+    Uint8Array.of(ServerMessageType.SET_TRANSPORT, 2, 1),
+  );
   assert.deepEqual(getStatusPayload(), Uint8Array.of(ServerMessageType.GET_STATUS));
 });
 
@@ -146,6 +156,8 @@ test("decodeDeviceMessage reads STATUS with SSID, sign-extending RSSI", () => {
     wifiState: WifiState.CONNECTED,
     rssi: -60,
     ssid,
+    channel: null, // no trailing bytes → pre-v3, channel unknown
+    bridge: false, // …and bridge off
   });
 });
 
@@ -157,6 +169,8 @@ test("decodeDeviceMessage reads STATUS with no creds (ssidLen 0 → empty SSID)"
     wifiState: WifiState.IDLE,
     rssi: 0,
     ssid: "",
+    channel: null,
+    bridge: false,
   });
 });
 
@@ -170,6 +184,87 @@ test("decodeDeviceMessage rejects malformed STATUS/LOG", () => {
   // ssidLen claims 3 bytes but only 1 follows → truncated tail
   assert.throws(() => decodeDeviceMessage(Uint8Array.of(DeviceMessageType.STATUS, 1, 1, 1, 3, 0x41)), RangeError);
   assert.throws(() => decodeDeviceMessage(Uint8Array.of(DeviceMessageType.LOG)), RangeError); // no level
+});
+
+// ── v1.3 ESP-NOW: STATUS [channel][bridging], RELAY, SET_BRIDGE, parseMac ──────────
+
+test("decodeDeviceMessage reads the STATUS [channel][bridging] trailing bytes (v3)", () => {
+  // [type][transport][wifiState][rssi][ssidLen=0][channel][bridging] — bridging on, channel 1.
+  const on = Uint8Array.of(DeviceMessageType.STATUS, Transport.ESPNOW, WifiState.IDLE, 0, 0, 1, 0x01);
+  assert.deepEqual(decodeDeviceMessage(on), {
+    kind: "status",
+    transport: Transport.ESPNOW,
+    wifiState: WifiState.IDLE,
+    rssi: 0,
+    ssid: "",
+    channel: 1,
+    bridge: true,
+  });
+  // The trailing pair sits *after* the SSID, so it's read correctly even with creds present.
+  const ssid = "venue";
+  const withSsid = Uint8Array.of(
+    DeviceMessageType.STATUS, Transport.WIFI, WifiState.CONNECTED, 0, ssid.length,
+    ...new TextEncoder().encode(ssid), 6, 0x00, // channel 6, bridging off
+  );
+  assert.deepEqual(decodeDeviceMessage(withSsid), {
+    kind: "status",
+    transport: Transport.WIFI,
+    wifiState: WifiState.CONNECTED,
+    rssi: 0,
+    ssid,
+    channel: 6,
+    bridge: false,
+  });
+});
+
+test("decodeDeviceMessage treats a lone trailing byte as channel with bridging off (lenient)", () => {
+  // Only one trailing byte present → read it as the channel, bridge defaults to false.
+  const one = Uint8Array.of(DeviceMessageType.STATUS, Transport.ESPNOW, WifiState.IDLE, 0, 0, 11);
+  assert.deepEqual(decodeDeviceMessage(one), {
+    kind: "status",
+    transport: Transport.ESPNOW,
+    wifiState: WifiState.IDLE,
+    rssi: 0,
+    ssid: "",
+    channel: 11,
+    bridge: false,
+  });
+});
+
+test("setBridgePayload encodes [type][enabled][channel]", () => {
+  assert.deepEqual(setBridgePayload(true, ESPNOW_CHANNEL), Uint8Array.of(ServerMessageType.SET_BRIDGE, 1, 1));
+  // Channel is still sent (and asserted) when disabling — the device ignores it then.
+  assert.deepEqual(setBridgePayload(false, ESPNOW_CHANNEL), Uint8Array.of(ServerMessageType.SET_BRIDGE, 0, 1));
+});
+
+test("relayPayload wraps an inner payload in [type][targetMAC×6][inner…]", () => {
+  const inner = setColorPayload(COLORS.live, 64);
+  const wire = relayPayload("aa:bb:cc:dd:ee:ff", inner);
+  assert.deepEqual(
+    [...wire],
+    [ServerMessageType.RELAY, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, ...inner],
+  );
+});
+
+test("decodeDeviceMessage reads a RELAY envelope (srcMAC + inner)", () => {
+  const inner = Uint8Array.of(DeviceMessageType.HEARTBEAT);
+  const payload = Uint8Array.of(DeviceMessageType.RELAY, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, ...inner);
+  const decoded = decodeDeviceMessage(payload);
+  assert.equal(decoded.kind, "relayed");
+  assert.deepEqual(decoded, { kind: "relayed", srcMac: "01:23:45:67:89:ab", inner: Uint8Array.of(DeviceMessageType.HEARTBEAT) });
+});
+
+test("decodeDeviceMessage rejects a RELAY envelope shorter than its 8-byte minimum", () => {
+  // 7 bytes: type + 6 MAC bytes, but no inner type byte to relay.
+  assert.throws(() => decodeDeviceMessage(Uint8Array.of(DeviceMessageType.RELAY, 1, 2, 3, 4, 5, 6)), RangeError);
+});
+
+test("parseMac round-trips with formatMac and rejects junk", () => {
+  assert.deepEqual([...parseMac("01:23:45:67:89:AB")], [0x01, 0x23, 0x45, 0x67, 0x89, 0xab]); // case-insensitive
+  assert.equal(formatMac(parseMac("aa:bb:cc:dd:ee:ff")), "aa:bb:cc:dd:ee:ff");
+  assert.throws(() => parseMac("aa:bb:cc:dd:ee"), RangeError); // too few octets
+  assert.throws(() => parseMac("aa:bb:cc:dd:ee:gg"), RangeError); // non-hex
+  assert.throws(() => parseMac("aabbccddeeff"), RangeError); // no separators
 });
 
 // ── Device → server decoder ────────────────────────────────────────────────────

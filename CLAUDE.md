@@ -38,20 +38,30 @@ framing (`[len][payload…]`, `len` = payload byte count); USB-CDC uses COBS (se
 a `0x00` delimiter, framed by PacketSerial on the device and a hand-rolled codec in the Rust
 shell). Full tables in `docs/architecture.md`; USB details in `docs/spec/usb-serial-protocol.md`.
 
-- **Discovery (UDP 7001):** device broadcasts `TALLY_FIND`; server replies/broadcasts
-  `TALLY_HERE:7000`.
+- **Discovery (UDP 7001 on WiFi; same strings over ESP-NOW broadcast):** device broadcasts
+  `TALLY_FIND`; server (or an ESP-NOW bridge) replies/broadcasts `TALLY_HERE:7000`.
 - **Device → server:** `0x01` HELLO `[type][version][mac×6]`, `0x02` HEARTBEAT `[type]`.
-  USB also: `0x03` STATUS `[transport][wifiState][rssi][ssidLen][ssid…]`, `0x04` LOG
-  `[level][utf8…]`. STATUS carries the device's NVS SSID (host adopts it as truth) and the
-  full `wifiState` enum, and is pushed on change while cabled (not just on `GET_STATUS`).
+  USB also: `0x03` STATUS `[transport][wifiState][rssi][ssidLen][ssid…][channel][bridging]`,
+  `0x04` LOG `[level][utf8…]`, `0x06` RELAY `[srcMAC×6][inner…]` (bridge → host: an ESP-NOW
+  datagram from a light). STATUS carries the device's NVS SSID (host adopts it as truth), the
+  full `wifiState` enum, and (v3) the ESP-NOW channel + live `bridging` flag; it's pushed on
+  change while cabled (not just on `GET_STATUS`).
 - **Server → device:** `0x01` SET_COLOR `[type][R][G][B][brightness]` (`0x02` retired — locate
   flash is now a server-streamed SET_COLOR burst, not a device event). USB also: `0x03` SET_WIFI,
-  `0x04` SET_TRANSPORT, `0x05` GET_STATUS (`0x07` RELAY reserved for v1.3).
+  `0x04` SET_TRANSPORT (`[mode]`, or `[mode][channel]` for ESP-NOW mode 2), `0x05` GET_STATUS,
+  `0x07` RELAY `[dstMAC×6][inner…]` (host → bridge; bridge forwards via `esp_now_send`), `0x08`
+  SET_BRIDGE `[enabled][channel]` (runtime bridge mode, never persisted on the device).
+- **Transports:** `0` No-TX · `1` WiFi · `2` ESP-NOW (open int enum in NVS/wire/IPC). An ESP-NOW
+  *light* discovers a *bridge* (a USB dongle the app designates) and rides tally via RELAY; the
+  bridge is a dumb byte-forwarder between the radio and the USB-CDC channel. The sidecar's
+  `EspNowTransport` is the third `CompositeDeviceServer` member (priority USB > TCP > ESP-NOW);
+  the Rust shell is untouched (RELAY is opaque). See `docs/spec/esp-now-transport.md`.
 - **Versioning:** HELLO carries the device's protocol version; the server keeps `CURRENT`
-  (**2** — USB provisioning) + `MIN_SUPPORTED` (1) and adapts to older devices (warns
-  below `MIN_SUPPORTED`). Protocol constants are mirrored in three places: `protocol.ts`
-  (source of truth), `firmware/src/protocol.h`, and `app/src-tauri/src/usb/protocol.rs`
-  (minimal: COBS + HELLO only).
+  (**3** — ESP-NOW) + `MIN_SUPPORTED` (1) and adapts to older devices (warns below
+  `MIN_SUPPORTED`); the app only offers ESP-NOW provisioning / bridge designation to devices
+  reporting ≥ 3. Protocol constants are mirrored in three places: `protocol.ts` (source of
+  truth), `firmware/src/protocol.h`, and `app/src-tauri/src/usb/protocol.rs` (minimal: COBS +
+  HELLO only).
 - **Colours:** Live `255,0,0` · Preview `0,255,0` · Idle `30,30,30` (dim white) ·
   Unassigned `255,255,255` (white, server-driven breathe) · Disconnected `0,0,255` (device-local
   steady blue) · Fault `0,0,255` flashing (server-driven, when the source can't be trusted —
@@ -118,7 +128,7 @@ Docs live in `docs/`. Load them on demand; don't bulk-load.
 | **`docs/milestones/v1.2-zero-friction-onboarding.md`** | Zero-friction onboarding: in-app USB flashing + WiFi/No-TX provisioning over USB-C. | Working on USB onboarding; pair with `docs/spec/usb-serial-protocol.md`. |
 | **`docs/wifi-troubleshooting.md`** | Living runbook for the deferred WiFi-join problem: symptoms, the diagnostics-panel verdict, what's ruled out, current hypothesis, what to try next. | Returning to WiFi-join reliability, or reading a device's SoftAP diagnostics panel. |
 | **`docs/milestones/roadmap.md`** | Deferred / future work (ESP-NOW transport, OTA, web UI, OBS, multi-switcher). | Evaluating roadmap items or planning the next milestone. |
-| **`docs/spec/`** | Pre-implementation feature specs: decisions, alternatives rejected, acceptance criteria. One file per feature; written before coding, archived or deleted when shipped. Current: `usb-serial-protocol.md` (v1.2 USB onboarding). | Designing or reviewing a feature before touching code. |
+| **`docs/spec/`** | Pre-implementation feature specs: decisions, alternatives rejected, acceptance criteria. One file per feature; written before coding, archived or deleted when shipped. Current: `usb-serial-protocol.md` (v1.2 USB onboarding), `esp-now-transport.md` (v1.3 ESP-NOW bridge + lights). | Designing or reviewing a feature before touching code. |
 | **`app/sidecar/SIDECAR.md`** | How the Node.js sidecar process works alongside Tauri: lifecycle, IPC transport, why this pattern. | Working on Tauri ↔ sidecar integration, the sidecar launch/shutdown flow, or IPC transport internals. |
 | **`app/sidecar/README.md`** | Day-to-day sidecar dev guide: how to run, test, and iterate on the sidecar in isolation. | Running or debugging the sidecar standalone, onboarding to sidecar development. |
 | **`tools/README.md`** | Hardware simulators: FakeAtem, fake ESP32 TCP client, sidecar-dev REPL, end-to-end test. | Using or extending the dev tools; hardware-free testing. |

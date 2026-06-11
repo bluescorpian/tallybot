@@ -91,9 +91,20 @@ class SidecarStore {
 	provisionWifi(mac: string, ssid: string, password: string): void {
 		this.#send({ type: "provisionWifi", mac, ssid, password });
 	}
-	/** Set what a USB device does when unplugged: join WiFi, or stay dark (No-TX). */
-	setTransport(mac: string, mode: "wifi" | "notx"): void {
+	/**
+	 * Set what a USB device does when unplugged: join WiFi, stay dark (No-TX), or
+	 * receive tally from a bridge over ESP-NOW (v1.3, devices reporting version ≥ 3).
+	 */
+	setTransport(mac: string, mode: "wifi" | "notx" | "espnow"): void {
 		this.#send({ type: "setTransport", mac, mode });
+	}
+	/**
+	 * Designate a USB device as *the* ESP-NOW bridge (`mac`), or un-designate the
+	 * current one (`null`). One bridge per session — designating a new MAC replaces
+	 * the old. Only offered for devices reporting protocol version ≥ 3.
+	 */
+	setBridge(mac: string | null): void {
+		this.#send({ type: "setBridge", mac });
 	}
 	setSource(ip: string): void {
 		this.#send({ type: "setSource", ip });

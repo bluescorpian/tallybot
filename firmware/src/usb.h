@@ -21,6 +21,7 @@ bool loop(unsigned long now);
 void send(const uint8_t* payload, size_t len);
 bool hostPresent();   // a host frame has arrived this session
 bool tallyActive();   // the app is currently driving tally over USB
+bool sessionLost(unsigned long now);  // true once the host has been silent past the session timeout
 void resetSession();  // forget host/tally so HELLO re-announces and STATUS re-syncs
 
 }  // namespace usb

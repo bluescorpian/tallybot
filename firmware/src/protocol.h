@@ -15,7 +15,7 @@
 //     PacketSerial applies the COBS wrapper; the encoders below build only the payload.
 //
 // Wire reference (exact TCP bytes; over USB the same payloads ride inside a COBS frame):
-//   HELLO      08 01 02 <mac0..mac5>      (device → server)   [version is now 2]
+//   HELLO      08 01 03 <mac0..mac5>      (device → server)   [version is now 3]
 //   HEARTBEAT  01 02                      (device → server)
 //   SET_COLOR  05 01 <R> <G> <B> <bri>    (server → device)
 //   STATUS/LOG and SET_WIFI/SET_TRANSPORT/GET_STATUS are USB-only — see below.
@@ -30,9 +30,11 @@
 // server (easy to update), not the firmware (flashed onto devices), so the device
 // only ever announces CURRENT. MIN_SUPPORTED is informational here — the server
 // enforces it and surfaces an "update firmware" notice below it.
-// Bumped 1 → 2 for USB provisioning: a v2 HELLO tells the app this firmware understands
-// SET_WIFI/SET_TRANSPORT (the app only sends those to version ≥ 2 devices).
-#define PROTOCOL_VERSION_CURRENT 2
+// Bumped 1 → 2 for USB provisioning (a v2 HELLO tells the app this firmware understands
+// SET_WIFI/SET_TRANSPORT), then 2 → 3 for ESP-NOW: a v3 HELLO means the firmware understands
+// SET_TRANSPORT(ESPNOW), SET_BRIDGE, RELAY (both directions), and emits the STATUS trailing bytes. The app
+// only sends each generation's frames to devices reporting at least that version.
+#define PROTOCOL_VERSION_CURRENT 3
 #define PROTOCOL_VERSION_MIN_SUPPORTED 1
 
 // ── Network ports ────────────────────────────────────────────────────────────
@@ -48,6 +50,11 @@
 #define MSG_STATUS 0x03     // device → host  (USB): transport/WiFi status snapshot
 #define MSG_LOG 0x04        // device → host  (USB): framed log line (release builds)
 #define MSG_SCAN_RESULT 0x05  // device → host (USB): reserved, deferred post-v1.2
+#define MSG_RELAY_UP 0x06   // device → host  (USB, bridge): [type][srcMAC×6][inner…] — the device→host
+                            // RELAY envelope (protocol.ts DeviceMessageType.RELAY). An ESP-NOW frame
+                            // a bridge received from a light, wrapped + forwarded up the USB pipe.
+                            // The two directions' type spaces are independent, so 0x06 here and
+                            // 0x07 below are both "RELAY"; the suffix only disambiguates the macro.
 
 #define MSG_SET_COLOR 0x01     // server → device (both transports)
 // 0x02 retired (was IDENTIFY): flashing is now driven server-side over SET_COLOR.
@@ -55,13 +62,18 @@
 #define MSG_SET_TRANSPORT 0x04  // host → device (USB): persist transport mode
 #define MSG_GET_STATUS 0x05    // host → device  (USB): request a STATUS frame
 #define MSG_SCAN_WIFI 0x06     // host → device  (USB): reserved, deferred post-v1.2
-#define MSG_RELAY 0x07         // host → device  (USB): reserved for v1.3 ESP-NOW bridge, unimplemented
+#define MSG_RELAY 0x07         // host → device  (USB, bridge): [type][targetMAC×6][inner…] — the host→device
+                               // RELAY envelope (protocol.ts ServerMessageType.RELAY). The bridge strips
+                               // the header and sends inner verbatim to targetMAC over ESP-NOW.
+#define MSG_SET_BRIDGE 0x08    // host → device  (USB): [type][enabled][channel] — enter/leave bridge mode
+                               // on the given channel (runtime-only; channel ignored when enabled=0)
 
 // ── Shared payload field enums ───────────────────────────────────────────────
 // Transport is an OPEN enum: stored as an int (NVS), a wire byte, and the IPC type —
 // never a bool — so v1.3 can add ESP-NOW (2) without a migration.
 #define TRANSPORT_NOTX 0
 #define TRANSPORT_WIFI 1
+#define TRANSPORT_ESPNOW 2  // receives tally over ESP-NOW from a USB-connected bridge; joins no network
 // WiFi join progress, streamed in STATUS so the wizard confirms a join before unplug.
 #define WIFI_STATE_IDLE 0
 #define WIFI_STATE_JOINING 1
@@ -95,6 +107,15 @@
 // ── Discovery (UDP, text datagrams) ──────────────────────────────────────────
 #define DISCOVERY_REQUEST "TALLY_FIND"            // device → broadcast
 #define DISCOVERY_RESPONSE_PREFIX "TALLY_HERE:"   // server → "TALLY_HERE:<tcpPort>"
+// ESP-NOW reuses the same discovery strings one layer down: the bridge unicasts the very same
+// "TALLY_HERE:<port>" the UDP server sends (one reply format on both transports). Lights
+// prefix-match on DISCOVERY_RESPONSE_PREFIX and ignore the port — it's meaningless over ESP-NOW.
+// The strings' first byte is ASCII 'T' (0x54), outside the binary type-byte range, so they're
+// never confused with a message payload.
+
+// ── ESP-NOW transport (v1.3) ─────────────────────────────────────────────────
+#define ESPNOW_CHANNEL 1               // fixed 2.4GHz channel; lights join no AP, so nothing negotiates
+#define ESPNOW_LINK_TIMEOUT_MS 5000    // no frame from the bridge this long ⇒ the link is dead
 
 // ── Timers ───────────────────────────────────────────────────────────────────
 #define HEARTBEAT_INTERVAL_MS 10000  // device heartbeats every 10s (ARCHITECTURE.md)
@@ -107,13 +128,22 @@
 #define MAX_PAYLOAD_BYTES 255  // largest payload a single length byte can frame
 
 // A decoded server → device message. SET_COLOR arrives over both transports;
-// SET_WIFI/SET_TRANSPORT/GET_STATUS are USB-only provisioning frames.
+// SET_WIFI/SET_TRANSPORT/GET_STATUS/SET_BRIDGE/RELAY are USB-only provisioning/bridge frames.
 struct ServerMessage {
-  enum Kind { SET_COLOR, SET_WIFI, SET_TRANSPORT, GET_STATUS, UNKNOWN } kind;
+  enum Kind { SET_COLOR, SET_WIFI, SET_TRANSPORT, GET_STATUS, SET_BRIDGE, RELAY, UNKNOWN } kind;
   uint8_t r, g, b, brightness;  // valid only when kind == SET_COLOR
   char ssid[33];                // valid only when kind == SET_WIFI (≤32 chars + NUL)
   char pass[64];                // valid only when kind == SET_WIFI (≤63 chars + NUL)
   uint8_t transportMode;        // valid only when kind == SET_TRANSPORT
+  bool hasChannel;              // SET_TRANSPORT: true iff the optional channel byte was present
+  uint8_t channel;              // SET_TRANSPORT (if hasChannel) / SET_BRIDGE (when enabled) channel
+  bool bridgeEnabled;           // valid only when kind == SET_BRIDGE
+  // RELAY: the bridge forwards `inner` verbatim to `targetMac` and never decodes it. `inner`
+  // points into the caller's payload buffer (no copy) — the bridge sends it before the buffer
+  // is reused, so a borrow is safe and keeps ServerMessage small.
+  uint8_t targetMac[6];         // valid only when kind == RELAY
+  const uint8_t* inner;         // valid only when kind == RELAY — points into the source payload
+  size_t innerLen;              // valid only when kind == RELAY
 };
 
 // Reassembles length-prefixed frames from a TCP byte stream. TCP has no message
@@ -181,12 +211,16 @@ inline size_t encodeHelloPayload(uint8_t* out, const uint8_t mac[6]) {
   return 8;
 }
 
-// STATUS payload: [type][transport][wifiState][rssi][ssidLen][ssid…]. The SSID (the device's
-// stored network, read from NVS) replaces the old credsPresent bool — the host derives
+// STATUS payload: [type][transport][wifiState][rssi][ssidLen][ssid…][channel][bridging]. The SSID
+// (the device's stored network, read from NVS) replaces the old credsPresent bool — the host derives
 // "has creds" from ssidLen > 0, and keeps the name accurate even for a device it never
-// provisioned. `ssidLen` is capped at 32 (802.11 max); `out` must hold ≥ 5 + min(ssidLen, 32).
+// provisioned. `ssidLen` is capped at 32 (802.11 max). The two trailing bytes are a v3 addition —
+// older hosts skip them per the documented skip-trailing-fields rule. `channel` is the device's
+// stored ESP-NOW channel (default 1); `bridging` is 1 while bridge mode is active, else 0.
+// `out` must hold ≥ 7 + min(ssidLen, 32).
 inline size_t encodeStatusPayload(uint8_t* out, uint8_t transport, uint8_t wifiState, int8_t rssi,
-                                  const char* ssid, uint8_t ssidLen) {
+                                  const char* ssid, uint8_t ssidLen, uint8_t channel,
+                                  uint8_t bridging) {
   if (ssidLen > 32) ssidLen = 32;  // clamp; SSIDs are ≤ 32 bytes
   out[0] = MSG_STATUS;
   out[1] = transport;
@@ -194,7 +228,9 @@ inline size_t encodeStatusPayload(uint8_t* out, uint8_t transport, uint8_t wifiS
   out[3] = (uint8_t)rssi;  // signed byte on the wire; host sign-extends
   out[4] = ssidLen;
   for (uint8_t i = 0; i < ssidLen; i++) out[5 + i] = (uint8_t)ssid[i];
-  return 5 + ssidLen;
+  out[5 + ssidLen] = channel;
+  out[6 + ssidLen] = bridging ? 1 : 0;
+  return 7 + ssidLen;
 }
 
 // LOG payload: [type][level][utf8…]. Copies up to `maxOut-2` message bytes. Returns the
@@ -262,14 +298,29 @@ inline bool decodeServerMessage(const uint8_t* payload, size_t len, ServerMessag
       out->kind = ServerMessage::SET_WIFI;
       return true;
     }
-    case MSG_SET_TRANSPORT:  // [type][mode] — 2 payload bytes
-      if (len != 2) break;
+    case MSG_SET_TRANSPORT:  // [type][mode] (2) or [type][mode][channel] (3, ESP-NOW)
+      if (len != 2 && len != 3) break;
       out->kind = ServerMessage::SET_TRANSPORT;
       out->transportMode = payload[1];
+      out->hasChannel = (len == 3);  // channel absent ⇒ keep the stored/default channel
+      out->channel = (len == 3) ? payload[2] : 0;
       return true;
     case MSG_GET_STATUS:  // [type] — 1 payload byte
       if (len != 1) break;
       out->kind = ServerMessage::GET_STATUS;
+      return true;
+    case MSG_SET_BRIDGE:  // [type][enabled][channel] — 3 payload bytes (channel ignored when enabled=0)
+      if (len != 3) break;
+      out->kind = ServerMessage::SET_BRIDGE;
+      out->bridgeEnabled = payload[1] != 0;
+      out->channel = payload[2];
+      return true;
+    case MSG_RELAY:  // [type][targetMAC×6][inner…] — ≥ 7 payload bytes; inner is borrowed, not copied
+      if (len < 8) break;  // 7-byte header + at least the inner type byte
+      out->kind = ServerMessage::RELAY;
+      memcpy(out->targetMac, &payload[1], 6);
+      out->inner = &payload[7];
+      out->innerLen = len - 7;
       return true;
   }
   out->kind = ServerMessage::UNKNOWN;

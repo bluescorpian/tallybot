@@ -38,5 +38,7 @@ test("decodeUsbFrame decodes an opaque STATUS payload via the shared codec", () 
     wifiState: WifiState.JOINING,
     rssi: 0,
     ssid,
+    channel: null, // no trailing bytes → pre-v3, channel unknown
+    bridge: false, // …and bridge mode off
   });
 });

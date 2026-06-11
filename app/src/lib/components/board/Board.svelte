@@ -55,7 +55,9 @@
 		/** Provision a device's Wi-Fi (persist creds; save-only — no live join). */
 		onprovisionwifi?: (mac: string, ssid: string, pass: string) => void;
 		/** Set a device's unplugged transport mode. */
-		onsettransport?: (mac: string, mode: "wifi" | "notx") => void;
+		onsettransport?: (mac: string, mode: "wifi" | "notx" | "espnow") => void;
+		/** Designate (mac) / un-designate (null) the ESP-NOW bridge device. */
+		onsetbridge?: (mac: string | null) => void;
 		/**
 		 * Dev mode only: clicking an input key takes it to program on the fake ATEM.
 		 * When omitted (production / real ATEM) the keys stay non-interactive.
@@ -77,6 +79,7 @@
 		onbrightness,
 		onprovisionwifi,
 		onsettransport,
+		onsetbridge,
 		onsetup,
 		oninputclick,
 	}: Props = $props();
@@ -402,12 +405,15 @@
 							ssid={light.ssid}
 							wifiState={light.wifiState}
 							rssi={light.rssi}
+							protocolVersion={light.protocolVersion}
+							bridge={light.bridge}
 							onassign={(id) => onassign?.(light.mac, id)}
 							onunassign={() => onunassign?.(light.mac)}
 							onflash={() => flash(light.mac)}
 							onbrightness={(v) => onbrightness?.(light.mac, v)}
 							onprovisionwifi={(s, p) => onprovisionwifi?.(light.mac, s, p)}
 							onsettransport={(m) => onsettransport?.(light.mac, m)}
+							onsetbridge={(enabled) => onsetbridge?.(enabled ? light.mac : null)}
 						/>
 					</div>
 				{/each}
@@ -437,6 +443,7 @@
 					onbrightness={(mac, v) => onbrightness?.(mac, v)}
 					onprovisionwifi={(mac, s, p) => onprovisionwifi?.(mac, s, p)}
 					onsettransport={(mac, m) => onsettransport?.(mac, m)}
+					onsetbridge={(mac) => onsetbridge?.(mac)}
 				/>
 			</div>
 		{/if}

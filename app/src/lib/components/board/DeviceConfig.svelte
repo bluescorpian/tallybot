@@ -9,6 +9,7 @@
 	//
 	// Flat shadcn surface (the popover is flat, not the neumorphic board). Cyan
 	// `--signal` is activity (the wired chip), never a tally state.
+	import { Switch } from "$lib/components/ui/switch/index.js";
 	import type { DeviceTransport } from "$ipc";
 	import type { ProvisionedMode } from "$lib/components/board/types";
 	import PopoverPageHeader from "$lib/components/board/PopoverPageHeader.svelte";
@@ -18,26 +19,55 @@
 	import Radio from "@lucide/svelte/icons/radio";
 	import Usb from "@lucide/svelte/icons/usb";
 	import Check from "@lucide/svelte/icons/check";
+	import Network from "@lucide/svelte/icons/network";
+
+	// Devices reporting this protocol version (HELLO) understand the v1.3 ESP-NOW
+	// affordances (SET_TRANSPORT 2, SET_BRIDGE). Below it, the ESP-NOW row stays
+	// disabled ("Soon") and the bridge section is hidden — the wizard is filtered by
+	// device capability (spec → Versioning).
+	const ESPNOW_MIN_VERSION = 3;
 
 	interface Props {
 		label: string;
 		transport: DeviceTransport;
 		provisionedMode: ProvisionedMode;
 		ssid: string | null;
+		/** Device's HELLO protocol version (null if never connected) — gates ESP-NOW. */
+		protocolVersion: number | null;
+		/** True while this device is the designated, confirmed ESP-NOW bridge. */
+		bridge: boolean;
 		/** Open the Wi-Fi credentials page. */
 		onwifi?: () => void;
-		/** Set the unplugged transport mode inline (No transmit has no config). */
-		onsettransport?: (mode: "wifi" | "notx") => void;
+		/** Set the unplugged transport mode inline (only Wi-Fi has its own page). */
+		onsettransport?: (mode: "wifi" | "notx" | "espnow") => void;
+		/** Designate (true) or un-designate (false) this device as the ESP-NOW bridge. */
+		onsetbridge?: (enabled: boolean) => void;
 		/** Return to the compact picker. */
 		onback?: () => void;
 	}
-	let { label, transport, provisionedMode, ssid, onwifi, onsettransport, onback }: Props =
-		$props();
+	let {
+		label,
+		transport,
+		provisionedMode,
+		ssid,
+		protocolVersion,
+		bridge,
+		onwifi,
+		onsettransport,
+		onsetbridge,
+		onback,
+	}: Props = $props();
 
 	const wired = $derived(transport === "usb");
+	// v1.3 lives behind a firmware-capability gate: a device that's never connected
+	// (null version) is treated as too old, matching the sidecar's "never send the
+	// new frames to older devices" rule.
+	const espnowCapable = $derived((protocolVersion ?? 0) >= ESPNOW_MIN_VERSION);
 
 	// Mode list — data-driven so v1.3 appends a row, not a button. `page: true` rows
-	// navigate to their own setup page; others commit inline.
+	// navigate to their own setup page; others commit inline. ESP-NOW provisions
+	// exactly like No transmit (no credentials), so it commits inline too; it's only
+	// offered once the firmware reports it can speak it (`espnowCapable`).
 	const MODES = $derived([
 		{
 			id: "wifi" as const,
@@ -58,14 +88,14 @@
 			label: "ESP-NOW",
 			desc: "Direct radio link, no network",
 			page: false,
-			disabled: true,
+			disabled: !espnowCapable,
 		},
 	]);
 
 	function pick(m: (typeof MODES)[number]) {
 		if (m.disabled) return;
 		if (m.id === "wifi") onwifi?.();
-		else if (m.id === "notx") onsettransport?.("notx");
+		else onsettransport?.(m.id);
 	}
 </script>
 
@@ -128,6 +158,31 @@
 		</button>
 	{/each}
 </div>
+
+<!-- BRIDGE: relay tally to ESP-NOW lights. USB-gated (the bridge is by definition
+     cabled) and version-gated ≥ 3 — hidden entirely for firmware that can't speak it,
+     so the section only appears where it's actionable. Flat language: a hairline above,
+     a labelled row with the shadcn switch, matching the connection list's surface. -->
+{#if espnowCapable}
+	<div class="bg-border h-px"></div>
+	<div class="px-1.5 py-1.5">
+		<p class="text-muted-foreground px-1.5 pt-1 pb-1.5 text-[0.68rem]">This light can also…</p>
+		<div class="flex items-center gap-2.5 rounded-lg px-2 py-1.5">
+			<Network class="text-muted-foreground size-4 shrink-0" />
+			<span class="min-w-0 flex-1">
+				<span class="block text-sm leading-tight {bridge ? 'font-medium' : ''}">Use as bridge</span>
+				<span class="text-muted-foreground block text-[0.68rem] leading-tight">
+					Relays tally to ESP-NOW lights. Replaces any current bridge.
+				</span>
+			</span>
+			<Switch
+				checked={bridge}
+				onCheckedChange={(v) => onsetbridge?.(v)}
+				aria-label="Use as bridge"
+			/>
+		</div>
+	</div>
+{/if}
 
 <div class="bg-border h-px"></div>
 

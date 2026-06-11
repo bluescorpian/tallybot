@@ -99,6 +99,12 @@ export interface Device {
    * provisioned; falls back to the host's own record when the device hasn't reported.
    */
   ssid?: string | null;
+  /**
+   * True while this device is the designated ESP-NOW bridge and has confirmed bridge
+   * mode (the STATUS `bridging` byte). Designation itself lives in the sidecar's store; this
+   * reflects the device-confirmed state the UI should display.
+   */
+  bridge?: boolean;
 }
 
 /**
@@ -271,12 +277,24 @@ export interface ProvisionWifiCommand {
 
 /**
  * Set what a USB-connected device does when unplugged: `"wifi"` (join the provisioned
- * network) or `"notx"` (WiFi disabled — wired-only). Open for `"espnow"` in v1.3.
+ * network), `"notx"` (WiFi disabled — wired-only), or `"espnow"` (receive tally from a
+ * bridge over ESP-NOW — no network, no credentials).
  */
 export interface SetTransportCommand {
   type: "setTransport";
   mac: string;
-  mode: "notx" | "wifi";
+  mode: "notx" | "wifi" | "espnow";
+}
+
+/**
+ * Designate a USB-connected device as *the* ESP-NOW bridge (one per session; designating
+ * a new MAC replaces the old). `mac: null` un-designates. The sidecar persists the
+ * designation and re-asserts bridge mode (runtime-only on the device) on every USB
+ * reconnect; only offered for devices reporting protocol version ≥ 3.
+ */
+export interface SetBridgeCommand {
+  type: "setBridge";
+  mac: string | null;
 }
 
 export type UiCommand =
@@ -289,7 +307,8 @@ export type UiCommand =
   | RequestStateCommand
   | SetProgramCommand
   | ProvisionWifiCommand
-  | SetTransportCommand;
+  | SetTransportCommand
+  | SetBridgeCommand;
 
 // ── Transport (NDJSON over stdio) ───────────────────────────────────────────────
 
@@ -315,6 +334,7 @@ export const COMMAND_TYPES = [
   "setProgram",
   "provisionWifi",
   "setTransport",
+  "setBridge",
 ] as const satisfies readonly UiCommand["type"][];
 
 const eventTypes = new Set<string>(EVENT_TYPES);

@@ -40,6 +40,7 @@
 	import Unplug from "@lucide/svelte/icons/unplug";
 	import Usb from "@lucide/svelte/icons/usb";
 	import Settings2 from "@lucide/svelte/icons/settings-2";
+	import Network from "@lucide/svelte/icons/network";
 
 	interface Props {
 		mac: string;
@@ -62,6 +63,10 @@
 		wifiState?: DeviceWifiState | null;
 		/** Last reported RSSI (dBm) while provisioning, or null. */
 		rssi?: number | null;
+		/** Device's HELLO protocol version (null if never connected) — gates ESP-NOW. */
+		protocolVersion?: number | null;
+		/** True while this device is the designated, confirmed ESP-NOW bridge. */
+		bridge?: boolean;
 		onassign?: (inputId: string) => void;
 		onunassign?: () => void;
 		onflash?: () => void;
@@ -70,7 +75,9 @@
 		/** Provision Wi-Fi: persist creds + start the validating join over the cable. */
 		onprovisionwifi?: (ssid: string, pass: string) => void;
 		/** Set the unplugged transport mode. */
-		onsettransport?: (mode: "wifi" | "notx") => void;
+		onsettransport?: (mode: "wifi" | "notx" | "espnow") => void;
+		/** Designate (true) / un-designate (false) this device as the ESP-NOW bridge. */
+		onsetbridge?: (enabled: boolean) => void;
 		open?: boolean;
 	}
 	let {
@@ -85,12 +92,15 @@
 		ssid = null,
 		wifiState = null,
 		rssi = null,
+		protocolVersion = null,
+		bridge = false,
 		onassign,
 		onunassign,
 		onflash,
 		onbrightness,
 		onprovisionwifi,
 		onsettransport,
+		onsetbridge,
 		open = $bindable(false),
 	}: Props = $props();
 
@@ -141,8 +151,11 @@
 				{transport}
 				{provisionedMode}
 				{ssid}
+				{protocolVersion}
+				{bridge}
 				onwifi={() => (view = "wifi")}
 				{onsettransport}
+				{onsetbridge}
 				onback={() => (view = "menu")}
 			/>
 		{:else if view === "wifi"}
@@ -159,7 +172,20 @@
 						</span>
 					{/if}
 				</span>
-				<span class="font-mono text-sm font-medium tracking-wide">{label}</span>
+				<span class="flex items-center gap-1.5">
+					<span class="font-mono text-sm font-medium tracking-wide">{label}</span>
+					{#if bridge}
+						<!-- Bridge marker: this device relays tally to ESP-NOW lights. Flat
+						     cyan chip, matching the wired indicator's "activity, not state"
+						     language (blue/cyan = a live signal path, never a tally colour). -->
+						<span
+							class="text-signal border-signal/40 inline-flex items-center gap-0.5 rounded-full border px-1.5 py-px text-[0.55rem] font-medium tracking-wide uppercase"
+							title="Relays tally to ESP-NOW lights"
+						>
+							<Network class="size-2.5" /> Bridge
+						</span>
+					{/if}
+				</span>
 			</div>
 			<div class="flex items-center gap-1.5">
 				{#if wired}

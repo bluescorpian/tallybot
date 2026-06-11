@@ -6,6 +6,7 @@ import {
   type AtemSourcePort,
   type AnimationClock,
   type DeviceServerPort,
+  type EspNowBridgePort,
   type IpcPort,
   type ProvisioningPort,
   type SidecarAppDeps,
@@ -95,6 +96,7 @@ class FakeIpc extends EventEmitter implements IpcPort {
 
 class FakeStore implements StorePort {
   sourceIp: string | null = null;
+  bridgeMac: string | null = null;
   readonly #devices = new Map<string, DeviceConfig>();
   device(mac: string): DeviceConfig | undefined {
     return this.#devices.get(mac);
@@ -104,6 +106,10 @@ class FakeStore implements StorePort {
   }
   setSourceIp(ip: string | null): Promise<void> {
     this.sourceIp = ip;
+    return Promise.resolve();
+  }
+  setBridgeMac(mac: string | null): Promise<void> {
+    this.bridgeMac = mac;
     return Promise.resolve();
   }
   assign(mac: string, inputId: number): Promise<void> {
@@ -146,6 +152,7 @@ class FakeStore implements StorePort {
 class FakeProvisioning extends EventEmitter implements ProvisioningPort {
   readonly provisioned: Array<{ mac: string; ssid: string; password: string }> = [];
   readonly transports: Array<{ mac: string; mode: number }> = [];
+  readonly bridges: Array<{ mac: string; enabled: boolean }> = [];
   readonly statusRequested: string[] = [];
   /** MACs currently reachable over USB (drives `transportOf` + the boolean returns). */
   readonly wired = new Set<string>();
@@ -163,6 +170,11 @@ class FakeProvisioning extends EventEmitter implements ProvisioningPort {
     this.transports.push({ mac, mode });
     return true;
   }
+  setBridge(mac: string, enabled: boolean): boolean {
+    if (!this.wired.has(mac)) return false;
+    this.bridges.push({ mac, enabled });
+    return true;
+  }
   requestStatus(mac: string): boolean {
     this.statusRequested.push(mac);
     return this.wired.has(mac);
@@ -170,9 +182,24 @@ class FakeProvisioning extends EventEmitter implements ProvisioningPort {
   // Test driver: stream a STATUS frame as the device would over the cable.
   emitStatus(
     mac: string,
-    fields: { mode: number; wifiState: DeviceWifiState; rssi: number | null; ssid: string },
+    fields: {
+      mode: number;
+      wifiState: DeviceWifiState;
+      rssi: number | null;
+      ssid: string;
+      channel?: number | null;
+      bridge?: boolean;
+    },
   ): void {
-    this.emit("status", { mac, ...fields });
+    this.emit("status", { mac, channel: null, bridge: false, ...fields });
+  }
+}
+
+/** Records the bridge MAC the orchestrator routes ESP-NOW colours through. */
+class FakeEspNow implements EspNowBridgePort {
+  readonly bridgeMacs: Array<string | null> = [];
+  setBridgeMac(mac: string | null): void {
+    this.bridgeMacs.push(mac);
   }
 }
 
@@ -222,6 +249,7 @@ interface Harness {
   ipc: FakeIpc;
   store: FakeStore;
   provisioning: FakeProvisioning;
+  espnow: FakeEspNow;
   anim: FakeAnimClock;
   refresh: FakeAnimClock;
 }
@@ -235,12 +263,14 @@ function setup(
   const ipc = new FakeIpc();
   const store = new FakeStore();
   const provisioning = new FakeProvisioning();
+  const espnow = new FakeEspNow();
   const anim = new FakeAnimClock();
   const refresh = new FakeAnimClock();
   const app = new SidecarApp({
     atem,
     deviceServer: server,
     provisioning,
+    espnow,
     store,
     ipc,
     animClock: anim,
@@ -249,7 +279,7 @@ function setup(
     log: () => {},
     ...overrides,
   });
-  return { app, server, atem, ipc, store, provisioning, anim, refresh };
+  return { app, server, atem, ipc, store, provisioning, espnow, anim, refresh };
 }
 
 /** Let an async command handler (which awaits the store) settle. */
@@ -604,4 +634,129 @@ test("a connecting USB device is asked for a fresh STATUS at once", async () => 
   server.connectDevice(MAC, 2);
 
   assert.ok(provisioning.statusRequested.includes(MAC));
+});
+
+// ── v1.3 ESP-NOW bridge designation ───────────────────────────────────────────
+
+const BRIDGE = "bb:bb:bb:bb:bb:01";
+const BRIDGE2 = "cc:cc:cc:cc:cc:02";
+
+/** Mark a MAC wired + connected at the given version, and bring it online. */
+function bringUpUsb(h: Harness, mac: string, version = 3): void {
+  h.provisioning.wired.add(mac);
+  h.server.connectDevice(mac, version);
+}
+
+test("designating a USB v3 device as bridge persists it, sends SET_BRIDGE 1, and routes relayed colours", async () => {
+  const harness = setup();
+  const { app, ipc, provisioning, store, espnow } = harness;
+  await app.start();
+  bringUpUsb(harness, BRIDGE);
+
+  ipc.command({ type: "setBridge", mac: BRIDGE });
+  await tick();
+
+  assert.equal(store.bridgeMac, BRIDGE, "designation is persisted");
+  assert.deepEqual(provisioning.bridges, [{ mac: BRIDGE, enabled: true }], "SET_BRIDGE 1 sent");
+  assert.equal(espnow.bridgeMacs.at(-1), BRIDGE, "ESP-NOW relay routing points at the bridge");
+});
+
+test("replacing the designee sends SET_BRIDGE 0 to the old and 1 to the new", async () => {
+  const harness = setup();
+  const { app, ipc, provisioning, store, espnow } = harness;
+  await app.start();
+  bringUpUsb(harness, BRIDGE);
+  bringUpUsb(harness, BRIDGE2);
+
+  ipc.command({ type: "setBridge", mac: BRIDGE });
+  await tick();
+  provisioning.bridges.length = 0; // reset to isolate the replacement
+
+  ipc.command({ type: "setBridge", mac: BRIDGE2 });
+  await tick();
+
+  assert.equal(store.bridgeMac, BRIDGE2);
+  assert.deepEqual(provisioning.bridges, [
+    { mac: BRIDGE, enabled: false }, // stand the old one down
+    { mac: BRIDGE2, enabled: true }, // bring the new one up
+  ]);
+  assert.equal(espnow.bridgeMacs.at(-1), BRIDGE2);
+});
+
+test("un-designating (mac: null) sends SET_BRIDGE 0 and clears the relay routing", async () => {
+  const harness = setup();
+  const { app, ipc, provisioning, store, espnow } = harness;
+  await app.start();
+  bringUpUsb(harness, BRIDGE);
+  ipc.command({ type: "setBridge", mac: BRIDGE });
+  await tick();
+  provisioning.bridges.length = 0;
+
+  ipc.command({ type: "setBridge", mac: null });
+  await tick();
+
+  assert.equal(store.bridgeMac, null);
+  assert.deepEqual(provisioning.bridges, [{ mac: BRIDGE, enabled: false }]);
+  assert.equal(espnow.bridgeMacs.at(-1), null);
+});
+
+test("SET_BRIDGE 1 is re-asserted when the designated bridge reconnects over USB", async () => {
+  const harness = setup();
+  const { app, ipc, provisioning, server } = harness;
+  await app.start();
+  bringUpUsb(harness, BRIDGE);
+  ipc.command({ type: "setBridge", mac: BRIDGE });
+  await tick();
+  provisioning.bridges.length = 0;
+
+  // Cable pulled and replugged — the runtime flag was lost on the device, so the host re-asserts.
+  server.disconnectDevice(BRIDGE);
+  server.connectDevice(BRIDGE, 3);
+
+  assert.deepEqual(provisioning.bridges, [{ mac: BRIDGE, enabled: true }], "re-asserted on reconnect");
+});
+
+test("a designated bridge is never sent SET_BRIDGE while it reports an older version", async () => {
+  const harness = setup();
+  const { app, ipc, provisioning } = harness;
+  await app.start();
+  // Wired but only v2 — too old for the v1.3 frames.
+  bringUpUsb(harness, BRIDGE, 2);
+
+  ipc.command({ type: "setBridge", mac: BRIDGE });
+  await tick();
+
+  assert.deepEqual(provisioning.bridges, [], "no SET_BRIDGE to a sub-v3 device");
+});
+
+test("Device.bridge reflects the device-confirmed STATUS flag, not just the designation", async () => {
+  const harness = setup();
+  const { app, ipc, provisioning } = harness;
+  await app.start();
+  bringUpUsb(harness, BRIDGE);
+  ipc.command({ type: "setBridge", mac: BRIDGE });
+  await tick();
+
+  // Designated but unconfirmed → bridge is false until STATUS confirms.
+  let device = ipc.lastState()!.state.devices.find((d) => d.mac === BRIDGE)!;
+  assert.equal(device.bridge, false, "designation alone doesn't set bridge");
+
+  provisioning.emitStatus(BRIDGE, {
+    mode: Transport.NOTX,
+    wifiState: "idle" as DeviceWifiState,
+    rssi: null,
+    ssid: "",
+    bridge: true, // the device confirms bridge mode
+  });
+  await tick();
+
+  device = ipc.lastState()!.state.devices.find((d) => d.mac === BRIDGE)!;
+  assert.equal(device.bridge, true, "confirmed STATUS flips Device.bridge");
+});
+
+test("on start the ESP-NOW transport is told the persisted bridge MAC", async () => {
+  const harness = setup();
+  harness.store.bridgeMac = BRIDGE; // a designation that survived a restart
+  await harness.app.start();
+  assert.equal(harness.espnow.bridgeMacs.at(-1), BRIDGE);
 });

@@ -16,6 +16,7 @@
 #include <WiFi.h>
 
 #include "control.h"
+#include "espnow.h"
 #include "indicators.h"
 #include "led.h"
 #include "log.h"
@@ -34,12 +35,15 @@ constexpr unsigned long kReprovisionHoldMs = 3000;
 constexpr unsigned long kUsbBootGraceMs = 4000;
 
 // What the device is doing right now.
-//   USB_DECIDING — cabled WiFi device, waiting to see if a host claims it (USB-first boot)
-//   USB_OWNED    — a host won the cable; tally flows over USB, the radio is kept warm
-//   WIFI_CLIENT  — running the WiFi discovery/TCP tally client
-//   NOTX         — wired-only device; radio off, USB or local steady-blue only
-enum class Mode { USB_DECIDING, USB_OWNED, WIFI_CLIENT, NOTX };
+//   USB_DECIDING  — cabled WiFi device, waiting to see if a host claims it (USB-first boot)
+//   USB_OWNED     — a host won the cable; tally flows over USB, the radio is kept warm
+//   WIFI_CLIENT   — running the WiFi discovery/TCP tally client
+//   ESPNOW_CLIENT — running the ESP-NOW light (discovery → link → render), gated off while a host owns USB
+//   NOTX          — wired-only device; radio off, USB or local steady-blue only
+enum class Mode { USB_DECIDING, USB_OWNED, WIFI_CLIENT, ESPNOW_CLIENT, NOTX };
 Mode g_mode;
+
+bool g_espnowGated = false;  // ESPNOW_CLIENT only: the light is stopped because a USB host owns the cable
 
 uint8_t g_mac[6];
 char g_apSsid[24];          // "TallyLight-XXXXXX"
@@ -75,6 +79,25 @@ void checkBootButton(unsigned long now) {
     g_wifiUp = wifi::connected();
     g_mode = Mode::WIFI_CLIENT;
   }
+}
+
+// ESP-NOW light, with the "USB wins" gate: while a host owns the cable, tally comes from USB, so
+// the light's ESP-NOW client is stopped (no discovery broadcasts) — mirroring how the WiFi tally
+// client is gated off in USB_OWNED. Session end is the sessionLost edge (host silent past the
+// timeout), NOT !hostPresent(): g_hostSeen is sticky until resetSession(), so reading it as the
+// un-gate condition would leave a once-cabled light stopped forever after unplug.
+void serviceEspnowClient(unsigned long now) {
+  if (usb::hostPresent() && !g_espnowGated) {
+    g_espnowGated = true;
+    espnow::stopLight();  // USB drives tally now; local indicators step aside via suppressLocal
+    TLOG(LOG_LEVEL_INFO, "USB host detected; ESP-NOW light gated off\n");
+  } else if (g_espnowGated && usb::sessionLost(now)) {
+    usb::resetSession();  // clears g_hostSeen so a replugged host re-gates cleanly
+    g_espnowGated = false;
+    espnow::startLight();  // session ended — resume discovery
+    TLOG(LOG_LEVEL_INFO, "USB host lost; resuming ESP-NOW light\n");
+  }
+  if (!g_espnowGated) espnow::loopLight(now);
 }
 
 void serviceWifiClient(unsigned long now) {
@@ -114,23 +137,32 @@ void setup() {
   usb::begin(g_mac, onMessage);  // COBS channel up before any TLOG (release builds frame logs)
   settings::begin();
   tally::init(g_mac, onMessage);
+  espnow::init(g_mac, onMessage);
   wifi::begin(g_apSsid);
 
   TLOG(LOG_LEVEL_INFO, "=== TallyBot === AP %s\n", g_apSsid);
   pinMode(kBootButtonPin, INPUT_PULLUP);
   led::bootSelfTest();  // R→G→B→W — prove the LED works before anything network-related
 
-  if (settings::transportMode() == TRANSPORT_WIFI) {
-    wifi::enableRadio();       // STA + channel widening + cache the stored SSID
-    wifi::beginAssociation();  // non-blocking warm join (if provisioned), kept warm for USB-first
-    ind::joiningWifi();        // amber pulse during the grace window
-    g_mode = Mode::USB_DECIDING;
-    g_bootStart = millis();
-  } else {
-    wifi::disableRadio();
-    ind::lostServer();  // steady blue: USB-only until the app connects over USB
-    g_mode = Mode::NOTX;
-    TLOG(LOG_LEVEL_INFO, "No-TX mode: WiFi off, USB only\n");
+  switch (settings::transportMode()) {
+    case TRANSPORT_WIFI:
+      wifi::enableRadio();       // STA + channel widening + cache the stored SSID
+      wifi::beginAssociation();  // non-blocking warm join (if provisioned), kept warm for USB-first
+      ind::joiningWifi();        // amber pulse during the grace window
+      g_mode = Mode::USB_DECIDING;
+      g_bootStart = millis();
+      break;
+    case TRANSPORT_ESPNOW:
+      espnow::startLight();  // radio up as a light + begin discovery (ind::searching, cyan)
+      g_mode = Mode::ESPNOW_CLIENT;
+      TLOG(LOG_LEVEL_INFO, "ESP-NOW mode: discovering a bridge\n");
+      break;
+    default:  // TRANSPORT_NOTX
+      wifi::disableRadio();
+      ind::lostServer();  // steady blue: USB-only until the app connects over USB
+      g_mode = Mode::NOTX;
+      TLOG(LOG_LEVEL_INFO, "No-TX mode: WiFi off, USB only\n");
+      break;
   }
 }
 
@@ -140,6 +172,41 @@ void loop() {
   bool usbTallyReleased = usb::loop(now);  // pump RX, re-announce HELLO, release idle tally
   control::maybeEmitStatus(now);           // stream STATUS on change while a host is cabled
   checkBootButton(now);                    // hold BOOT → re-open WiFi setup
+
+  // Bridge mode is runtime + transport-agnostic: while active it owns the radio (relaying
+  // host↔light), so the per-mode client below stays suppressed. The host vanishing (port closed)
+  // tears it down, the same session-end cue that reverts a USB-owned WiFi device.
+  if (espnow::bridgeActive()) {
+    espnow::loopBridge();
+    if (usb::sessionLost(now)) {
+      TLOG(LOG_LEVEL_INFO, "USB host lost; leaving bridge mode\n");
+      usb::resetSession();
+      espnow::exitBridge();  // tears the bridge radio down + restores it per NVS (WiFi/No-TX)
+      // Resume the device's own transport client. exitBridge already rebuilt the WiFi/No-TX radio;
+      // here we re-establish g_mode + restart the matching client without a reboot (the device
+      // must keep rendering through designation changes).
+      switch (settings::transportMode()) {
+        case TRANSPORT_WIFI:
+          tally::start();  // radio re-enabled by exitBridge; (re)bind discovery
+          g_wifiUp = wifi::connected();
+          g_mode = Mode::WIFI_CLIENT;
+          break;
+        case TRANSPORT_ESPNOW:
+          espnow::startLight();  // exitBridge left the radio down for the light to own
+          g_espnowGated = false;
+          g_mode = Mode::ESPNOW_CLIENT;
+          break;
+        default:  // TRANSPORT_NOTX
+          ind::lostServer();
+          g_mode = Mode::NOTX;
+          break;
+      }
+    } else {
+      led::render(now);
+      delay(1);
+      return;
+    }
+  }
 
   switch (g_mode) {
     case Mode::USB_DECIDING:
@@ -169,6 +236,10 @@ void loop() {
 
     case Mode::WIFI_CLIENT:
       serviceWifiClient(now);
+      break;
+
+    case Mode::ESPNOW_CLIENT:
+      serviceEspnowClient(now);
       break;
 
     case Mode::NOTX:

@@ -42,6 +42,15 @@ export const DeviceMessageType = {
   LOG: 0x04,
   /** WiFi scan result. Reserved; deferred post-v1.2 (the user types the SSID for now). */
   SCAN_RESULT: 0x05,
+  /**
+   * `[type][srcMAC×6][inner…]` — an ESP-NOW frame a bridge received from a light,
+   * forwarded up the USB pipe. `srcMAC` comes from the ESP-NOW receive callback, so
+   * MAC-less inner payloads (HEARTBEAT) stay attributable (USB, bridge only). The
+   * device→host and host→device type spaces are independent, so this shares the name
+   * "RELAY" with the host→device `ServerMessageType.RELAY` (0x07) — same envelope, both
+   * directions, distinct values.
+   */
+  RELAY: 0x06,
 } as const;
 
 /** Server → device (a.k.a. host → device) message types. */
@@ -56,20 +65,35 @@ export const ServerMessageType = {
   GET_STATUS: 0x05,
   /** Request a WiFi scan → SCAN_RESULT. Reserved; deferred post-v1.2. */
   SCAN_WIFI: 0x06,
-  /** v1.3 ESP-NOW bridge relay `[type][targetMAC×6][inner…]`. Reserved; unimplemented. */
+  /**
+   * `[type][targetMAC×6][inner…]` — sent over USB to a bridge, which strips the 7-byte
+   * header and sends `inner` verbatim to `targetMAC` over ESP-NOW (USB, bridge only).
+   */
   RELAY: 0x07,
+  /** `[type][enabled][channel]` — enter/leave bridge mode. Runtime-only; never persisted (USB). */
+  SET_BRIDGE: 0x08,
 } as const;
 
 // ── Shared field enums (used inside the payloads above) ──────────────────────
 
 /**
  * How a device reaches the server when unplugged. **Open enum** — store as an int
- * everywhere (NVS, wire byte, IPC), never a bool: v1.3 adds `2 = ESP-NOW`.
+ * everywhere (NVS, wire byte, IPC), never a bool.
  */
 export const Transport = {
   NOTX: 0,
   WIFI: 1,
+  /** Receives tally over ESP-NOW from a USB-connected bridge; joins no network. */
+  ESPNOW: 2,
 } as const;
+
+/**
+ * The default ESP-NOW channel the host sends in `SET_TRANSPORT(ESPNOW)` and `SET_BRIDGE`.
+ * Channel 1 is legal everywhere and is what the sidecar emits unconditionally today —
+ * configurability is wire-level (the byte is on every frame), not surfaced in the UI: it's
+ * the escape hatch for a crowded venue (a host update re-channels every light, no re-flash).
+ */
+export const ESPNOW_CHANNEL = 1;
 
 /** WiFi join progress, streamed in STATUS so the wizard confirms a join before unplug. */
 export const WifiState = {
@@ -92,12 +116,13 @@ export const LogLevel = {
 
 export const PROTOCOL_VERSION = {
   /**
-   * The version the server prefers / emits. Bumped 1 → 2 for USB provisioning: a v2
-   * HELLO tells the app the firmware understands SET_WIFI/SET_TRANSPORT, so the app
-   * only sends those to a device reporting version ≥ 2. (Those frames only ever travel
-   * over USB anyway, where the firmware is by definition new.)
+   * The version the server prefers / emits. Bumped 1 → 2 for USB provisioning (a v2
+   * HELLO tells the app the firmware understands SET_WIFI/SET_TRANSPORT), then 2 → 3
+   * for ESP-NOW: a v3 HELLO means the firmware understands SET_TRANSPORT(ESPNOW),
+   * SET_BRIDGE, RELAY (both directions), and emits the STATUS [channel][bridging] bytes. The app only sends
+   * each generation's frames to devices reporting at least that version.
    */
-  CURRENT: 2,
+  CURRENT: 3,
   /** The oldest device version the server still handles; below this it warns. */
   MIN_SUPPORTED: 1,
 } as const;
@@ -247,15 +272,47 @@ export function setWifiPayload(ssid: string, password: string): Uint8Array {
   return out;
 }
 
-/** SET_TRANSPORT payload: `[type][mode]` (USB only). `mode` is a {@link Transport} value. */
-export function setTransportPayload(mode: number): Uint8Array {
+/**
+ * SET_TRANSPORT payload (USB only). `mode` is a {@link Transport} value. `[type][mode]` for
+ * No-TX/WiFi; `[type][mode][channel]` when a channel is given (ESP-NOW callers pass
+ * {@link ESPNOW_CHANNEL}) — the device persists the channel, defaulting to 1 when the byte is absent.
+ */
+export function setTransportPayload(mode: number, channel?: number): Uint8Array {
   assertByte("mode", mode);
-  return Uint8Array.of(ServerMessageType.SET_TRANSPORT, mode);
+  if (channel === undefined) {
+    return Uint8Array.of(ServerMessageType.SET_TRANSPORT, mode);
+  }
+  assertByte("channel", channel);
+  return Uint8Array.of(ServerMessageType.SET_TRANSPORT, mode, channel);
 }
 
 /** GET_STATUS payload: `[type]` (USB only) — ask the device for a STATUS frame. */
 export function getStatusPayload(): Uint8Array {
   return Uint8Array.of(ServerMessageType.GET_STATUS);
+}
+
+/**
+ * RELAY payload: `[type][targetMAC×6][inner…]` (USB only, to a bridge). Wraps an
+ * unframed server→device payload for one ESP-NOW light behind the bridge; the bridge
+ * strips the 7-byte header and sends `inner` verbatim, never reading it.
+ */
+export function relayPayload(targetMac: string, inner: Uint8Array): Uint8Array {
+  const out = new Uint8Array(7 + inner.length);
+  out[0] = ServerMessageType.RELAY;
+  out.set(parseMac(targetMac), 1);
+  out.set(inner, 7);
+  return out;
+}
+
+/**
+ * SET_BRIDGE payload: `[type][enabled][channel]` (USB only). Runtime-only — the sidecar
+ * persists the designation and re-asserts it on every USB (re)connect; the device never
+ * stores it. `channel` is the ESP-NOW channel to bridge on ({@link ESPNOW_CHANNEL}); it's
+ * required even when disabling (the device ignores it then).
+ */
+export function setBridgePayload(enabled: boolean, channel: number): Uint8Array {
+  assertByte("channel", channel);
+  return Uint8Array.of(ServerMessageType.SET_BRIDGE, enabled ? 1 : 0, channel);
 }
 
 // ── Device → server decoder ────────────────────────────────────────────────────
@@ -290,6 +347,16 @@ export interface StatusMessage {
    * (`ssid !== ""` carries the same signal).
    */
   ssid: string;
+  /**
+   * The device's stored ESP-NOW channel (`[channel]`, a v3 addition after the SSID). Null when
+   * the byte is absent — pre-v3 firmware that doesn't report one.
+   */
+  channel: number | null;
+  /**
+   * True while the device is in bridge mode (the `[bridging]` byte after `[channel]`, non-zero).
+   * Both trailing bytes are a v3 addition; absent on older firmware → false.
+   */
+  bridge: boolean;
 }
 
 /** A framed log line from the device (USB release builds emit these instead of raw text). */
@@ -300,7 +367,24 @@ export interface LogMessage {
   text: string;
 }
 
-export type DeviceMessage = HelloMessage | HeartbeatMessage | StatusMessage | LogMessage;
+/**
+ * An ESP-NOW frame a bridge received and forwarded up. `inner` is itself an unframed
+ * device→server payload — run it back through {@link decodeDeviceMessage} (the
+ * envelope is the only layer the bridge adds).
+ */
+export interface RelayedMessage {
+  kind: "relayed";
+  /** STA MAC of the ESP-NOW light that sent `inner` (from the receive callback). */
+  srcMac: string;
+  inner: Uint8Array;
+}
+
+export type DeviceMessage =
+  | HelloMessage
+  | HeartbeatMessage
+  | StatusMessage
+  | LogMessage
+  | RelayedMessage;
 
 /**
  * Decode one unframed device→server payload (as produced by {@link FrameDecoder} on TCP,
@@ -328,8 +412,11 @@ export function decodeDeviceMessage(payload: Uint8Array): DeviceMessage {
       return { kind: "heartbeat" };
     }
     case DeviceMessageType.STATUS: {
-      // [type][transport][wifiState][rssi][ssidLen][ssid…] — ≥ 5 payload bytes
-      // (ssidLen is always present, 0 when the device has no stored creds).
+      // [type][transport][wifiState][rssi][ssidLen][ssid…][channel][bridging] — ≥ 5 payload
+      // bytes (ssidLen is always present, 0 when the device has no stored creds; the two
+      // trailing bytes are a v3 addition — absent on older firmware, per the skip-trailing
+      // rule). A v3 device always sends both; if only one is present we read it as the
+      // channel with bridging off (lenient decoding).
       if (payload.length < 5) {
         throw new RangeError(`STATUS payload must be at least 5 bytes, got ${payload.length}`);
       }
@@ -337,12 +424,17 @@ export function decodeDeviceMessage(payload: Uint8Array): DeviceMessage {
       if (payload.length < 5 + ssidLen) {
         throw new RangeError(`STATUS SSID truncated: need ${5 + ssidLen} bytes, got ${payload.length}`);
       }
+      const tail = 5 + ssidLen;
+      const channel = payload.length > tail ? payload[tail]! : null;
+      const bridge = payload.length > tail + 1 ? payload[tail + 1]! !== 0 : false;
       return {
         kind: "status",
         transport: payload[1]!,
         wifiState: payload[2]!,
         rssi: (payload[3]! << 24) >> 24, // sign-extend the byte
-        ssid: new TextDecoder().decode(payload.subarray(5, 5 + ssidLen)),
+        ssid: new TextDecoder().decode(payload.subarray(5, tail)),
+        channel,
+        bridge,
       };
     }
     case DeviceMessageType.LOG: {
@@ -351,6 +443,17 @@ export function decodeDeviceMessage(payload: Uint8Array): DeviceMessage {
         throw new RangeError(`LOG payload must be at least 2 bytes, got ${payload.length}`);
       }
       return { kind: "log", level: payload[1]!, text: new TextDecoder().decode(payload.subarray(2)) };
+    }
+    case DeviceMessageType.RELAY: {
+      // [type][srcMAC×6][inner…] — the inner payload must at least carry a type byte
+      if (payload.length < 8) {
+        throw new RangeError(`RELAY payload must be at least 8 bytes, got ${payload.length}`);
+      }
+      return {
+        kind: "relayed",
+        srcMac: formatMac(payload.subarray(1, 7)),
+        inner: payload.slice(7),
+      };
     }
     default:
       throw new RangeError(`unknown device message type 0x${type.toString(16).padStart(2, "0")}`);
@@ -365,6 +468,15 @@ export function formatMac(bytes: Uint8Array): string {
     throw new RangeError(`MAC must be 6 bytes, got ${bytes.length}`);
   }
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join(":");
+}
+
+/** "aa:bb:cc:dd:ee:ff" (any case) → six raw MAC bytes. Inverse of {@link formatMac}. */
+export function parseMac(mac: string): Uint8Array {
+  const parts = mac.split(":");
+  if (parts.length !== 6 || parts.some((p) => !/^[0-9a-fA-F]{2}$/.test(p))) {
+    throw new RangeError(`not a MAC address: "${mac}"`);
+  }
+  return Uint8Array.from(parts, (p) => Number.parseInt(p, 16));
 }
 
 /**

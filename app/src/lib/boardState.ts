@@ -41,6 +41,8 @@ function provisioning(d: Device) {
 		ssid: d.ssid ?? null,
 		wifiState: d.wifiState,
 		rssi: d.rssi,
+		protocolVersion: d.protocolVersion,
+		bridge: d.bridge ?? false,
 	};
 }
 

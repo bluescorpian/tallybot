@@ -9,13 +9,15 @@
 //!   • shell → sidecar (written to the sidecar's stdin):
 //!       {"type":"usbDeviceConnected","mac":..,"version":..}
 //!       {"type":"usbDeviceDisconnected","mac":..}
-//!       {"type":"usbFrame","mac":..,"payloadHex":..}   // STATUS/LOG/other device→host payloads
+//!       {"type":"usbFrame","mac":..,"payloadHex":..}   // STATUS/LOG/RELAY/other device→host payloads
 //!       {"type":"unflashedDeviceDetected","port":..}
 //!   • sidecar → shell (read off the sidecar's stdout, intercepted before the UI):
-//!       {"type":"usbSend","mac":..,"payloadHex":..}     // SET_COLOR/SET_WIFI/SET_TRANSPORT/GET_STATUS
+//!       {"type":"usbSend","mac":..,"payloadHex":..}     // SET_COLOR/SET_WIFI/SET_TRANSPORT/GET_STATUS/RELAY/SET_BRIDGE
 //!
-//! One device per USB port is a v1.2 assumption (a v1.3 ESP-NOW bridge would relay to
-//! many lights behind one port — the RELAY type byte is reserved for it).
+//! The v1.3 ESP-NOW bridge relays many lights behind one port, and the shell stays
+//! out of it by construction: a RELAY-wrapped send is just a `usbSend` to the bridge's
+//! MAC, and a RELAY uplink frame isn't an 8-byte HELLO so it forwards opaque as a
+//! `usbFrame` — the relay envelope is encoded/decoded entirely in the sidecar.
 
 pub mod protocol;
 mod port;

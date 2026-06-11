@@ -47,9 +47,11 @@
 	// light state: assigned-to-live, assigned-to-preview, assigned-to-idle,
 	// offline, and unassigned (dock → setup). When the source drops, the assigned
 	// lights flash FAULT (their input tally goes `unknown`), not idle.
-	// Two are wired over USB (transport "usb") to exercise v1.2 configuration:
+	// Wired over USB (transport "usb") to exercise v1.2 + v1.3 configuration:
 	//   A4:F2 — assigned + already provisioned for Wi-Fi (the reconfigure path)
 	//   D2:44 — docked + never provisioned (the first-time Configure path)
+	//   F0:0D — docked v3 device designated as the ESP-NOW bridge (the bridge toggle)
+	// And one ESP-NOW light (transport "espnow") relayed through that bridge.
 	let devices = $state<Device[]>([
 		mock("a4:f2:01:00:11:22", "A4:F2", "assigned", 1, {
 			transport: "usb",
@@ -60,9 +62,20 @@
 		mock("7b:1c:01:00:33:44", "7B:1C", "assigned", 1),
 		mock("3e:90:01:00:55:66", "3E:90", "assigned", 2),
 		mock("c1:08:01:00:77:88", "C1:08", "offline", 3),
+		mock("b2:5a:01:00:ee:ff", "B2:5A", "assigned", 4, {
+			transport: "espnow",
+			provisionedMode: "espnow",
+			protocolVersion: 3,
+		}),
 		mock("d2:44:01:00:99:aa", "D2:44", "unassigned", null, {
 			transport: "usb",
 			wifiState: "idle",
+		}),
+		mock("f0:0d:01:00:bb:cc", "F0:0D", "unassigned", null, {
+			transport: "usb",
+			provisionedMode: "notx",
+			protocolVersion: 3,
+			bridge: true,
 		}),
 		mock("9f:31:01:00:bb:cc", "9F:31", "unassigned", null),
 	]);
@@ -73,7 +86,16 @@
 		state: Device["state"],
 		inputId: number | null,
 		opts: Partial<
-			Pick<Device, "transport" | "provisionedMode" | "ssid" | "wifiState" | "rssi">
+			Pick<
+				Device,
+				| "transport"
+				| "provisionedMode"
+				| "ssid"
+				| "wifiState"
+				| "rssi"
+				| "protocolVersion"
+				| "bridge"
+			>
 		> = {},
 	): Device {
 		return {
@@ -82,13 +104,14 @@
 			state,
 			inputId,
 			brightness: 128,
-			protocolVersion: opts.transport === "usb" ? 2 : 1,
+			protocolVersion: opts.protocolVersion ?? (opts.transport === "usb" ? 2 : 1),
 			firmwareOutdated: false,
 			transport: opts.transport ?? "wifi",
 			provisionedMode: opts.provisionedMode ?? null,
 			ssid: opts.ssid ?? null,
 			wifiState: opts.wifiState ?? null,
 			rssi: opts.rssi ?? null,
+			bridge: opts.bridge ?? false,
 		};
 	}
 
@@ -185,16 +208,24 @@
 		d.provisionedMode = "wifi";
 		d.ssid = ssid;
 	}
-	function setTransport(mac: string, mode: "wifi" | "notx") {
+	function setTransport(mac: string, mode: "wifi" | "notx" | "espnow") {
 		if (isTauri) return sidecar.setTransport(mac, mode);
 		const d = devices.find((x) => x.mac === mac || x.macTail === mac);
 		if (!d) return;
-		if (mode === "notx") {
-			d.provisionedMode = "notx";
-			d.ssid = null;
-		} else {
+		if (mode === "wifi") {
 			d.provisionedMode = "wifi";
+		} else {
+			// No-TX and ESP-NOW both commit inline with no credentials (ESP-NOW gets
+			// tally from a bridge, not a network), so neither carries an SSID.
+			d.provisionedMode = mode;
+			d.ssid = null;
 		}
+	}
+	// One bridge per session: designating a new MAC clears the previous one (the
+	// sidecar enforces this; the mock mirrors it so the marker moves as expected).
+	function setBridge(mac: string | null) {
+		if (isTauri) return sidecar.setBridge(mac);
+		for (const d of devices) d.bridge = d.mac === mac || d.macTail === mac;
 	}
 	function setup() {
 		// the SourceChip "Set up your ATEM →" link — opens the settings drawer on
@@ -259,6 +290,7 @@
 			onbrightness={setBrightness}
 			onprovisionwifi={provisionWifi}
 			onsettransport={setTransport}
+			onsetbridge={setBridge}
 			onsetup={setup}
 			oninputclick={devMode ? onInputClick : undefined}
 		/>

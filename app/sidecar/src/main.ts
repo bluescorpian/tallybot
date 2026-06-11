@@ -21,6 +21,7 @@ import { SidecarApp } from "./app.ts";
 import { type AtemLike, AtemSource } from "./atem.ts";
 import { CompositeDeviceServer } from "./composite-device-server.ts";
 import { DeviceServer } from "./device-server.ts";
+import { EspNowTransport } from "./espnow-transport.ts";
 import { IpcBridge } from "./ipc-bridge.ts";
 import { ConfigStore } from "./store.ts";
 import { UsbTransport } from "./usb-transport.ts";
@@ -57,19 +58,24 @@ async function main(): Promise<void> {
   const atem = new AtemSource(new Atem() as unknown as AtemLike);
   const ipc = new IpcBridge();
 
-  // The device server fans out over both transports, USB preferred when a MAC is on both.
-  // The USB transport rides the same shell↔sidecar bridge `ipc` owns; the shell owns the port.
+  // The device server fans out over three transports, in priority order — USB wins when a MAC is
+  // on more than one (a light cabled for re-provisioning dedupes to its USB presence). The USB
+  // transport rides the same shell↔sidecar bridge `ipc` owns; the shell owns the port. The
+  // ESP-NOW transport rides *on top of* USB: relayed lights reach the host through the bridge's
+  // cable (see `docs/spec/esp-now-transport.md`).
   const tcp = new DeviceServer();
   const usb = new UsbTransport(ipc);
+  const espnow = new EspNowTransport(usb);
   const deviceServer = new CompositeDeviceServer(
     [
       { transport: "usb", port: usb },
       { transport: "wifi", port: tcp },
+      { transport: "espnow", port: espnow },
     ],
     usb,
   );
 
-  const app = new SidecarApp({ atem, deviceServer, provisioning: deviceServer, store, ipc });
+  const app = new SidecarApp({ atem, deviceServer, provisioning: deviceServer, espnow, store, ipc });
   await app.start();
   process.stderr.write("tallybot sidecar started\n");
 

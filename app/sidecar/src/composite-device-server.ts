@@ -111,6 +111,10 @@ export class CompositeDeviceServer extends EventEmitter implements DeviceServerP
     return this.#usb?.setTransport(mac, mode) ?? false;
   }
 
+  setBridge(mac: string, enabled: boolean): boolean {
+    return this.#usb?.setBridge(mac, enabled) ?? false;
+  }
+
   requestStatus(mac: string): boolean {
     return this.#usb?.requestStatus(mac) ?? false;
   }

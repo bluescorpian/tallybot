@@ -183,6 +183,23 @@ void wifi::enableRadio() {
 
 void wifi::disableRadio() { WiFi.mode(WIFI_OFF); }
 
+void wifi::espnowRadioUp(uint8_t channel) {
+  WiFi.mode(WIFI_STA);
+  // No association — ESP-NOW must own a pinned channel, not chase an AP. Auto-reconnect must be
+  // off too: a device with saved creds would otherwise silently re-associate behind our back and
+  // drag the radio off the pinned channel (beginAssociation() turns it back on when WiFi resumes).
+  WiFi.setAutoReconnect(false);
+  WiFi.disconnect();
+  setCountry();
+  WiFi.setTxPower(WIFI_POWER_19_5dBm);  // full power, matching the WiFi path
+  esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+}
+
+void wifi::dropAssociation() {
+  WiFi.setAutoReconnect(false);  // see espnowRadioUp — a re-association would steal the channel
+  WiFi.disconnect();
+}
+
 bool wifi::connected() { return WiFi.status() == WL_CONNECTED; }
 
 void wifi::connectBlocking() {
@@ -207,6 +224,7 @@ void wifi::beginAssociation() {
   if (g_storedSsid[0] == '\0') return;  // no creds — don't start a doomed join
   WiFi.persistent(true);
   WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);  // restore the default an ESP-NOW stint turned off
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
   WiFi.begin();  // reuse the persisted STA creds — non-blocking
   beginJoin();

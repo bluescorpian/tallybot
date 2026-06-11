@@ -174,6 +174,7 @@ test("the device snapshot carries identity, assignment, and brightness through",
     rssi: null,
     provisionedMode: null,
     ssid: null,
+    bridge: false,
   });
 });
 

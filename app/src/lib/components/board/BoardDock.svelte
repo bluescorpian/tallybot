@@ -22,7 +22,9 @@
 		/** Provision a device's Wi-Fi (persist creds; save-only — no live join). */
 		onprovisionwifi?: (mac: string, ssid: string, pass: string) => void;
 		/** Set a device's unplugged transport mode. */
-		onsettransport?: (mac: string, mode: "wifi" | "notx") => void;
+		onsettransport?: (mac: string, mode: "wifi" | "notx" | "espnow") => void;
+		/** Designate (mac) / un-designate (null) the ESP-NOW bridge device. */
+		onsetbridge?: (mac: string | null) => void;
 	}
 	let {
 		lights,
@@ -33,6 +35,7 @@
 		onbrightness,
 		onprovisionwifi,
 		onsettransport,
+		onsetbridge,
 	}: Props = $props();
 </script>
 
@@ -56,11 +59,14 @@
 					ssid={light.ssid}
 					wifiState={light.wifiState}
 					rssi={light.rssi}
+					protocolVersion={light.protocolVersion}
+					bridge={light.bridge}
 					onassign={(id) => onassign?.(light.mac, id)}
 					onflash={() => onflash?.(light.mac)}
 					onbrightness={(v) => onbrightness?.(light.mac, v)}
 					onprovisionwifi={(s, p) => onprovisionwifi?.(light.mac, s, p)}
 					onsettransport={(m) => onsettransport?.(light.mac, m)}
+					onsetbridge={(enabled) => onsetbridge?.(enabled ? light.mac : null)}
 				/>
 			</div>
 		{/each}

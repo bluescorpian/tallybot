@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 
-import { COLORS, ServerMessageType, Transport, WifiState } from "./protocol.ts";
+import { COLORS, DeviceMessageType, ServerMessageType, Transport, WifiState } from "./protocol.ts";
 import { type UsbInbound, type UsbOutbound, fromHex, toHex } from "./usb-bridge.ts";
 import { UsbTransport, transportModeValue } from "./usb-transport.ts";
 
@@ -80,6 +80,16 @@ test("provisionWifi / setTransport encode their payloads", () => {
   assert.deepEqual([...fromHex(bridge.sent[1]!.payloadHex)], [ServerMessageType.SET_TRANSPORT, Transport.NOTX]);
 });
 
+test("setTransport(espnow) appends the ESP-NOW channel byte", () => {
+  const bridge = new FakeBridge();
+  const usb = new UsbTransport(bridge);
+  bridge.feed({ type: "usbDeviceConnected", mac: MAC, version: 3 });
+
+  usb.setTransport(MAC, transportModeValue("espnow"));
+  // [type][mode=2][channel=1] — the channel rides only for ESP-NOW.
+  assert.deepEqual([...fromHex(bridge.sent[0]!.payloadHex)], [ServerMessageType.SET_TRANSPORT, Transport.ESPNOW, 1]);
+});
+
 test("an inbound STATUS frame is decoded into a status event", () => {
   const bridge = new FakeBridge();
   const usb = new UsbTransport(bridge);
@@ -92,7 +102,7 @@ test("an inbound STATUS frame is decoded into a status event", () => {
   const payload = Uint8Array.of(0x03, Transport.WIFI, WifiState.CONNECTED, 0xce, ssid.length, ...new TextEncoder().encode(ssid));
   bridge.feed({ type: "usbFrame", mac: MAC, payloadHex: toHex(payload) });
   assert.deepEqual(statuses, [
-    { mac: MAC, mode: Transport.WIFI, wifiState: "connected", rssi: -50, ssid },
+    { mac: MAC, mode: Transport.WIFI, wifiState: "connected", rssi: -50, ssid, channel: null, bridge: false },
   ]);
 });
 
@@ -115,4 +125,58 @@ test("unflashedDeviceDetected is surfaced", () => {
   usb.on("unflashed", ({ port }) => ports.push(port));
   bridge.feed({ type: "unflashedDeviceDetected", port: "/dev/ttyACM0" });
   assert.deepEqual(ports, ["/dev/ttyACM0"]);
+});
+
+// ── v1.3 ESP-NOW ─────────────────────────────────────────────────────────────────
+
+test("transportModeValue maps espnow to the ESPNOW wire byte", () => {
+  assert.equal(transportModeValue("notx"), Transport.NOTX);
+  assert.equal(transportModeValue("wifi"), Transport.WIFI);
+  assert.equal(transportModeValue("espnow"), Transport.ESPNOW);
+});
+
+test("a STATUS with the [channel][bridging] pair surfaces channel + bridge", () => {
+  const bridge = new FakeBridge();
+  const usb = new UsbTransport(bridge);
+  const statuses: Array<{ channel: number | null; bridge: boolean }> = [];
+  usb.on("status", (s) => statuses.push(s));
+  bridge.feed({ type: "usbDeviceConnected", mac: MAC, version: 3 });
+
+  // STATUS [type][transport=ESPNOW][wifiState=idle][rssi=0][ssidLen=0][channel=1][bridging=1]
+  const payload = Uint8Array.of(DeviceMessageType.STATUS, Transport.ESPNOW, WifiState.IDLE, 0, 0, 1, 0x01);
+  bridge.feed({ type: "usbFrame", mac: MAC, payloadHex: toHex(payload) });
+  assert.equal(statuses.at(-1)?.channel, 1);
+  assert.equal(statuses.at(-1)?.bridge, true);
+});
+
+test("setBridge sends [type][enabled][channel] only while the device is on USB", () => {
+  const bridge = new FakeBridge();
+  const usb = new UsbTransport(bridge);
+  assert.equal(usb.setBridge(MAC, true), false); // not connected yet
+  bridge.feed({ type: "usbDeviceConnected", mac: MAC, version: 3 });
+
+  assert.equal(usb.setBridge(MAC, true), true);
+  // 3 bytes ending in the ESP-NOW channel (1).
+  assert.deepEqual([...fromHex(bridge.sent[0]!.payloadHex)], [ServerMessageType.SET_BRIDGE, 1, 1]);
+  usb.setBridge(MAC, false);
+  assert.deepEqual([...fromHex(bridge.sent[1]!.payloadHex)], [ServerMessageType.SET_BRIDGE, 0, 1]);
+});
+
+test("a RELAY frame is re-emitted as a relayed event (bridgeMac + srcMac + inner)", () => {
+  const bridge = new FakeBridge();
+  const usb = new UsbTransport(bridge);
+  const relayed: Array<{ bridgeMac: string; srcMac: string; inner: Uint8Array }> = [];
+  usb.on("relayed", (r) => relayed.push(r));
+  bridge.feed({ type: "usbDeviceConnected", mac: MAC, version: 3 });
+
+  // The bridge (MAC) forwards a light's HELLO up: RELAY [srcMAC×6][inner HELLO].
+  const light = [0x01, 0x23, 0x45, 0x67, 0x89, 0xab];
+  const inner = [DeviceMessageType.HELLO, 3, 0xde, 0xad, 0xbe, 0xef, 0x00, 0x11];
+  const payload = Uint8Array.of(DeviceMessageType.RELAY, ...light, ...inner);
+  bridge.feed({ type: "usbFrame", mac: MAC, payloadHex: toHex(payload) });
+
+  assert.equal(relayed.length, 1);
+  assert.equal(relayed[0]!.bridgeMac, MAC); // the USB device the frame arrived on
+  assert.equal(relayed[0]!.srcMac, "01:23:45:67:89:ab"); // the light, from the bridge's RX callback
+  assert.deepEqual([...relayed[0]!.inner], inner);
 });

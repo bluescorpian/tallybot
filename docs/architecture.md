@@ -64,6 +64,13 @@ The Svelte UI communicates with the sidecar via Tauri's IPC event system.
 
 Data flow: ATEM state change → Node.js sidecar → TCP socket → ESP32 → WS2812 LED.
 
+Devices provisioned for **ESP-NOW** (v1.3) bypass the network entirely: a USB-connected
+device the app designates as a **bridge** relays commands between the sidecar (over the
+USB-CDC channel, RELAY-wrapped) and nearby lights (over ESP-NOW, Espressif's peer-to-peer
+MAC-layer protocol — no AP, router, or network required). Data flow on that path:
+ATEM state change → sidecar → USB (RELAY) → bridge → ESP-NOW → ESP32 → WS2812 LED.
+The full design is in [`docs/spec/esp-now-transport.md`](spec/esp-now-transport.md).
+
 ---
 
 ## Network Protocol
@@ -72,7 +79,8 @@ Data flow: ATEM state change → Node.js sidecar → TCP socket → ESP32 → WS
 
 Devices and the streaming PC must be on the same subnet. UDP broadcast and direct TCP
 do not cross router or VLAN boundaries. This is an accepted constraint — document it
-clearly for end users.
+clearly for end users. (The v1.3 ESP-NOW transport sidesteps the network — and this
+limitation — entirely for venues where no usable WiFi exists.)
 
 ---
 
@@ -87,6 +95,12 @@ Devices and the server find each other without hardcoded IPs using a combined ap
 
 This is startup-order independent: devices keep retrying until the server is reachable,
 and the server accepts connections as they arrive.
+
+**ESP-NOW discovery mirrors this one layer down** (v1.3): a light broadcasts the same
+`TALLY_FIND` string to the ESP-NOW broadcast MAC (`ff:ff:ff:ff:ff:ff`) every 2 seconds; the
+bridge registers the sender as a peer and unicasts the same `TALLY_HERE:7000` reply (the
+port is meaningless over ESP-NOW and ignored — one reply format on both transports). The
+light then sends HELLO through the bridge and rides SET_COLOR exactly as a TCP device does.
 
 ---
 
@@ -127,6 +141,10 @@ length-prefixing is the simplest one that also tolerates change.
 | HELLO | 0x01 | `[type][version][MAC×6]` | 9 bytes |
 | HEARTBEAT | 0x02 | `[type]` | 2 bytes |
 
+(USB adds STATUS `0x03`, LOG `0x04`, and the bridge's device→host RELAY envelope `0x06`
+`[type][srcMAC×6][inner…]`; see [`docs/spec/usb-serial-protocol.md`](spec/usb-serial-protocol.md)
+and [`docs/spec/esp-now-transport.md`](spec/esp-now-transport.md) for those tables.)
+
 HELLO is sent immediately on connect and on every reconnect; it carries the device's MAC
 and the protocol version it speaks. HEARTBEAT is sent every 10 seconds and carries no MAC
 — the server already knows which device a connection belongs to from its HELLO (the TCP
@@ -145,6 +163,13 @@ it was IDENTIFY, a one-shot "flash to locate" the device drew itself. Locating i
 server concern — to flash a device the sidecar streams a white/off SET_COLOR burst (see the
 locate strobe in `app.ts`), so the firmware stays dumb and only ever renders the colours it's
 sent.
+
+(USB adds SET_WIFI `0x03`, SET_TRANSPORT `0x04` — `[type][mode]`, or `[type][mode][channel]`
+for ESP-NOW mode 2 — GET_STATUS `0x05`, the host→bridge RELAY envelope `0x07`
+`[type][targetMAC×6][inner…]`, and SET_BRIDGE `0x08` `[type][enabled][channel]`; tables in
+the [USB](spec/usb-serial-protocol.md) and [ESP-NOW](spec/esp-now-transport.md) specs. An
+ESP-NOW light receives the same `[type][fields…]` payloads as one raw datagram each — no
+framing; the envelope is stripped by the bridge.)
 
 **SET_COLOR is idempotent state, not a one-shot event.** The sidecar re-asserts every
 connected device's current colour on a ~1 s keyframe tick (in addition to sending on change),
@@ -184,6 +209,11 @@ HELLO carries the protocol version the device speaks. The server defines two con
 Backward-compatibility lives in the **server** (easy to update), not the **firmware**
 (flashed onto physical devices). Raising `MIN_SUPPORTED` is how very old versions are
 eventually retired.
+
+History: `CURRENT` went 1 → 2 for USB provisioning (v1.2: SET_WIFI/SET_TRANSPORT/STATUS),
+then 2 → 3 for ESP-NOW (v1.3: SET_TRANSPORT mode 2 + channel, SET_BRIDGE, the RELAY
+envelopes, STATUS's trailing `[channel][bridging]` bytes). The app only offers ESP-NOW
+provisioning and bridge designation to devices reporting ≥ 3. `MIN_SUPPORTED` remains 1.
 
 ### Standard Colours
 
@@ -251,6 +281,10 @@ Each device is identified by its MAC address, read via WiFi.macAddress() on the 
 The MAC is included in every TCP message from the device. The server stores a mapping of
 **MAC → assigned ATEM input** (e.g. AA:BB:CC:DD:EE:FF → input 1), persisted to disk by
 the Node.js sidecar so assignments survive app restarts.
+
+This is the **STA-interface** MAC, and ESP-NOW deliberately runs on the STA interface
+(v1.3): ESP-NOW addresses peers by MAC, so the address a bridge relays to is byte-identical
+to the identity the sidecar already maps — one MAC, every transport.
 
 Devices have **no user-given name**: a device is identified by its MAC (shown as a short
 tail in the UI) and located physically with a flash (the locate strobe). Human-readable labels come
