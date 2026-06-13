@@ -167,7 +167,11 @@ sent.
 (USB adds SET_WIFI `0x03`, SET_TRANSPORT `0x04` — `[type][mode]`, or `[type][mode][channel]`
 for ESP-NOW mode 2 — GET_STATUS `0x05`, the host→bridge RELAY envelope `0x07`
 `[type][targetMAC×6][inner…]`, and SET_BRIDGE `0x08` `[type][enabled][channel]`; tables in
-the [USB](spec/usb-serial-protocol.md) and [ESP-NOW](spec/esp-now-transport.md) specs. An
+the [USB](spec/usb-serial-protocol.md) and [ESP-NOW](spec/esp-now-transport.md) specs.
+GET_STATUS doubles as the host's **identity probe**: the device replies HELLO *then* STATUS.
+The shell writes one GET_STATUS the moment it opens a port, because a device that already saw
+a host has stopped its unsolicited HELLO loop — without the probe, an app restart would leave
+the device undetected (and a bridge torn down) until the device's own session timeout. An
 ESP-NOW light receives the same `[type][fields…]` payloads as one raw datagram each — no
 framing; the envelope is stripped by the bridge.)
 

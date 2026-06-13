@@ -51,6 +51,12 @@ void control::dispatch(const ServerMessage& msg) {
       emitStatus();
       break;
     case ServerMessage::GET_STATUS:
+      // HELLO first: GET_STATUS doubles as the host's identity probe. The unsolicited HELLO
+      // re-announce stops on the first host frame (g_hostSeen is sticky), so a host that
+      // reopens the port mid-session would otherwise never learn the MAC — it probes with
+      // GET_STATUS on open and this reply re-identifies the device. Mid-session the extra
+      // HELLO is benign (the shell ignores re-HELLOs once the MAC is known).
+      usb::sendHello();
       emitStatus();
       break;
     case ServerMessage::SET_BRIDGE:

@@ -106,7 +106,7 @@ additive. Each row is the COBS frame payload (`[type]` is the first byte).
 | ~~IDENTIFY~~ | `0x02` | — | **Retired.** Locate is now a server-streamed white/off SET_COLOR burst, not a device event; `0x02` is unused. |
 | SET_WIFI | `0x03` | `[type][ssidLen][ssid…][passLen][pass…]` | **Save-only.** Persist creds to the **existing WiFi NVS** WiFiManager reads (captive-portal fallback + saved-creds path stay intact) and persist `transport=WiFi`, then emit `STATUS` at once. The confirm never gates on the join; the background association streams as non-gating `wifiState` (below). |
 | SET_TRANSPORT | `0x04` | `[type][mode]` | mode 0=No-TX (USB-only), 1=WiFi. Persist to NVS. |
-| GET_STATUS | `0x05` | `[type]` | Request a `STATUS` frame. |
+| GET_STATUS | `0x05` | `[type]` | Request a `STATUS` frame. The device replies **HELLO then STATUS** — GET_STATUS doubles as the host's identity probe: the shell writes one on every port open, so a device whose unsolicited HELLO loop already stopped (host restarted mid-session) is re-detected immediately instead of after its session timeout. |
 | SCAN_WIFI | `0x06` | `[type]` | Request a WiFi scan → `SCAN_RESULT`. **Deferred post-v1.2** (type byte reserved). |
 
 ### Provisioning is save-only (no live join)

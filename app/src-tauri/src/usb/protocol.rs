@@ -19,6 +19,12 @@ pub const MSG_HELLO: u8 = 0x01;
 /// HELLO payload length: `[type][version][MAC×6]`.
 const HELLO_LEN: usize = 8;
 
+/// GET_STATUS message type (host → device): the one payload the shell *sends* on its own.
+/// Written once when a port opens, as an identity probe — the firmware replies HELLO (then
+/// STATUS), so a device whose unsolicited HELLO loop already stopped (the host restarted
+/// mid-session) is re-detected immediately instead of after its session timeout.
+pub const MSG_GET_STATUS: u8 = 0x05;
+
 /// A parsed HELLO frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hello {

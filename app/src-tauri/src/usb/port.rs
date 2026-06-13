@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use tauri::AppHandle;
 
-use super::protocol::{cobs_frame, parse_hello, CobsStream};
+use super::protocol::{cobs_frame, parse_hello, CobsStream, MSG_GET_STATUS};
 use super::{deregister_sender, register_sender, to_hex};
 
 const BAUD: u32 = 115_200;
@@ -39,6 +39,15 @@ pub fn run(app: &AppHandle, path: &str, stop: &AtomicBool) {
     let mut buf = [0u8; 256];
 
     eprintln!("[usb] {path} opened");
+
+    // Identity probe: a device that already saw a host stops its unsolicited HELLO loop, so
+    // reopening the port (an app restart) would otherwise leave it undetected until its own
+    // session timeout — long enough for a bridge to tear itself down. GET_STATUS makes the
+    // firmware reply HELLO (then STATUS) at once, and the probe itself refreshes the device's
+    // host-liveness clock so a quick restart never breaks the session. A bare board ignores it.
+    if let Err(e) = port.write_all(&cobs_frame(&[MSG_GET_STATUS])) {
+        eprintln!("[usb] probe {path} failed: {e}");
+    }
 
     while !stop.load(Ordering::Relaxed) {
         // Drain outbound: COBS-frame each payload and write it.

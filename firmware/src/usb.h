@@ -19,9 +19,10 @@ void begin(const uint8_t mac[6], MessageHandler onMessage);
 bool loop(unsigned long now);
 
 void send(const uint8_t* payload, size_t len);
+void sendHello();     // announce identity now (also sent automatically until a host replies)
 bool hostPresent();   // a host frame has arrived this session
 bool tallyActive();   // the app is currently driving tally over USB
-bool sessionLost(unsigned long now);  // true once the host has been silent past the session timeout
+bool sessionLost();   // true once the host has been silent past the session timeout
 void resetSession();  // forget host/tally so HELLO re-announces and STATUS re-syncs
 
 }  // namespace usb

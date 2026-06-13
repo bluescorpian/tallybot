@@ -91,7 +91,7 @@ void serviceEspnowClient(unsigned long now) {
     g_espnowGated = true;
     espnow::stopLight();  // USB drives tally now; local indicators step aside via suppressLocal
     TLOG(LOG_LEVEL_INFO, "USB host detected; ESP-NOW light gated off\n");
-  } else if (g_espnowGated && usb::sessionLost(now)) {
+  } else if (g_espnowGated && usb::sessionLost()) {
     usb::resetSession();  // clears g_hostSeen so a replugged host re-gates cleanly
     g_espnowGated = false;
     espnow::startLight();  // session ended — resume discovery
@@ -178,7 +178,7 @@ void loop() {
   // tears it down, the same session-end cue that reverts a USB-owned WiFi device.
   if (espnow::bridgeActive()) {
     espnow::loopBridge();
-    if (usb::sessionLost(now)) {
+    if (usb::sessionLost()) {
       TLOG(LOG_LEVEL_INFO, "USB host lost; leaving bridge mode\n");
       usb::resetSession();
       espnow::exitBridge();  // tears the bridge radio down + restores it per NVS (WiFi/No-TX)

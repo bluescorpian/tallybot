@@ -28,6 +28,7 @@ import { SidecarApp } from "../../app/sidecar/src/app.ts";
 import { AtemSource } from "../../app/sidecar/src/atem.ts";
 import { CompositeDeviceServer } from "../../app/sidecar/src/composite-device-server.ts";
 import { DeviceServer } from "../../app/sidecar/src/device-server.ts";
+import { EspNowTransport } from "../../app/sidecar/src/espnow-transport.ts";
 import { IpcBridge } from "../../app/sidecar/src/ipc-bridge.ts";
 import { ConfigStore } from "../../app/sidecar/src/store.ts";
 import { UsbTransport } from "../../app/sidecar/src/usb-transport.ts";
@@ -58,18 +59,28 @@ async function main(): Promise<void> {
   const ipc = new IpcBridge();
 
   // Mirror production wiring so `cargo tauri dev` exercises USB provisioning too: a real
-  // ESP32-C3 on USB (relayed by the Rust shell) shows up alongside LAN devices.
+  // ESP32-C3 on USB (relayed by the Rust shell) shows up alongside LAN devices — and the
+  // ESP-NOW transport, so a bridge + relayed lights work in dev exactly as in production.
   const tcp = new DeviceServer();
   const usb = new UsbTransport(ipc);
+  const espnow = new EspNowTransport(usb);
   const deviceServer = new CompositeDeviceServer(
     [
       { transport: "usb", port: usb },
       { transport: "wifi", port: tcp },
+      { transport: "espnow", port: espnow },
     ],
     usb,
   );
 
-  const app = new SidecarApp({ atem, deviceServer, provisioning: deviceServer, store, ipc, dev: true });
+  // Dev-only: mirror device TLOG lines (USB LOG frames) to stderr, so firmware-side events
+  // (bridge enter/exit, session loss, every SET_COLOR rendered) show in the `cargo tauri dev`
+  // terminal alongside the sidecar's own logs — production forwards them to the UI only.
+  deviceServer.on("log", ({ mac, level, text }) => {
+    process.stderr.write(`[device ${mac.slice(-5)}] ${level}: ${text.endsWith("\n") ? text : `${text}\n`}`);
+  });
+
+  const app = new SidecarApp({ atem, deviceServer, provisioning: deviceServer, espnow, store, ipc, dev: true });
 
   // Dev-only: drive the fake ATEM's program from the UI. Clicking an input takes it to
   // air; the previously-live input drops to preview (a swap, as on a real ME cut). This

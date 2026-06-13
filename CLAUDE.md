@@ -48,8 +48,10 @@ shell). Full tables in `docs/architecture.md`; USB details in `docs/spec/usb-ser
   change while cabled (not just on `GET_STATUS`).
 - **Server → device:** `0x01` SET_COLOR `[type][R][G][B][brightness]` (`0x02` retired — locate
   flash is now a server-streamed SET_COLOR burst, not a device event). USB also: `0x03` SET_WIFI,
-  `0x04` SET_TRANSPORT (`[mode]`, or `[mode][channel]` for ESP-NOW mode 2), `0x05` GET_STATUS,
-  `0x07` RELAY `[dstMAC×6][inner…]` (host → bridge; bridge forwards via `esp_now_send`), `0x08`
+  `0x04` SET_TRANSPORT (`[mode]`, or `[mode][channel]` for ESP-NOW mode 2), `0x05` GET_STATUS
+  (device replies HELLO *then* STATUS — the Rust shell sends one on every port open as an
+  identity probe, so an app restart re-detects a quiet device at once), `0x07` RELAY
+  `[dstMAC×6][inner…]` (host → bridge; bridge forwards via `esp_now_send`), `0x08`
   SET_BRIDGE `[enabled][channel]` (runtime bridge mode, never persisted on the device).
 - **Transports:** `0` No-TX · `1` WiFi · `2` ESP-NOW (open int enum in NVS/wire/IPC). An ESP-NOW
   *light* discovers a *bridge* (a USB dongle the app designates) and rides tally via RELAY; the
@@ -60,8 +62,8 @@ shell). Full tables in `docs/architecture.md`; USB details in `docs/spec/usb-ser
   (**3** — ESP-NOW) + `MIN_SUPPORTED` (1) and adapts to older devices (warns below
   `MIN_SUPPORTED`); the app only offers ESP-NOW provisioning / bridge designation to devices
   reporting ≥ 3. Protocol constants are mirrored in three places: `protocol.ts` (source of
-  truth), `firmware/src/protocol.h`, and `app/src-tauri/src/usb/protocol.rs` (minimal: COBS +
-  HELLO only).
+  truth), `firmware/src/protocol.h`, and `app/src-tauri/src/usb/protocol.rs` (minimal: COBS,
+  HELLO parse, and the GET_STATUS probe byte).
 - **Colours:** Live `255,0,0` · Preview `0,255,0` · Idle `30,30,30` (dim white) ·
   Unassigned `255,255,255` (white, server-driven breathe) · Disconnected `0,0,255` (device-local
   steady blue) · Fault `0,0,255` flashing (server-driven, when the source can't be trusted —
@@ -102,8 +104,9 @@ cd app/sidecar && pnpm start        # run with FakeAtem
   third-party networking libs.
 - Keep the protocol constants in sync across the **three** mirrors that encode the same
   spec: `app/sidecar/src/protocol.ts` (source of truth), `firmware/src/protocol.h`, and
-  `app/src-tauri/src/usb/protocol.rs` (minimal — COBS framing + HELLO parse only; the shell
-  forwards every other payload opaque so `protocol.ts` stays the single payload codec).
+  `app/src-tauri/src/usb/protocol.rs` (minimal — COBS framing, HELLO parse, and the
+  GET_STATUS probe byte; the shell forwards every other payload opaque so `protocol.ts`
+  stays the single payload codec).
 - **Firmware is lean; the sidecar owns connected-state behaviour.** Logic and animation belong
   in the server (easy to change) rather than on the flashed device — the device renders what
   it's told. See `docs/led.md`.

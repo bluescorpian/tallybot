@@ -47,16 +47,25 @@ void usb::begin(const uint8_t mac[6], MessageHandler onMessage) {
 
 void usb::send(const uint8_t* payload, size_t len) { g_packet.send(payload, len); }
 
+void usb::sendHello() {
+  uint8_t payload[8];
+  send(payload, encodeHelloPayload(payload, g_mac));
+}
+
 bool usb::loop(unsigned long now) {
   g_packet.update();
 
   if (!g_hostSeen && now - g_lastHello >= kHelloIntervalMs) {
     g_lastHello = now;
-    uint8_t payload[8];
-    send(payload, encodeHelloPayload(payload, g_mac));
+    sendHello();
   }
 
-  if (g_tallyActive && now - g_lastTally >= kTallyIdleMs) {
+  // Freshness checks compare against millis() NOW, never the caller's loop-top `now`:
+  // g_lastTally/g_lastFrame are stamped *inside* g_packet.update() above, so a frame landing
+  // mid-tick is stamped NEWER than `now` — and the unsigned subtraction would underflow to
+  // ~49 days, firing the idle edge instantly. (Seen in the field as a one-frame cyan flash on
+  // tally changes, and as bridge mode tearing down the moment relay traffic started.)
+  if (g_tallyActive && millis() - g_lastTally >= kTallyIdleMs) {
     g_tallyActive = false;
     led::suppressLocal(false);
     TLOG(LOG_LEVEL_INFO, "USB tally idle; releasing local indicators\n");
@@ -71,9 +80,11 @@ bool usb::tallyActive() { return g_tallyActive; }
 // Bridge teardown cue: the host has been silent past the session timeout. Unlike the tally-idle
 // edge above (SET_COLOR only), this watches *any* host frame, so a bridge that only relays (no
 // direct tally) still detects the host vanishing. Caller resets the session, which clears
-// g_hostSeen so this can't re-fire until a new host appears.
-bool usb::sessionLost(unsigned long now) {
-  return g_hostSeen && now - g_lastFrame >= kSessionIdleMs;
+// g_hostSeen so this can't re-fire until a new host appears. Reads millis() itself rather than
+// taking the caller's loop-top `now` — g_lastFrame is stamped during this tick's RX pump, so a
+// stale `now` underflows the subtraction and reads a just-seen host as 49 days silent.
+bool usb::sessionLost() {
+  return g_hostSeen && millis() - g_lastFrame >= kSessionIdleMs;
 }
 
 void usb::resetSession() {
