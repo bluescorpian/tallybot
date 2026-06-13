@@ -9,3 +9,7 @@ result-*
 
 # Local exploration / vendored sources for reading only (not part of the project)
 /.exploration/
+
+# Windows portable build output
+/TallyBot-portable-win-x64.zip
+/TallyBot-portable-win-x64/
