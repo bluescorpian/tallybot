@@ -123,7 +123,14 @@ into the shell then means:
 3. Declare `bundle.externalBin: ["binaries/tallybot-sidecar"]` in `tauri.conf.json`.
 4. Place the built binary at `src-tauri/binaries/tallybot-sidecar-<target-triple>` (get the
    triple with `rustc --print host-tuple`).
-5. Spawn + bridge stdio in `lib.rs`, and manage the child's lifecycle with the app window.
+5. Spawn + bridge stdio, and manage the child's lifecycle with the app window
+   (`src-tauri/src/sidecar.rs`).
+
+The lifecycle is tied in both directions. The shell respawns a sidecar that dies (with
+backoff) and shows the operator a fault until it's back, because a dead engine is otherwise
+invisible behind a stale board. The sidecar exits when its stdin reaches EOF, because a
+shell killed without running its exit hook would otherwise leave an orphan holding TCP
+7000 / UDP 7001, and the next launch couldn't bind.
 
 The shipped binary also needs the NVIDIA+Wayland `WEBKIT_DISABLE_DMABUF_RENDERER=1`
 workaround the dev shell already applies (see the repo `CLAUDE.md`).
