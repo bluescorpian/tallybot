@@ -109,6 +109,10 @@ async function main(): Promise<void> {
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
+  // The shell owns our stdin: EOF means it died or was killed without running its
+  // exit hook. Exit too, or the orphan keeps TCP 7000 / UDP 7001 bound and the next
+  // launch can't start.
+  process.stdin.on("end", shutdown);
 }
 
 main().catch((err: unknown) => {
