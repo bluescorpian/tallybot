@@ -21,7 +21,8 @@
   <a href="#how-it-works">How it works</a> ·
   <a href="#hardware">Hardware</a> ·
   <a href="#getting-started">Getting started</a> ·
-  <a href="#development">Development</a>
+  <a href="#development">Development</a> ·
+  <a href="#roadmap">Roadmap</a>
 </p>
 
 TallyBot turns a tiny ESP32-C3 board into a camera tally light. A desktop app on the
@@ -147,6 +148,30 @@ run the whole system on one machine.
 | [`app/sidecar/SIDECAR.md`](app/sidecar/SIDECAR.md) | How the backend runs alongside the Tauri shell |
 | [`firmware/README.md`](firmware/README.md) | Building and flashing the ESP32-C3 firmware |
 | [`tools/README.md`](tools/README.md) | ATEM and tally-light simulators for hardware-free testing |
+
+## Roadmap
+
+**Next up**
+
+- **In-app firmware flashing**, so a bare board goes from the box to a working light
+  without PlatformIO. This also lays the groundwork for over-the-air updates.
+- **Multi-ME support** for larger ATEM models with more than one mix effects bus.
+
+**Further out**
+
+- Over-the-air firmware updates
+- A web UI for phones and tablets
+- In-app device diagnostics
+- Per-device colours
+- Several switchers at once
+- OBS integration, starting with muting tally when OBS isn't showing the ATEM
+- Switchers other than the ATEM
+
+**On the list, not yet scheduled**
+
+- More reliable WiFi joining on managed venue networks
+- A PC hotspot mode for venues with no usable WiFi
+- A reference enclosure and a recommended power bank
 
 ## License
 
