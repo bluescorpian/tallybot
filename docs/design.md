@@ -176,7 +176,7 @@ Three groups, in this order:
 - App **version**, **protocol version** (`CURRENT` / `MIN_SUPPORTED` from
   `app/sidecar/src/protocol.ts`) — mono values.
 - The **same-subnet limitation** explainer.
-- **Documentation / GitHub / license** links (this is open-source).
+- **Documentation / GitHub / license** links (the source is public).
 
 
 ### Behaviour decisions

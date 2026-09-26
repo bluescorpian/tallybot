@@ -11,7 +11,7 @@
     "tally-client": "node --experimental-strip-types src/tally-client-cli.ts",
     "sidecar-dev": "node --experimental-strip-types src/sidecar-dev-cli.ts"
   },
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "devDependencies": {
     "@types/node": "^22",
     "typescript": "^5.8.0"

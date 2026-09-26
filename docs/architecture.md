@@ -8,8 +8,8 @@ switcher and broadcasts colour commands to ESP32-based LED devices over WiFi. Ca
 operators see red (live), green (preview), or dim white (idle) — matching the
 ATEM Mini's own button LED conventions.
 
-The project will be open-sourced. All architecture decisions favour simplicity,
-reliability on unknown networks, and cross-platform support.
+The source is public under a noncommercial license (`LICENSE.md`). All architecture
+decisions favour simplicity, reliability on unknown networks, and cross-platform support.
 
 **Related docs:** [`docs/goals.md`](goals.md) holds the product intent and decisions,
 [`docs/design.md`](design.md) the UI design. This document is the source of truth for

@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "build:binary": "node build.mjs"
   },
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "dependencies": {
     "atem-connection": "^3.9.0"
   },
