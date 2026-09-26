@@ -12,7 +12,7 @@
 <br/>
 
 <p align="center">
-  <img src="docs/assets/screenshot.png" width="460" alt="The TallyBot app: an ATEM with input 1 live and input 2 on preview, and one tally light assigned beneath each input">
+  <img src="assets/screenshot.png" width="460" alt="The TallyBot app: an ATEM with input 1 live and input 2 on preview, and one tally light assigned beneath each input">
 </p>
 <br/>
 
@@ -21,7 +21,7 @@
   <a href="#how-it-works">How it works</a> ·
   <a href="#hardware">Hardware</a> ·
   <a href="#getting-started">Getting started</a> ·
-  <a href="#documentation">Documentation</a>
+  <a href="#development">Development</a>
 </p>
 
 TallyBot turns a tiny ESP32-C3 board into a camera tally light. A desktop app on the
@@ -74,8 +74,6 @@ On WiFi, lights discover the app by UDP broadcast, which means the PC and the li
 share a subnet. On ESP-NOW, one USB-connected board acts as a bridge and relays tally to
 the rest over the radio, with no router involved.
 
-See [`docs/architecture.md`](docs/architecture.md) for the full design and wire protocol.
-
 ## Hardware
 
 | Part | Notes |
@@ -98,12 +96,12 @@ pnpm install
 cargo tauri dev        # builds and runs the desktop app
 ```
 
-For a Windows build, follow [`docs/packaging-windows.md`](docs/packaging-windows.md).
+For a portable Windows build, run [`scripts/win-build.ps1`](scripts/win-build.ps1) in an
+elevated PowerShell. It installs the prerequisites and produces a zip.
 
 ### 2. Flash a light
 
-Flashing needs [PlatformIO](https://platformio.org/) for now; in-app flashing is on the
-[roadmap](docs/milestones/roadmap.md).
+Flashing needs [PlatformIO](https://platformio.org/) for now; in-app flashing is planned.
 
 ```bash
 cd firmware
@@ -141,19 +139,14 @@ run the whole system on one machine.
 | 🔵 Blue, steady | Lost the app (check the PC) |
 | 🔵 Blue, flashing | Connected, but the app has lost the switcher |
 
-The full palette, including start-up states, is in [`docs/led.md`](docs/led.md).
+## Development
 
-## Documentation
-
-| Document | What it covers |
+| Guide | What it covers |
 | :-- | :-- |
-| [`docs/architecture.md`](docs/architecture.md) | Protocol spec, network topology, failure modes, packaging |
-| [`docs/goals.md`](docs/goals.md) | Product intent and the decisions behind it |
-| [`docs/design.md`](docs/design.md) | UI visual and interaction design |
-| [`docs/led.md`](docs/led.md) | Every device state, colour and motion |
-| [`docs/atem-connection-notes.md`](docs/atem-connection-notes.md) | Sharp edges in the ATEM library |
-| [`docs/wifi-troubleshooting.md`](docs/wifi-troubleshooting.md) | Diagnosing lights that won't join WiFi |
-| [`docs/milestones/roadmap.md`](docs/milestones/roadmap.md) | What's planned next |
+| [`app/sidecar/README.md`](app/sidecar/README.md) | Running and testing the Node.js backend on its own |
+| [`app/sidecar/SIDECAR.md`](app/sidecar/SIDECAR.md) | How the backend runs alongside the Tauri shell |
+| [`firmware/README.md`](firmware/README.md) | Building and flashing the ESP32-C3 firmware |
+| [`tools/README.md`](tools/README.md) | ATEM and tally-light simulators for hardware-free testing |
 
 ## License
 

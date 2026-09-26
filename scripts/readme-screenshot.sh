@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerates docs/assets/screenshot.png, the README hero image.
+# Regenerates assets/screenshot.png, the README hero image.
 #
 # Serves the frontend in a plain browser (no Tauri, so the page uses its demo data),
 # loads the `?demo=hero` preset (one light per input, nothing unassigned), captures it
@@ -11,7 +11,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-OUT=docs/assets/screenshot.png
+OUT=assets/screenshot.png
 WIDTH=500   # tight around the board's 4-input row: even margins, no empty tail
 HEIGHT=620
 RADIUS=18
