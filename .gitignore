@@ -13,3 +13,5 @@ result-*
 # Windows portable build output
 /TallyBot-portable-win-x64.zip
 /TallyBot-portable-win-x64/
+# Playwright MCP session output
+/.playwright-mcp/

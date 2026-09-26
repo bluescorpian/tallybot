@@ -1,7 +1,7 @@
 # Firmware modularization — design
 
 **Date:** 2026-06-10
-**Status:** implemented — both PlatformIO envs compile clean; pending on-hardware re-verification
+**Status:** implemented (archived).
 
 ## Problem
 

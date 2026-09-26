@@ -32,6 +32,11 @@ V2 has an onboard WS2812 LED — it is a complete tally light as shipped), no Ar
 hardcoded IPs, no terminal commands. A non-technical church volunteer should be able to
 provision a tally light and assign it to a camera in under five minutes.
 
+v1 stops one step short of this: flashing a bare board the first time is a PlatformIO
+command, because in-app flashing was deferred to after v1 (see the roadmap's "In-app
+firmware flashing"). Everything after that first flash (provisioning, transport choice,
+bridge designation, assignment) happens in the app.
+
 No competitor has a native desktop app with bundled provisioning. That gap is what the
 onboarding and transport work on the roadmap fills — see
 [`docs/milestones/roadmap.md`](milestones/roadmap.md).
