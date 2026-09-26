@@ -181,6 +181,24 @@ export function toBoardProps(state: AppState): BoardProps {
 	};
 }
 
+/**
+ * The snapshot as the board should show it while the sidecar is down (crashed and being
+ * restarted). The last snapshot is the dead process's word, so nothing in it can be
+ * presented as live — but the rig stays visible. It reuses the states that already mean
+ * this: every light is **offline** (literally true — each has lost the sidecar, and the
+ * physical LEDs are going device-local blue), and the source reads as **connecting**
+ * (chip spinner, gate inert, keys idle), since the engine reconnects once it's back.
+ * The page's error banner carries the reason.
+ */
+export function sidecarLost(state: AppState): AppState {
+	return {
+		...state,
+		source: { ...state.source, connection: "connecting" },
+		inputs: state.inputs.map((i) => ({ ...i, tally: "unknown" })),
+		devices: state.devices.map((d) => ({ ...d, state: "offline" })),
+	};
+}
+
 /** The picker's input list derives straight from the board inputs (same shape). */
 export function pickerInputs(inputs: BoardInput[]): PickerInput[] {
 	return inputs.map((i) => ({ id: i.id, label: i.label, state: i.state }));

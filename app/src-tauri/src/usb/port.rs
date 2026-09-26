@@ -7,10 +7,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use serialport::SerialPort;
 use tauri::AppHandle;
 
 use super::protocol::{cobs_frame, parse_hello, CobsStream, MSG_GET_STATUS};
-use super::{deregister_sender, register_sender, to_hex};
+use super::{deregister_device, register_device, to_hex};
 
 const BAUD: u32 = 115_200;
 /// Read timeout — a timeout is the normal idle case, not an error. Short enough to keep
@@ -19,17 +20,15 @@ const READ_TIMEOUT: Duration = Duration::from_millis(50);
 /// No HELLO within this window ⇒ treat the board as unflashed (flashing is deferred).
 const DETECT_TIMEOUT: Duration = Duration::from_secs(2);
 
-pub fn run(app: &AppHandle, path: &str, stop: &AtomicBool) {
+/// Open a port for a comms thread. Separate from [`run`] so the supervisor sees open
+/// failures (it decides which are worth showing the operator).
+pub fn open(path: &str) -> serialport::Result<Box<dyn SerialPort>> {
     // Open WITHOUT touching DTR/RTS: a live No-TX device must keep rendering tally, and the
     // ESP32-C3 native USB-JTAG doesn't reset on DTR anyway (the firmware also ignores DTR).
-    let mut port = match serialport::new(path, BAUD).timeout(READ_TIMEOUT).open() {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("[usb] open {path} failed: {e}");
-            return;
-        }
-    };
+    serialport::new(path, BAUD).timeout(READ_TIMEOUT).open()
+}
 
+pub fn run(app: &AppHandle, path: &str, mut port: Box<dyn SerialPort>, stop: &AtomicBool) {
     // Outbound payloads queue here; registered under the device MAC once HELLO arrives.
     let (tx, rx) = mpsc::channel::<Vec<u8>>();
     let mut mac: Option<String> = None;
@@ -79,14 +78,12 @@ pub fn run(app: &AppHandle, path: &str, stop: &AtomicBool) {
         if mac.is_none() && !announced_unflashed && opened.elapsed() > DETECT_TIMEOUT {
             announced_unflashed = true;
             let msg = serde_json::json!({ "type": "unflashedDeviceDetected", "port": path });
-            let _ = crate::write_sidecar_line(app, &msg.to_string());
+            let _ = crate::sidecar::write_line(app, &msg.to_string());
         }
     }
 
     if let Some(m) = &mac {
-        deregister_sender(app, m);
-        let msg = serde_json::json!({ "type": "usbDeviceDisconnected", "mac": m });
-        let _ = crate::write_sidecar_line(app, &msg.to_string());
+        deregister_device(app, m);
     }
     eprintln!("[usb] {path} thread exiting");
 }
@@ -102,13 +99,7 @@ fn handle_frame(
 ) {
     if mac.is_none() {
         if let Some(hello) = parse_hello(&payload) {
-            register_sender(app, &hello.mac, tx.clone());
-            let msg = serde_json::json!({
-                "type": "usbDeviceConnected",
-                "mac": hello.mac,
-                "version": hello.version,
-            });
-            let _ = crate::write_sidecar_line(app, &msg.to_string());
+            register_device(app, &hello.mac, hello.version, tx.clone());
             eprintln!("[usb] {path} is {} (protocol v{})", hello.mac, hello.version);
             *mac = Some(hello.mac);
         }
@@ -124,5 +115,5 @@ fn handle_frame(
         "mac": m,
         "payloadHex": to_hex(&payload),
     });
-    let _ = crate::write_sidecar_line(app, &msg.to_string());
+    let _ = crate::sidecar::write_line(app, &msg.to_string());
 }

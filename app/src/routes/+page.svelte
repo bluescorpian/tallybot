@@ -10,7 +10,7 @@
 	import { onMount, onDestroy } from "svelte";
 	import type { AppState, Device, Input, Tally } from "$ipc";
 	import Board from "$lib/components/board/Board.svelte";
-	import { toBoardProps } from "$lib/boardState";
+	import { sidecarLost, toBoardProps } from "$lib/boardState";
 	import { sidecar, isTauri } from "$lib/ipc.svelte";
 	import SettingsSheet from "$lib/components/settings/SettingsSheet.svelte";
 	import TitleBar from "$lib/components/chrome/TitleBar.svelte";
@@ -166,7 +166,10 @@
 	// board's input keys interactive; otherwise they stay plain, non-clickable keys.
 	const devMode = $derived(appState.dev === true);
 
-	const props = $derived(toBoardProps(appState));
+	// Sidecar down (crashed, being restarted): the snapshot is stale, so the board shows
+	// the rig with every light offline and the source reconnecting — never old tally.
+	const engineDown = $derived(isTauri && sidecar.stale);
+	const props = $derived(toBoardProps(engineDown ? sidecarLost(appState) : appState));
 
 	// Command handlers: under Tauri they send the real UiCommand; otherwise they
 	// mutate the mock device list the engine would normally own.
@@ -249,11 +252,46 @@
 		connectTimer = setTimeout(() => (sourceMode = "connected"), 1600);
 	}
 
-	// ── Notices (firmware-outdated, offline-flash, …) — a dismissible banner ────
-	let dismissed = $state<unknown>(null);
-	const notice = $derived(
-		isTauri && sidecar.notice !== dismissed ? sidecar.notice : null,
-	);
+	// ── Banners — thin strips above the board ─────────────────────────────────
+	// The engine being down is an error that stays until it's back (not dismissible:
+	// it's the reason the board is dark). USB port errors (from the shell) are dismissible
+	// and return only if their message changes; a sidecar notice (firmware-outdated,
+	// offline-flash, …) is dismissed as that one event, so a later notice shows again.
+	interface Banner {
+		key: string;
+		level: "info" | "warn" | "error";
+		message: string;
+		dismissible: boolean;
+	}
+	let dismissed = $state<Record<string, string>>({});
+	let dismissedNotice = $state<unknown>(null);
+	const banners = $derived.by<Banner[]>(() => {
+		if (!isTauri) return [];
+		const list: Banner[] = [];
+		if (engineDown) {
+			const why = sidecar.health.sidecarDown;
+			list.push({
+				key: "engine",
+				level: "error",
+				message: why
+					? `TallyBot's engine stopped (${why}) and is restarting. The board and lights aren't live until it's back.`
+					: "TallyBot's engine is restarting. The board and lights aren't live until it's back.",
+				dismissible: false,
+			});
+		}
+		for (const e of sidecar.health.usbPortErrors) {
+			list.push({ key: `usb:${e.port}`, level: "warn", message: e.message, dismissible: true });
+		}
+		const n = sidecar.notice;
+		if (n && n !== dismissedNotice) {
+			list.push({ key: "notice", level: n.level, message: n.message, dismissible: true });
+		}
+		return list.filter((b) => dismissed[b.key] !== b.message);
+	});
+	function dismiss(banner: Banner) {
+		if (banner.key === "notice") dismissedNotice = sidecar.notice;
+		else dismissed = { ...dismissed, [banner.key]: banner.message };
+	}
 </script>
 
 <div class="page">
@@ -267,12 +305,23 @@
 		scanResult={isTauri ? sidecar.scan : null}
 	/>
 
-	{#if notice}
-		<div class="notice" class:warn={notice.level === "warn"} class:error={notice.level === "error"} role="status">
-			<span>{notice.message}</span>
-			<button type="button" onclick={() => (dismissed = sidecar.notice)} aria-label="Dismiss">×</button>
+	{#each banners as banner (banner.key)}
+		<div
+			class="notice"
+			class:warn={banner.level === "warn"}
+			class:error={banner.level === "error"}
+			role={banner.level === "error" ? "alert" : "status"}
+		>
+			<span>{banner.message}</span>
+			{#if banner.dismissible}
+				<button
+					type="button"
+					onclick={() => dismiss(banner)}
+					aria-label="Dismiss">×</button
+				>
+			{/if}
 		</div>
-	{/if}
+	{/each}
 
 	<div class="stage">
 		<Board
@@ -322,8 +371,9 @@
 		padding: 10px;
 	}
 
-	/* Sidecar notice — a thin dismissible banner under the titlebar. Info by default;
-	   warn/error tint it. Non-intrusive: it sits above the board, doesn't cover it. */
+	/* Banner — a thin strip under the titlebar (sidecar notices, USB port errors, engine
+	   down). Info by default; warn/error tint it. Non-intrusive: it sits above the board,
+	   doesn't cover it. Stacked banners keep a small gap. */
 	.notice {
 		display: flex;
 		align-items: center;
@@ -335,6 +385,9 @@
 		border-radius: var(--radius-md);
 		background: var(--muted);
 		color: var(--foreground);
+	}
+	.notice + .notice {
+		margin-top: 6px;
 	}
 	.notice.warn {
 		border-color: color-mix(in oklch, var(--primary), transparent 50%);

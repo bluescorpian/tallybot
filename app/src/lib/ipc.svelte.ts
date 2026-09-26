@@ -21,6 +21,22 @@ import {
 	type UiCommand,
 } from "$ipc";
 
+/**
+ * Shell-side health (`src-tauri/src/health.rs`): what the operator must see but the
+ * sidecar can't say — the sidecar itself being down, or a USB port the shell can't open.
+ * Pushed as `"health"` events; pulled once on start via `shell_health`.
+ */
+export interface ShellHealth {
+	/** Orders pushed vs pulled snapshots; the higher one wins. */
+	revision: number;
+	/** Why the sidecar died, while it's down and being restarted; null while it's up. */
+	sidecarDown: string | null;
+	/** Ports that keep failing to open, with operator-facing messages. */
+	usbPortErrors: { port: string; message: string }[];
+}
+
+const HEALTHY: ShellHealth = { revision: 0, sidecarDown: null, usbPortErrors: [] };
+
 /** True when running inside the Tauri webview (mirrors `TitleBar.svelte`). */
 export const isTauri =
 	typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -36,18 +52,27 @@ class SidecarStore {
 	notice = $state<NoticeEvent | null>(null);
 	/** Latest scan progress/result, for the settings "Scan" UI. */
 	scan = $state<SourceScanEvent | null>(null);
+	/** Shell-side health (sidecar down, USB ports that won't open). */
+	health = $state<ShellHealth>(HEALTHY);
+	/**
+	 * True from the moment the sidecar dies until its replacement sends a fresh snapshot.
+	 * `state` is then the dead process's last word, so the board must not present it as
+	 * live. Outlasts `health.sidecarDown`, which clears as soon as the new process speaks.
+	 */
+	stale = $state(false);
 
-	#unlisten: UnlistenFn | null = null;
+	#unlisten: UnlistenFn[] = [];
 
 	/** Begin listening for sidecar events. Safe to call once on mount; no-op off Tauri. */
 	async start(): Promise<void> {
-		if (!isTauri || this.#unlisten) return;
-		this.#unlisten = await listen<string>("sidecar", ({ payload }) => {
+		if (!isTauri || this.#unlisten.length) return;
+		this.#unlisten.push(await listen<string>("sidecar", ({ payload }) => {
 			const event = parseEvent(payload);
 			if (!event) return;
 			switch (event.type) {
 				case "state":
 					this.state = event.state;
+					this.stale = false;
 					break;
 				case "notice":
 					this.notice = event;
@@ -56,7 +81,11 @@ class SidecarStore {
 					this.scan = event;
 					break;
 			}
-		});
+		}));
+		// Listen before pulling, so no change falls between the two; `revision` keeps a
+		// late pull from overwriting a newer push.
+		this.#unlisten.push(await listen<ShellHealth>("health", ({ payload }) => this.#applyHealth(payload)));
+		void invoke<ShellHealth>("shell_health").then((h) => this.#applyHealth(h));
 		// The listener is live now — ask the sidecar to replay current state. Without
 		// this, any snapshot it emitted during start-up (before this listener existed)
 		// is lost, and the board sits on empty state until the next change. Tauri does
@@ -66,13 +95,22 @@ class SidecarStore {
 
 	/** Stop listening (call on destroy). */
 	stop(): void {
-		this.#unlisten?.();
-		this.#unlisten = null;
+		for (const unlisten of this.#unlisten) unlisten();
+		this.#unlisten = [];
+	}
+
+	#applyHealth(health: ShellHealth): void {
+		if (health.revision < this.health.revision) return;
+		this.health = health;
+		if (health.sidecarDown !== null) this.stale = true;
 	}
 
 	#send(command: UiCommand): void {
 		if (!isTauri) return;
-		void invoke("send_to_sidecar", { line: serializeMessage(command) });
+		// Rejects only while the sidecar is down — which the health banner already says.
+		invoke("send_to_sidecar", { line: serializeMessage(command) }).catch((err: unknown) =>
+			console.warn("send_to_sidecar:", err),
+		);
 	}
 
 	assignDevice(mac: string, inputId: number): void {

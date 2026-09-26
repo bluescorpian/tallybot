@@ -423,6 +423,7 @@ single home for the **state interpretation**:
 | no source + **empty** inputs (first run / connecting) | **scaffold**: a default ATEM-Mini **4 idle keys** | the board never collapses; the chip ("Set up your ATEM →" / "Connecting…") carries the reason |
 | `connection = connected` but **empty** inputs | **"No inputs detected"** notice (no keys) | anomaly (odd model / lib quirk) — fake keys would lie, so we say it plainly |
 | any state with **no real inputs** | every light drops to the **dock**, flash-but-no-assign | viewable + flashable (online); the picker swaps its assign list for "connect a source to assign" |
+| **sidecar down** (shell `health.sidecarDown`, until a fresh snapshot) | every light **offline**, source **connecting**, inputs `unknown`; a non-dismissible **error banner** gives the reason | the last snapshot is a dead process's word, so it must not read as live; offline is literally true (every device lost the sidecar). `sidecarLost()` in the mapper; the shell respawns the sidecar with backoff |
 
 **Empty-inputs handling is gated on `source.connection`, not `inputs.length`** (the two empty
 cases above are genuinely different). The no-source scaffold + dock-routing live in the mapper,
