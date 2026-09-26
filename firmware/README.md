@@ -2,8 +2,8 @@
 
 ESP32-C3 device firmware — the **tally light** end of TallyBot. On the wire it's a TCP
 *client*: it discovers the sidecar over UDP, connects, sends `HELLO` then `HEARTBEAT`s,
-and applies `SET_COLOR` / `IDENTIFY` commands to the onboard LED. See
-[`docs/architecture.md`](../docs/architecture.md) for the protocol.
+and renders the `SET_COLOR` commands it streams on the onboard LED. The protocol is
+defined in [`src/protocol.h`](src/protocol.h), mirroring the sidecar's `protocol.ts`.
 
 > **Status — tally client.** The firmware is split into focused modules under `src/`:
 > `led` (rendering + state machine), `wifi` (connection, captive portal, diagnostics),
@@ -135,8 +135,7 @@ PROVISIONING → DISCOVERING → CONNECTING → CONNECTED → BACKOFF → (redis
 
 The `SET_COLOR` **brightness byte is perceptual**, so the firmware gamma-corrects it
 (FastLED `applyGamma_video`, γ≈2.5) before driving the LED — the device is the single home
-for that correction, so the sidecar and UI keep their 0–255 / 0–10 mappings linear
-(`docs/architecture.md`, "Brightness is a perceptual value").
+for that correction, so the sidecar and UI keep their 0–255 / 0–10 mappings linear.
 
 `src/protocol.h` is the cross-language contract — constants, framing, and the
 encode/decode helpers — and must stay in lockstep with the sidecar's `protocol.ts`.
@@ -144,5 +143,5 @@ encode/decode helpers — and must stay in lockstep with the sidecar's `protocol
 ## Next
 
 The firmware is independent of the rest of the app once the protocol is fixed. Remaining
-work lives elsewhere. Firmware OTA updates are a roadmap item
-([`docs/milestones/roadmap.md`](../docs/milestones/roadmap.md)), not part of v1.
+work lives elsewhere. Firmware OTA updates are on the roadmap (see the repo README), not
+part of v1.

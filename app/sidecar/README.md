@@ -15,7 +15,7 @@ Two shared **contracts** (also imported by `tools/` and, type-only, by the UI):
 - [`src/protocol.ts`](src/protocol.ts) — the binary device↔server wire protocol
   (codec + constants). Keep its values in sync with the firmware `#define`s.
 - [`src/ipc.ts`](src/ipc.ts) — the UI↔sidecar IPC schema (`source` / `input` / `device`
-  / program-gate), mirroring `docs/goals.md`.
+  / program-gate).
 
 …and the **runtime** that turns them into a working brain. The pieces each do one job and
 the orchestrator wires them together: a **pure tally engine** (switcher state + assignments
@@ -27,8 +27,7 @@ discovery, tracking devices by MAC with heartbeat timeouts), an **ATEM adapter**
 sends a `SET_COLOR` only to devices whose colour actually changed. When the source
 can't be trusted (ATEM disconnected, reconnecting, or not yet reporting program), an
 assigned device is driven to a **flashing-blue fault** rather than a misleading
-idle (off) — the orchestrator owns that blink, since the engine is pure (see
-`docs/architecture.md` "Failure signalling").
+idle (off) — the orchestrator owns that blink, since the engine is pure.
 
 The ATEM seam (`AtemLike`) is why hardware-free testing works: the Phase 1 `FakeAtem`
 drops in for the real switcher unchanged. The full path is exercised end-to-end against the
