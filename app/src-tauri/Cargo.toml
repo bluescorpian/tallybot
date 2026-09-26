@@ -1,8 +1,9 @@
 [package]
 name = "tallybot"
-version = "0.1.0"
-description = "TallyBot desktop app — reads ATEM Mini state and drives WiFi tally lights"
-authors = ["you"]
+version = "1.0.0"
+description = "TallyBot desktop app — reads ATEM Mini state and drives WiFi, USB and ESP-NOW tally lights"
+authors = ["Harry Kruger"]
+license = "PolyForm-Noncommercial-1.0.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
