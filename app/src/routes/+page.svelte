@@ -52,7 +52,16 @@
 	//   D2:44 — docked + never provisioned (the first-time Configure path)
 	//   F0:0D — docked v3 device designated as the ESP-NOW bridge (the bridge toggle)
 	// And one ESP-NOW light (transport "espnow") relayed through that bridge.
-	let devices = $state<Device[]>([
+	// `?demo=hero` swaps in one Wi-Fi light per input and nothing unassigned: the
+	// README screenshot (scripts/readme-screenshot.sh) captures that board.
+	const HERO_DEVICES: Device[] = [
+		mock("7b:1c:01:00:33:44", "7B:1C", "assigned", 1),
+		mock("3e:90:01:00:55:66", "3E:90", "assigned", 2),
+		mock("c1:08:01:00:77:88", "C1:08", "assigned", 3),
+		mock("b2:5a:01:00:ee:ff", "B2:5A", "assigned", 4),
+	];
+	const heroDemo = new URLSearchParams(location.search).get("demo") === "hero";
+	let devices = $state<Device[]>(heroDemo ? HERO_DEVICES : [
 		mock("a4:f2:01:00:11:22", "A4:F2", "assigned", 1, {
 			transport: "usb",
 			provisionedMode: "wifi",
