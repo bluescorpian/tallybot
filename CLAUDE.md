@@ -112,7 +112,7 @@ cd app/sidecar && pnpm start        # run with FakeAtem
   it's told. See `docs/led.md`.
 - The same-subnet limitation is accepted and intentional — document it for users
   rather than working around it.
-- This will be open-sourced: favour simplicity and clarity, and explain tradeoffs
+- The source is public under a noncommercial license (`LICENSE.md`): favour simplicity and clarity, and explain tradeoffs
   when introducing a new pattern.
 
 ## Reference documents — what they cover and when to load them
@@ -128,7 +128,7 @@ Docs live in `docs/`. Load them on demand; don't bulk-load.
 | **`docs/atem-connection-notes.md`** | Sharp edges and gotchas with the `atem-connection` library; field-test findings. | Debugging ATEM connectivity, extending the ATEM adapter, or integrating new ATEM state. |
 | **`docs/packaging-windows.md`** | Step-by-step Windows build guide. | Building or testing the Windows portable binary. |
 | **`docs/milestones/v1.1-production-hardening.md`** | Production-hardening worklist: diagnostics + LED palette, WiFi-join reliability (deferred), transport pivot to ESP-NOW. | Reviewing what production-hardening shipped or deferred. |
-| **`docs/milestones/v1.2-zero-friction-onboarding.md`** | Zero-friction onboarding: in-app USB flashing + WiFi/No-TX provisioning over USB-C. | Working on USB onboarding; pair with `docs/spec/usb-serial-protocol.md`. |
+| **`docs/milestones/v1.2-zero-friction-onboarding.md`** | Zero-friction onboarding: USB-C detection + WiFi/No-TX provisioning; in-app flashing deferred. | Working on USB onboarding; pair with `docs/spec/usb-serial-protocol.md`. |
 | **`docs/wifi-troubleshooting.md`** | Living runbook for the deferred WiFi-join problem: symptoms, the diagnostics-panel verdict, what's ruled out, current hypothesis, what to try next. | Returning to WiFi-join reliability, or reading a device's SoftAP diagnostics panel. |
 | **`docs/milestones/roadmap.md`** | Deferred / future work (ESP-NOW transport, OTA, web UI, OBS, multi-switcher). | Evaluating roadmap items or planning the next milestone. |
 | **`docs/spec/`** | Pre-implementation feature specs: decisions, alternatives rejected, acceptance criteria. One file per feature; written before coding, archived or deleted when shipped. Current: `usb-serial-protocol.md` (v1.2 USB onboarding), `esp-now-transport.md` (v1.3 ESP-NOW bridge + lights). | Designing or reviewing a feature before touching code. |
