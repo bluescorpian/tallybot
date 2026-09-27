@@ -13,6 +13,11 @@
 	import { sidecarLost, toBoardProps } from "$lib/boardState";
 	import { autostart, sidecar, isTauri } from "$lib/ipc.svelte";
 	import { openUrl } from "@tauri-apps/plugin-opener";
+	import { fly } from "svelte/transition";
+	import Info from "@lucide/svelte/icons/info";
+	import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
+	import CircleAlert from "@lucide/svelte/icons/circle-alert";
+	import X from "@lucide/svelte/icons/x";
 	import SettingsSheet from "$lib/components/settings/SettingsSheet.svelte";
 	import TitleBar from "$lib/components/chrome/TitleBar.svelte";
 	import Credit from "$lib/components/chrome/Credit.svelte";
@@ -275,7 +280,9 @@
 		connectTimer = setTimeout(() => (sourceMode = "connected"), 1600);
 	}
 
-	// ── Banners — thin strips above the board ─────────────────────────────────
+	// ── Notices — compact cards floating in the board's bottom-right corner ─────
+	// The board is left-aligned, so that corner is empty dot-grid at any width; a card there
+	// keeps its action and × next to the text and never pushes the board down.
 	// The engine being down is an error that stays until it's back (not dismissible:
 	// it's the reason the board is dark). USB port errors (from the shell) are dismissible
 	// and return only if their message changes; a sidecar notice (firmware-outdated,
@@ -382,30 +389,6 @@
 		scanResult={isTauri ? sidecar.scan : null}
 	/>
 
-	{#each banners as banner (banner.key)}
-		<div
-			class="notice"
-			class:warn={banner.level === "warn"}
-			class:error={banner.level === "error"}
-			role={banner.level === "error" ? "alert" : "status"}
-		>
-			<!-- selectable: an error is worth copying into a report or a search -->
-			<span class="select-text">{banner.message}</span>
-			{#if banner.action}
-				<button type="button" class="action" onclick={banner.action.run}
-					>{banner.action.label}</button
-				>
-			{/if}
-			{#if banner.dismissible}
-				<button
-					type="button"
-					onclick={() => dismiss(banner)}
-					aria-label="Dismiss">×</button
-				>
-			{/if}
-		</div>
-	{/each}
-
 	<div class="stage">
 		<Board
 			inputs={props.inputs}
@@ -427,6 +410,45 @@
 			oninputclick={devMode ? onInputClick : undefined}
 		/>
 	</div>
+
+	{#if banners.length}
+		<div class="notices">
+			{#each banners as banner (banner.key)}
+				<div
+					class="notice"
+					class:warn={banner.level === "warn"}
+					class:error={banner.level === "error"}
+					role={banner.level === "error" ? "alert" : "status"}
+					transition:fly={{ x: 24, duration: 180 }}
+				>
+					{#if banner.level === "error"}
+						<CircleAlert class="icon" />
+					{:else if banner.level === "warn"}
+						<TriangleAlert class="icon" />
+					{:else}
+						<Info class="icon" />
+					{/if}
+					<div class="body">
+						<!-- selectable: an error is worth copying into a report or a search -->
+						<p class="select-text">{banner.message}</p>
+						{#if banner.action}
+							<button type="button" class="action" onclick={banner.action.run}
+								>{banner.action.label}</button
+							>
+						{/if}
+					</div>
+					{#if banner.dismissible}
+						<button
+							type="button"
+							class="close"
+							onclick={() => dismiss(banner)}
+							aria-label="Dismiss"><X class="size-3.5" /></button
+						>
+					{/if}
+				</div>
+			{/each}
+		</div>
+	{/if}
 
 	<Credit />
 </div>
@@ -454,62 +476,85 @@
 		padding: 10px;
 	}
 
-	/* Banner — a thin strip under the titlebar (sidecar notices, USB port errors, engine
-	   down). Info by default; warn/error tint it. Non-intrusive: it sits above the board,
-	   doesn't cover it. Stacked banners keep a small gap. */
+	/* Notices — a stack of compact cards over the board's empty bottom-right corner (sidecar
+	   notices, USB port errors, an unflashed board, an unreachable ATEM, engine down). Flat
+	   popover surface, like the light picker; the level shows in the icon, and an error also
+	   tints the card. Above the board and credit, below the settings sheet (z-50). */
+	.notices {
+		position: absolute;
+		right: 32px;
+		bottom: 32px;
+		z-index: 20;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		width: min(320px, calc(100% - 64px));
+	}
 	.notice {
 		display: flex;
-		align-items: center;
-		gap: 12px;
-		margin: 0 10px;
-		padding: 8px 12px;
+		align-items: flex-start;
+		gap: 10px;
+		padding: 12px 10px 12px 12px;
 		font-size: 0.8rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--muted);
+		line-height: 1.4;
+		border-radius: 14px;
+		background: var(--popover);
+		color: var(--popover-foreground);
+		box-shadow:
+			0 0 0 1px color-mix(in oklch, var(--foreground), transparent 92%),
+			0 8px 24px oklch(0 0 0 / 0.12),
+			0 2px 6px oklch(0 0 0 / 0.08);
+	}
+	.notice :global(.icon) {
+		flex: none;
+		width: 16px;
+		height: 16px;
+		margin-top: 1px;
+		color: var(--muted-foreground);
+	}
+	.notice.warn :global(.icon) {
 		color: var(--foreground);
 	}
-	.notice + .notice {
-		margin-top: 6px;
-	}
-	.notice.warn {
-		border-color: color-mix(in oklch, var(--primary), transparent 50%);
-		background: color-mix(in oklch, var(--primary), transparent 92%);
-	}
 	.notice.error {
-		border-color: color-mix(in oklch, var(--destructive), transparent 40%);
-		background: color-mix(in oklch, var(--destructive), transparent 90%);
+		background: color-mix(in oklch, var(--destructive), var(--popover) 94%);
+	}
+	.notice.error :global(.icon),
+	.notice.error p {
 		color: var(--destructive);
 	}
-	.notice button.action {
-		flex: none;
-		margin-left: auto;
+	.body {
+		flex: 1 1 auto;
+		min-width: 0;
+	}
+	.body p {
+		margin: 0;
+	}
+	.action {
+		margin-top: 8px;
 		padding: 3px 10px;
 		font-size: 0.78rem;
 		font-weight: 500;
-		white-space: nowrap;
 		color: var(--foreground);
 		background: var(--background);
 		border: 1px solid var(--border);
 		border-radius: var(--radius-md);
 		cursor: pointer;
 	}
-	.notice button.action:hover {
+	.action:hover {
 		background: var(--accent);
 	}
-	.notice button.action + button {
-		margin-left: 0;
-	}
-	.notice button:not(.action) {
-		margin-left: auto;
-		font-size: 1.1rem;
-		line-height: 1;
+	.close {
+		flex: none;
+		display: inline-flex;
+		padding: 2px;
 		color: var(--muted-foreground);
 		background: none;
 		border: none;
+		border-radius: 6px;
 		cursor: pointer;
 	}
-	.notice button:not(.action):hover {
+	.close:hover {
 		color: var(--foreground);
+		background: var(--accent);
 	}
 </style>
