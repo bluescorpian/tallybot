@@ -7,6 +7,10 @@
   <br/>
 </p>
 
+<p align="center">
+  <img src="app/src-tauri/icons/128x128@2x.png" width="96" alt="TallyBot app icon">
+</p>
+
 <h1 align="center">TallyBot</h1>
 <h3 align="center">Wireless camera tally lights for Blackmagic ATEM switchers</h3>
 <br/>
