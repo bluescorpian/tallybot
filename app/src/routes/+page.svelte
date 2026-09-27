@@ -36,7 +36,18 @@
 		| "disconnected"
 		| "unconfigured"
 		| "no-inputs";
-	let sourceMode = $state<SourceMode>("connected"); // ATEM source lifecycle
+	// `?demo=` presets put the mock board in a state worth previewing without hardware:
+	//   hero        — the README screenshot (see HERO_DEVICES below)
+	//   firstrun    — no ATEM saved, no lights: the scaffold + the "No lights yet" hint
+	//   unreachable — a saved ATEM that never answers: the banner lands after the real delay
+	//   unflashed   — a board with no TallyBot firmware on USB: the flasher banner
+	// `?wifi=connected|weak|joining|failed` sets the wired A4:F2 light's live join state,
+	// shown on its Configure → Wi-Fi page.
+	const params = new URLSearchParams(location.search);
+	const demo = params.get("demo");
+	let sourceMode = $state<SourceMode>(
+		demo === "firstrun" ? "unconfigured" : demo === "unreachable" ? "disconnected" : "connected",
+	); // ATEM source lifecycle
 	let override = $state(false); // OBS override active? (hidden source in v1)
 	let settingsOpen = $state(false); // settings drawer (Sheet) open?
 
@@ -61,13 +72,15 @@
 		mock("c1:08:01:00:77:88", "C1:08", "assigned", 3),
 		mock("b2:5a:01:00:ee:ff", "B2:5A", "assigned", 4),
 	];
-	const heroDemo = new URLSearchParams(location.search).get("demo") === "hero";
-	let devices = $state<Device[]>(heroDemo ? HERO_DEVICES : [
+	const wifiDemo = params.get("wifi");
+	let devices = $state<Device[]>(demo === "hero" ? HERO_DEVICES : demo === "firstrun" ? [] : [
 		mock("a4:f2:01:00:11:22", "A4:F2", "assigned", 1, {
 			transport: "usb",
 			provisionedMode: "wifi",
 			ssid: "GreenRoom-5G",
-			rssi: -61,
+			wifiState:
+				wifiDemo === "weak" ? "connected" : (wifiDemo as Device["wifiState"]) ?? null,
+			rssi: wifiDemo === "weak" ? -76 : -61,
 		}),
 		mock("7b:1c:01:00:33:44", "7B:1C", "assigned", 1),
 		mock("3e:90:01:00:55:66", "3E:90", "assigned", 2),
@@ -285,8 +298,7 @@
 	// the timer restarts only when the attempt does, not on every snapshot.
 	const UNREACHABLE_AFTER_MS = 12_000;
 	const reaching = $derived(
-		isTauri &&
-			!engineDown &&
+		!engineDown &&
 			props.sourceIp !== null &&
 			(props.sourceStatus === "connecting" || props.sourceStatus === "disconnected")
 			? props.sourceIp
@@ -300,10 +312,17 @@
 		const timer = setTimeout(() => (unreachableIp = ip), UNREACHABLE_AFTER_MS);
 		return () => clearTimeout(timer);
 	});
+	// Off Tauri there's no shell; `?demo=unflashed` stands in for its health snapshot.
+	const health = $derived(
+		isTauri
+			? sidecar.health
+			: { usbPortErrors: [], unflashedPorts: demo === "unflashed" ? ["COM5"] : [] },
+	);
+	const openFlasher = () =>
+		isTauri ? void openUrl(FLASHER_URL) : void window.open(FLASHER_URL, "_blank");
 	let dismissed = $state<Record<string, string>>({});
 	let dismissedNotice = $state<unknown>(null);
 	const banners = $derived.by<Banner[]>(() => {
-		if (!isTauri) return [];
 		const list: Banner[] = [];
 		if (engineDown) {
 			const why = sidecar.health.sidecarDown;
@@ -325,16 +344,16 @@
 				action: { label: "Settings", run: () => (settingsOpen = true) },
 			});
 		}
-		for (const e of sidecar.health.usbPortErrors) {
+		for (const e of health.usbPortErrors) {
 			list.push({ key: `usb:${e.port}`, level: "warn", message: e.message, dismissible: true });
 		}
-		for (const port of sidecar.health.unflashedPorts) {
+		for (const port of health.unflashedPorts) {
 			list.push({
 				key: `unflashed:${port}`,
 				level: "info",
 				message: `The board on ${port} doesn't have TallyBot firmware yet. Flash it with the web flasher (TallyBot can stay open), then unplug it and plug it back in.`,
 				dismissible: true,
-				action: { label: "Open flasher", run: () => void openUrl(FLASHER_URL) },
+				action: { label: "Open flasher", run: openFlasher },
 			});
 		}
 		const n = sidecar.notice;
