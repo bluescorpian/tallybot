@@ -45,7 +45,8 @@
 	//   hero        — the README screenshot (see HERO_DEVICES below)
 	//   firstrun    — no ATEM saved, no lights: the scaffold + the "No lights yet" hint
 	//   unreachable — a saved ATEM that never answers: the banner lands after the real delay
-	//   unflashed   — a board with no TallyBot firmware on USB: the flasher banner
+	//   unflashed   — a board with no TallyBot firmware on USB: the flasher notice
+	//   enginedown  — the sidecar crashed and is restarting: the error notice + dimmed board
 	// `?wifi=connected|weak|joining|failed` sets the wired A4:F2 light's live join state,
 	// shown on its Configure → Wi-Fi page.
 	const params = new URLSearchParams(location.search);
@@ -196,7 +197,7 @@
 
 	// Sidecar down (crashed, being restarted): the snapshot is stale, so the board shows
 	// the rig with every light offline and the source reconnecting — never old tally.
-	const engineDown = $derived(isTauri && sidecar.stale);
+	const engineDown = $derived(isTauri ? sidecar.stale : demo === "enginedown");
 	const props = $derived(toBoardProps(engineDown ? sidecarLost(appState) : appState));
 
 	// Command handlers: under Tauri they send the real UiCommand; otherwise they
@@ -323,7 +324,11 @@
 	const health = $derived(
 		isTauri
 			? sidecar.health
-			: { usbPortErrors: [], unflashedPorts: demo === "unflashed" ? ["COM5"] : [] },
+			: {
+					sidecarDown: demo === "enginedown" ? "exit code 1" : null,
+					usbPortErrors: [],
+					unflashedPorts: demo === "unflashed" ? ["COM5"] : [],
+				},
 	);
 	const openFlasher = () =>
 		isTauri ? void openUrl(FLASHER_URL) : void window.open(FLASHER_URL, "_blank");
@@ -332,7 +337,7 @@
 	const banners = $derived.by<Banner[]>(() => {
 		const list: Banner[] = [];
 		if (engineDown) {
-			const why = sidecar.health.sidecarDown;
+			const why = health.sidecarDown;
 			list.push({
 				key: "engine",
 				level: "error",
