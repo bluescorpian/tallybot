@@ -12,6 +12,7 @@
 	import Board from "$lib/components/board/Board.svelte";
 	import { sidecarLost, toBoardProps } from "$lib/boardState";
 	import { autostart, sidecar, isTauri } from "$lib/ipc.svelte";
+	import { openUrl } from "@tauri-apps/plugin-opener";
 	import SettingsSheet from "$lib/components/settings/SettingsSheet.svelte";
 	import TitleBar from "$lib/components/chrome/TitleBar.svelte";
 	import Credit from "$lib/components/chrome/Credit.svelte";
@@ -266,12 +267,16 @@
 	// it's the reason the board is dark). USB port errors (from the shell) are dismissible
 	// and return only if their message changes; a sidecar notice (firmware-outdated,
 	// offline-flash, …) is dismissed as that one event, so a later notice shows again.
+	// An unflashed board (shell health) points at the web flasher until it's unplugged.
 	interface Banner {
 		key: string;
 		level: "info" | "warn" | "error";
 		message: string;
 		dismissible: boolean;
+		/** The banner's next step, as a button after the message. */
+		action?: { label: string; run: () => void };
 	}
+	const FLASHER_URL = "https://tally.hrry.sh";
 	let dismissed = $state<Record<string, string>>({});
 	let dismissedNotice = $state<unknown>(null);
 	const banners = $derived.by<Banner[]>(() => {
@@ -290,6 +295,15 @@
 		}
 		for (const e of sidecar.health.usbPortErrors) {
 			list.push({ key: `usb:${e.port}`, level: "warn", message: e.message, dismissible: true });
+		}
+		for (const port of sidecar.health.unflashedPorts) {
+			list.push({
+				key: `unflashed:${port}`,
+				level: "info",
+				message: `The board on ${port} doesn't have TallyBot firmware yet. Flash it with the web flasher (TallyBot can stay open), then unplug it and plug it back in.`,
+				dismissible: true,
+				action: { label: "Open flasher", run: () => void openUrl(FLASHER_URL) },
+			});
 		}
 		const n = sidecar.notice;
 		if (n && n !== dismissedNotice) {
@@ -326,6 +340,11 @@
 		>
 			<!-- selectable: an error is worth copying into a report or a search -->
 			<span class="select-text">{banner.message}</span>
+			{#if banner.action}
+				<button type="button" class="action" onclick={banner.action.run}
+					>{banner.action.label}</button
+				>
+			{/if}
 			{#if banner.dismissible}
 				<button
 					type="button"
@@ -411,7 +430,26 @@
 		background: color-mix(in oklch, var(--destructive), transparent 90%);
 		color: var(--destructive);
 	}
-	.notice button {
+	.notice button.action {
+		flex: none;
+		margin-left: auto;
+		padding: 3px 10px;
+		font-size: 0.78rem;
+		font-weight: 500;
+		white-space: nowrap;
+		color: var(--foreground);
+		background: var(--background);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		cursor: pointer;
+	}
+	.notice button.action:hover {
+		background: var(--accent);
+	}
+	.notice button.action + button {
+		margin-left: 0;
+	}
+	.notice button:not(.action) {
 		margin-left: auto;
 		font-size: 1.1rem;
 		line-height: 1;
@@ -420,7 +458,7 @@
 		border: none;
 		cursor: pointer;
 	}
-	.notice button:hover {
+	.notice button:not(.action):hover {
 		color: var(--foreground);
 	}
 </style>

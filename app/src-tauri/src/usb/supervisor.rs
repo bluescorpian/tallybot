@@ -8,6 +8,10 @@
 //! Ports are opened here, not in the comms thread, so open failures land in one place:
 //! [`OpenFailures`] decides which reach the operator (via `health`) and keeps the 1.5 s
 //! re-poll from repeating them.
+//!
+//! A port whose board turned out unflashed is *parked*: reported via `health` and left
+//! closed until it drops out of enumeration (unplug), so the web flasher can have it. The
+//! replug after flashing then reads as a new device.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
@@ -36,6 +40,8 @@ pub fn start(app: AppHandle) {
     thread::spawn(move || {
         // Port paths with a live comms thread — so we don't open the same port twice.
         let tracked: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
+        // Ports holding an unflashed board — not reopened until they're unplugged.
+        let parked: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
 
         let mut failures = OpenFailures::default();
 
@@ -51,7 +57,7 @@ pub fn start(app: AppHandle) {
                 }
                 let path = info.port_name.clone();
                 present.insert(path.clone());
-                if tracked.lock().unwrap().contains(&path) {
+                if tracked.lock().unwrap().contains(&path) || parked.lock().unwrap().contains(&path) {
                     continue;
                 }
                 let opened = match port::open(&path) {
@@ -73,15 +79,24 @@ pub fn start(app: AppHandle) {
                 tracked.lock().unwrap().insert(path.clone());
                 let app = app.clone();
                 let tracked = tracked.clone();
+                let parked = parked.clone();
                 let stop = stop.clone();
                 thread::spawn(move || {
-                    port::run(&app, &path, opened, &stop);
+                    if port::run(&app, &path, opened, &stop) == port::Outcome::Unflashed {
+                        // Park before untracking, so the next poll can't reopen it between.
+                        parked.lock().unwrap().insert(path.clone());
+                        health::set_unflashed_port(&app, &path, true);
+                    }
                     tracked.lock().unwrap().remove(&path); // free it for re-open on replug
                 });
             }
             // A port that failed and then went away (unplugged) is no longer a problem.
             for path in failures.retain_present(&present) {
                 health::set_usb_port_error(&app, &path, None);
+            }
+            // Nor is an unflashed board that was unplugged; its replug is probed afresh.
+            for path in unpark_absent(&mut parked.lock().unwrap(), &present) {
+                health::set_unflashed_port(&app, &path, false);
             }
 
             let mut slept = Duration::ZERO;
@@ -91,6 +106,15 @@ pub fn start(app: AppHandle) {
             }
         }
     });
+}
+
+/// Drop parked ports no longer enumerated; returns the ones dropped.
+fn unpark_absent(parked: &mut HashSet<String>, present: &HashSet<String>) -> Vec<String> {
+    let gone: Vec<String> = parked.difference(present).cloned().collect();
+    for p in &gone {
+        parked.remove(p);
+    }
+    gone
 }
 
 /// Consecutive open failures needed before the operator hears about a port. One failure
@@ -198,6 +222,16 @@ mod tests {
         let present: HashSet<String> = ["/dev/ttyACM0".to_string()].into();
         assert_eq!(f.retain_present(&present), vec!["/dev/ttyACM1".to_string()]);
         assert_eq!(f.fail("/dev/ttyACM1", "busy"), FailureAction::Log); // streak restarted
+    }
+
+    #[test]
+    fn a_parked_port_is_released_only_by_unplug() {
+        let mut parked: HashSet<String> = ["/dev/ttyACM0".to_string()].into();
+        let present: HashSet<String> = ["/dev/ttyACM0".to_string()].into();
+        assert!(unpark_absent(&mut parked, &present).is_empty());
+        assert!(parked.contains("/dev/ttyACM0"));
+        assert_eq!(unpark_absent(&mut parked, &HashSet::new()), vec!["/dev/ttyACM0".to_string()]);
+        assert!(parked.is_empty());
     }
 
     #[test]

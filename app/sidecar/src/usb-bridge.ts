@@ -36,13 +36,7 @@ export interface UsbFrame {
   payloadHex: string;
 }
 
-/** An ESP32-C3 that didn't speak HELLO within the detect window (likely unflashed). */
-export interface UsbUnflashed {
-  type: "unflashedDeviceDetected";
-  port: string;
-}
-
-export type UsbInbound = UsbDeviceConnected | UsbDeviceDisconnected | UsbFrame | UsbUnflashed;
+export type UsbInbound = UsbDeviceConnected | UsbDeviceDisconnected | UsbFrame;
 
 // ── sidecar → shell (written on the sidecar's stdout, intercepted before the UI) ──
 
@@ -61,7 +55,6 @@ const INBOUND_TYPES = new Set<string>([
   "usbDeviceConnected",
   "usbDeviceDisconnected",
   "usbFrame",
-  "unflashedDeviceDetected",
 ]);
 
 /** Parse one NDJSON line as a USB bridge inbound message, or null if it isn't one. */

@@ -18,10 +18,6 @@ test("parseUsbInbound recognises the shell→sidecar vocabulary", () => {
     mac: "a",
     version: 2,
   });
-  assert.deepEqual(parseUsbInbound('{"type":"unflashedDeviceDetected","port":"COM5"}'), {
-    type: "unflashedDeviceDetected",
-    port: "COM5",
-  });
   // A UI command (not a USB bridge message) and junk both return null.
   assert.equal(parseUsbInbound('{"type":"assignDevice","mac":"a","inputId":1}'), null);
   assert.equal(parseUsbInbound("not json"), null);

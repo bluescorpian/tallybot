@@ -1,7 +1,8 @@
-//! Shell-side health the operator must see: a dead sidecar and USB ports we can't open.
+//! Shell-side health the operator must see: a dead sidecar, USB ports we can't open, and
+//! boards on USB that aren't running TallyBot firmware.
 //!
-//! Neither can travel over the `"sidecar"` event channel — one is the sidecar being gone,
-//! the other is known only to the shell — so the shell keeps its own small snapshot and
+//! None can travel over the `"sidecar"` event channel — one is the sidecar being gone,
+//! the others are known only to the shell — so the shell keeps its own small snapshot and
 //! pushes the whole thing to the webview as a `"health"` event on every change. The UI
 //! also pulls it once via `shell_health` on mount, since Tauri doesn't buffer events for
 //! listeners that don't exist yet (a port error found during start-up would be lost).
@@ -22,6 +23,9 @@ pub struct Health {
     pub sidecar_down: Option<String>,
     /// Ports that repeatedly fail to open, sorted by port. Operator-facing messages.
     pub usb_port_errors: Vec<UsbPortError>,
+    /// Ports holding an ESP32-C3 that never sent HELLO (no TallyBot firmware), sorted. The
+    /// shell has released each one so the web flasher can open it; cleared on unplug.
+    pub unflashed_ports: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -75,6 +79,25 @@ pub fn set_usb_port_error(app: &AppHandle, port: &str, message: Option<String>) 
                 true
             }
             (None, None) => false,
+        }
+    });
+}
+
+/// Mark a port as holding an unflashed board (`true`) or clear it. Emits only on change.
+pub fn set_unflashed_port(app: &AppHandle, port: &str, unflashed: bool) {
+    update(app, |h| {
+        let existing = h.unflashed_ports.iter().position(|p| p == port);
+        match (existing, unflashed) {
+            (None, true) => {
+                h.unflashed_ports.push(port.to_string());
+                h.unflashed_ports.sort();
+                true
+            }
+            (Some(i), false) => {
+                h.unflashed_ports.remove(i);
+                true
+            }
+            _ => false,
         }
     });
 }

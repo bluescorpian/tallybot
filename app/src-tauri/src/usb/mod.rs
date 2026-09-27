@@ -10,9 +10,11 @@
 //!       {"type":"usbDeviceConnected","mac":..,"version":..}
 //!       {"type":"usbDeviceDisconnected","mac":..}
 //!       {"type":"usbFrame","mac":..,"payloadHex":..}   // STATUS/LOG/RELAY/other device→host payloads
-//!       {"type":"unflashedDeviceDetected","port":..}
 //!   • sidecar → shell (read off the sidecar's stdout, intercepted before the UI):
 //!       {"type":"usbSend","mac":..,"payloadHex":..}     // SET_COLOR/SET_WIFI/SET_TRANSPORT/GET_STATUS/RELAY/SET_BRIDGE
+//!
+//! A board that never sends HELLO (no TallyBot firmware) isn't the sidecar's business: the
+//! shell reports it straight to the UI through `health` and releases its port.
 //!
 //! The v1.3 ESP-NOW bridge relays many lights behind one port, and the shell stays
 //! out of it by construction: a RELAY-wrapped send is just a `usbSend` to the bridge's

@@ -77,7 +77,6 @@ export interface UsbTransport {
   on(event: "deviceUnsupported", listener: (info: { mac: string; version: number }) => void): this;
   on(event: "status", listener: (status: UsbStatus) => void): this;
   on(event: "log", listener: (entry: { mac: string; level: "info" | "warn" | "error"; text: string }) => void): this;
-  on(event: "unflashed", listener: (info: { port: string }) => void): this;
   /**
    * An ESP-NOW frame a bridge received and forwarded up (RELAY envelope). `bridgeMac` is the
    * USB device the frame arrived on; `inner` is an unframed device→server payload the
@@ -175,10 +174,6 @@ export class UsbTransport extends EventEmitter {
       case "usbDeviceDisconnected": {
         this.#online.delete(message.mac);
         this.emit("deviceDisconnected", { mac: message.mac });
-        break;
-      }
-      case "unflashedDeviceDetected": {
-        this.emit("unflashed", { port: message.port });
         break;
       }
       case "usbFrame": {

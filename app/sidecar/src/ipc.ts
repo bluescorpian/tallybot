@@ -167,17 +167,6 @@ export interface SourceScanEvent {
 }
 
 /**
- * The shell detected an ESP32-C3 on USB that isn't running TallyBot firmware (no HELLO
- * within the detect window). The UI may offer to flash it (flashing is deferred — the
- * event is wired now so the contract is stable).
- */
-export interface UnflashedDeviceDetectedEvent {
-  type: "unflashedDeviceDetected";
-  /** The serial port path/name (e.g. `/dev/ttyACM0`, `COM5`). */
-  port: string;
-}
-
-/**
  * A device-log line, sourced from a USB `LOG` frame. The live device-log channel over USB
  * directly attacks the deferred WiFi-join problem (`docs/wifi-troubleshooting.md`) — the
  * wizard streams join progress/verdicts straight from the device.
@@ -193,7 +182,6 @@ export type SidecarEvent =
   | StateEvent
   | NoticeEvent
   | SourceScanEvent
-  | UnflashedDeviceDetectedEvent
   | DeviceLogEvent;
 
 // ── UI → sidecar commands ───────────────────────────────────────────────────────
@@ -320,7 +308,6 @@ export const EVENT_TYPES = [
   "state",
   "notice",
   "sourceScan",
-  "unflashedDeviceDetected",
   "deviceLog",
 ] as const satisfies readonly SidecarEvent["type"][];
 export const COMMAND_TYPES = [

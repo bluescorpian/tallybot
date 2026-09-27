@@ -72,7 +72,6 @@ export interface ProvisioningPort {
     }) => void,
   ): unknown;
   on(event: "log", listener: (entry: { mac: string; level: "info" | "warn" | "error"; text: string }) => void): unknown;
-  on(event: "unflashed", listener: (info: { port: string }) => void): unknown;
 }
 
 /**
@@ -336,9 +335,6 @@ export class SidecarApp {
       });
       this.#provisioning.on("log", ({ mac, level, text }) => {
         this.#ipc.send({ type: "deviceLog", mac, level, text });
-      });
-      this.#provisioning.on("unflashed", ({ port }) => {
-        this.#ipc.send({ type: "unflashedDeviceDetected", port });
       });
     }
 

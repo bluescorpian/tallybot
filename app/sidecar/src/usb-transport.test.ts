@@ -118,15 +118,6 @@ test("an inbound LOG frame becomes a log event", () => {
   assert.deepEqual(logs, [{ mac: MAC, level: "error", text: "boom" }]);
 });
 
-test("unflashedDeviceDetected is surfaced", () => {
-  const bridge = new FakeBridge();
-  const usb = new UsbTransport(bridge);
-  const ports: string[] = [];
-  usb.on("unflashed", ({ port }) => ports.push(port));
-  bridge.feed({ type: "unflashedDeviceDetected", port: "/dev/ttyACM0" });
-  assert.deepEqual(ports, ["/dev/ttyACM0"]);
-});
-
 // ── v1.3 ESP-NOW ─────────────────────────────────────────────────────────────────
 
 test("transportModeValue maps espnow to the ESPNOW wire byte", () => {

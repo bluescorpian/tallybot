@@ -23,7 +23,8 @@ import {
 
 /**
  * Shell-side health (`src-tauri/src/health.rs`): what the operator must see but the
- * sidecar can't say — the sidecar itself being down, or a USB port the shell can't open.
+ * sidecar can't say — the sidecar itself being down, a USB port the shell can't open, or
+ * a board on USB with no TallyBot firmware.
  * Pushed as `"health"` events; pulled once on start via `shell_health`.
  */
 export interface ShellHealth {
@@ -33,9 +34,11 @@ export interface ShellHealth {
 	sidecarDown: string | null;
 	/** Ports that keep failing to open, with operator-facing messages. */
 	usbPortErrors: { port: string; message: string }[];
+	/** Ports holding a board with no TallyBot firmware; the shell has released each one. */
+	unflashedPorts: string[];
 }
 
-const HEALTHY: ShellHealth = { revision: 0, sidecarDown: null, usbPortErrors: [] };
+const HEALTHY: ShellHealth = { revision: 0, sidecarDown: null, usbPortErrors: [], unflashedPorts: [] };
 
 /** True when running inside the Tauri webview (mirrors `TitleBar.svelte`). */
 export const isTauri =

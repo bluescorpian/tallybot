@@ -46,12 +46,9 @@ class ReplIpc extends EventEmitter implements IpcPort {
       // The REPL has no scan UI; summarise progress/results inline.
       const hits = event.found.map((h) => h.ip).join(", ");
       console.log(`${stamp()} SCAN ${event.status}${hits ? `: ${hits}` : ""}`);
-    } else if (event.type === "deviceLog") {
+    } else {
       // USB device-log stream — handy for watching a WiFi-provisioning join over the cable.
       console.log(`${stamp()} LOG ${event.mac} ${event.level.toUpperCase()}: ${event.text}`);
-    } else {
-      // unflashedDeviceDetected — a bare ESP32-C3 on USB (flashing is deferred).
-      console.log(`${stamp()} UNFLASHED device on ${event.port}`);
     }
   }
   notice(level: "info" | "warn" | "error", message: string): void {

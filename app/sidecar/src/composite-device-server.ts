@@ -38,7 +38,6 @@ export interface CompositeDeviceServer {
   on(event: "deviceUnsupported", listener: (info: { mac: string; version: number }) => void): this;
   on(event: "status", listener: (status: UsbStatus) => void): this;
   on(event: "log", listener: (entry: { mac: string; level: "info" | "warn" | "error"; text: string }) => void): this;
-  on(event: "unflashed", listener: (info: { port: string }) => void): this;
   on(event: "error", listener: (err: Error) => void): this;
 }
 
@@ -67,7 +66,6 @@ export class CompositeDeviceServer extends EventEmitter implements DeviceServerP
     if (usb) {
       usb.on("status", (status) => this.emit("status", status));
       usb.on("log", (entry) => this.emit("log", entry));
-      usb.on("unflashed", (info) => this.emit("unflashed", info));
     }
   }
 
