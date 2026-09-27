@@ -101,7 +101,7 @@ PC". Click **More info**, then **Run anyway**.
 
 ### 2. Flash your lights
 
-Open the [**TallyBot Flasher**](https://bluescorpian.github.io/tallybot/) in Chrome or Edge,
+Open the [**TallyBot Flasher**](https://tally.hrry.sh/) in Chrome or Edge,
 plug a board in by USB-C, and click **Install TallyBot**. Nothing else to install. When it's
 done the light glows magenta, meaning it's ready to set up.
 
