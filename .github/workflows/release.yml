@@ -1,0 +1,180 @@
+name: Release
+
+# Pushing a `vX.Y.Z` tag builds the Windows and Linux installers and the firmware image,
+# then opens a DRAFT GitHub Release with them attached. Publishing that draft (by hand,
+# after a look) triggers pages.yml, which ships the firmware to the web flasher.
+#
+# A manual run (Actions → Release → Run workflow) builds everything as workflow artifacts
+# without creating a release, to check the pipeline before tagging.
+#
+# Unlike ci.yml this doesn't use the Nix dev shell: binaries built against the Nix store
+# don't run on other distros, and the sidecar's pkg step can only emit V8 bytecode off
+# NixOS. Release builds use each runner's stock toolchain instead.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        name: Tag matches the app version
+        run: |
+          app=$(jq -r .version app/src-tauri/tauri.conf.json)
+          for f in app/package.json app/sidecar/package.json; do
+            [ "$(jq -r .version "$f")" = "$app" ] || { echo "::error::$f version != tauri.conf.json ($app)"; exit 1; }
+          done
+          cargo=$(sed -n 's/^version = "\(.*\)"/\1/p' app/src-tauri/Cargo.toml | head -1)
+          [ "$cargo" = "$app" ] || { echo "::error::Cargo.toml version $cargo != tauri.conf.json ($app)"; exit 1; }
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "${GITHUB_REF_NAME#v}" != "$app" ]; then
+            echo "::error::tag $GITHUB_REF_NAME doesn't match app version $app"; exit 1
+          fi
+          echo "version=$app" >> "$GITHUB_OUTPUT"
+
+  windows:
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: |
+            app/pnpm-lock.yaml
+            app/sidecar/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+      - name: Install dependencies
+        run: |
+          pnpm -C app/sidecar install --frozen-lockfile
+          pnpm -C app install --frozen-lockfile
+      # beforeBuildCommand builds the frontend and the sidecar binary; bundling makes both
+      # the NSIS setup .exe (per-user install, no admin needed) and an .msi.
+      - name: Build
+        run: pnpm -C app tauri build
+      - name: Collect installers + portable zip
+        shell: pwsh
+        run: |
+          $v = '${{ needs.version.outputs.version }}'
+          $rel = 'app\src-tauri\target\release'
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item "$rel\bundle\nsis\*.exe" "dist\TallyBot-$v-windows-x64-setup.exe"
+          Copy-Item "$rel\bundle\msi\*.msi" "dist\TallyBot-$v-windows-x64.msi"
+          # Portable build for PCs where installing isn't allowed: the exe plus its sidecar,
+          # which the runtime resolves next to the exe without the target-triple suffix.
+          $portable = New-Item -ItemType Directory -Force portable
+          Copy-Item "$rel\tallybot.exe" "$portable\TallyBot.exe"
+          Copy-Item 'app\src-tauri\binaries\tallybot-sidecar-x86_64-pc-windows-msvc.exe' "$portable\tallybot-sidecar.exe"
+          Compress-Archive -Path "$portable\*" -DestinationPath "dist\TallyBot-$v-windows-x64-portable.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*
+          if-no-files-found: error
+
+  linux:
+    needs: version
+    # The oldest supported runner, so the AppImage and .deb link against an old glibc
+    # and run on more distros.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: System libraries (Tauri + libudev for serialport)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev libxdo-dev libssl-dev libudev-dev patchelf file
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: |
+            app/pnpm-lock.yaml
+            app/sidecar/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+      - name: Install dependencies
+        run: |
+          pnpm -C app/sidecar install --frozen-lockfile
+          pnpm -C app install --frozen-lockfile
+      - name: Build
+        run: pnpm -C app tauri build
+      - name: Collect packages
+        run: |
+          v=${{ needs.version.outputs.version }}
+          b=app/src-tauri/target/release/bundle
+          mkdir dist
+          cp $b/appimage/*.AppImage "dist/TallyBot-$v-linux-x86_64.AppImage"
+          cp $b/deb/*.deb "dist/TallyBot-$v-linux-amd64.deb"
+          cp $b/rpm/*.rpm "dist/TallyBot-$v-linux-x86_64.rpm"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/*
+          if-no-files-found: error
+
+  firmware:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ hashFiles('firmware/platformio.ini') }}
+      - run: pip install platformio
+      # One image at offset 0x0 (merge_bin.py): what the web flasher and a manual
+      # `esptool write_flash 0x0` both take. The name is stable so pages.yml can find it.
+      - name: Build merged image
+        working-directory: firmware
+        run: |
+          pio run -e esp32-c3-release -t mergebin
+          mkdir ../dist
+          cp .pio/build/esp32-c3-release/tallybot-merged.bin ../dist/tallybot-firmware-esp32c3.bin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [version, windows, linux, firmware]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --draft --generate-notes --title "TallyBot ${{ needs.version.outputs.version }}"

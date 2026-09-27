@@ -1,0 +1,52 @@
+name: Web flasher
+
+# Deploys flasher/ to GitHub Pages with the firmware from the latest published release, so
+# the flasher always installs what the release page offers. The image is copied onto Pages
+# (not linked) because release downloads don't send CORS headers, and the browser flasher
+# fetches the image with a cross-origin request.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble the site
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # The published release; a manual run falls back to the latest one.
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          mkdir site
+          cp flasher/index.html site/
+          cp app/src-tauri/icons/128x128.png site/icon.png
+          tag=${TAG:-$(gh release view --json tagName -q .tagName)}
+          gh release download "$tag" --pattern tallybot-firmware-esp32c3.bin --dir site
+          jq -n --arg v "${tag#v}" '{
+            name: "TallyBot",
+            version: $v,
+            new_install_prompt_erase: true,
+            builds: [{ chipFamily: "ESP32-C3",
+                       parts: [{ path: "tallybot-firmware-esp32c3.bin", offset: 0 }] }]
+          }' > site/manifest.json
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4

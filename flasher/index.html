@@ -1,0 +1,98 @@
+<!doctype html>
+<!--
+  TallyBot web flasher: put the firmware on a bare ESP32-C3 SuperMini from the browser.
+  Deployed to GitHub Pages by .github/workflows/pages.yml, which adds manifest.json and the
+  merged firmware image from the latest published release next to this file.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TallyBot Flasher</title>
+  <script type="module" src="https://cdn.jsdelivr.net/npm/esp-web-tools@10/dist/web/install-button.js"></script>
+  <style>
+    :root {
+      --bg: #fafafa; --fg: #1a1a1a; --muted: #5c5c5c; --card: #fff; --line: #e2e2e2;
+      --accent: #3f51b5; --accent-fg: #fff;
+      color-scheme: light dark;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #131313; --fg: #ededed; --muted: #a3a3a3; --card: #1c1c1c; --line: #2e2e2e;
+              --accent: #7986cb; --accent-fg: #111; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--fg);
+           font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { max-width: 38rem; margin: 0 auto; padding: 3rem 1rem 4rem; }
+    header { display: flex; align-items: center; gap: .9rem; margin-bottom: 1.5rem; }
+    header img { width: 56px; height: 56px; }
+    h1 { font-size: 1.6rem; margin: 0; }
+    header p { margin: 0; color: var(--muted); }
+    h2 { font-size: 1.05rem; margin: 2rem 0 .5rem; }
+    ol, ul { padding-left: 1.3rem; margin: .4rem 0; }
+    li { margin: .3rem 0; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+            padding: 1.25rem; margin-top: 1rem; }
+    .install { display: flex; flex-direction: column; align-items: flex-start; gap: .6rem; }
+    esp-web-install-button button { font: inherit; font-weight: 600; cursor: pointer;
+      background: var(--accent); color: var(--accent-fg); border: 0; border-radius: 8px;
+      padding: .7rem 1.3rem; }
+    .muted { color: var(--muted); font-size: .92rem; }
+    a { color: var(--accent); }
+    code { font-size: .9em; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="icon.png" alt="">
+    <div>
+      <h1>TallyBot Flasher</h1>
+      <p>Turn an ESP32-C3 SuperMini into a tally light, straight from your browser.</p>
+    </div>
+  </header>
+
+  <h2>You need</h2>
+  <ul>
+    <li>An <strong>ESP32-C3 SuperMini</strong> board</li>
+    <li>A USB-C cable that carries data (some charge-only cables don't)</li>
+    <li><strong>Chrome or Edge</strong> on a computer. Firefox and Safari can't talk to USB devices.</li>
+  </ul>
+
+  <div class="card install">
+    <esp-web-install-button manifest="manifest.json">
+      <button slot="activate">Install TallyBot</button>
+      <span slot="unsupported">This browser can't flash devices. Open this page in Chrome or Edge on a computer.</span>
+      <span slot="not-allowed">Flashing needs a secure page. Open this page over https.</span>
+    </esp-web-install-button>
+    <span class="muted">Firmware <span id="version">(loading…)</span></span>
+  </div>
+
+  <h2>Steps</h2>
+  <ol>
+    <li>Plug the board into this computer.</li>
+    <li>Click <strong>Install TallyBot</strong> and pick the board from the list (it usually shows as <code>USB JTAG/serial debug unit</code>).</li>
+    <li>For a brand-new board, let it erase the device first. When updating a light you've already set up, skip the erase to keep its settings.</li>
+    <li>When it's done the light glows <strong>magenta</strong>: it's ready to set up. Leave it plugged in, open the TallyBot app, and it appears there.</li>
+  </ol>
+
+  <h2>If the board isn't listed</h2>
+  <ul>
+    <li>Try another cable or USB port.</li>
+    <li>Put the board into download mode: hold <strong>BOOT</strong>, tap <strong>RESET</strong>, let go of BOOT, then try again.</li>
+    <li>Close the TallyBot app or any serial monitor while flashing, as only one program can use the port at a time.</li>
+    <li>On Linux, add yourself to the <code>dialout</code> group (<code>uucp</code> on Arch) and log back in.</li>
+  </ul>
+
+  <p class="muted" style="margin-top:2.5rem">
+    <a href="https://github.com/bluescorpian/tallybot">TallyBot on GitHub</a> ·
+    <a href="https://github.com/bluescorpian/tallybot/releases/latest">Download the app</a>
+  </p>
+</main>
+<script>
+  fetch("manifest.json").then(r => r.json())
+    .then(m => { document.getElementById("version").textContent = m.version; })
+    .catch(() => { document.getElementById("version").textContent = "unavailable"; });
+</script>
+</body>
+</html>
