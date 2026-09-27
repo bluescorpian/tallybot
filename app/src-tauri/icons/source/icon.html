@@ -1,0 +1,45 @@
+<!doctype html>
+<!--
+  Source for the TallyBot app icon: the TB mark in the titlebar wordmark's faces
+  (src/lib/components/chrome/Wordmark.svelte). icon-master.png beside this file is
+  its 1024px render, and every file in ../ is generated from that master.
+
+  To change the icon:
+    1. Open this file in Chromium with the viewport at 1024x1024 and screenshot it.
+       The fonts load from app/node_modules, so run `pnpm install` in app/ first.
+    2. Round the corners (radius 224) with a transparent mask:
+         magick shot.png -alpha set \( -size 1024x1024 xc:none -fill white \
+           -draw "roundrectangle 0,0 1023,1023 224,224" \) -compose DstIn \
+           -composite icon-master.png
+    3. From app/: `cargo tauri icon src-tauri/icons/source/icon-master.png`, delete
+       the android/ and ios/ output (no mobile builds), and copy icons/32x32.png
+       to static/favicon.png.
+
+  Tuning, all on the tile's style attribute (px are CSS px; the tile renders at 2x):
+    --ts / --bs  T and B font sizes. B is ~0.99 of T so the cap heights match: the T's
+                 ink measures 68 units per 100px, the B's 70.
+    --bdy        drops the B so its top and bottom edges line up with the T's.
+    --gap        how far the B tucks under the T (negative = overlap).
+    --sw         the T's outline width. The cream fill is painted under the stroke
+                 (paint-order: fill stroke), so the letter keeps its shape while it
+                 masks the B.
+    --k          scale of the whole lockup; --dx / --dy centre it on the tile.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+@font-face{font-family:DMI;font-style:italic;src:url(../../../node_modules/@fontsource/dm-serif-display/files/dm-serif-display-latin-400-italic.woff2)}
+@font-face{font-family:SG;font-weight:300 700;src:url(../../../node_modules/@fontsource-variable/space-grotesk/files/space-grotesk-latin-wght-normal.woff2)}
+html,body{overflow:hidden}
+body{margin:0;font-synthesis:weight style}
+.tile{width:512px;height:512px;display:flex;align-items:center;justify-content:center;background:oklch(0.957 0.011 85)}
+.row{display:flex;align-items:baseline;transform:translate(var(--dx,0),var(--dy,0)) scale(var(--k,1))}
+.t{font-family:DMI;font-style:italic;font-size:var(--ts);line-height:1;position:relative;z-index:1;color:oklch(0.957 0.011 85);-webkit-text-stroke:var(--sw) oklch(35.6% .009 268.4);paint-order:fill stroke}
+.b{font-family:SG;font-style:italic;font-weight:800;font-size:var(--bs);line-height:1;color:oklch(0.585 0.195 250);margin-left:var(--gap);position:relative;top:var(--bdy,0)}
+</style>
+</head>
+<body>
+<div class="tile" style="zoom:2;--ts:285px;--bs:282px;--gap:-58px;--sw:10px;--dx:-28px;--dy:-7.25px;--k:1.4;--bdy:4.4px"><div class="row"><span class="t">T</span><span class="b">B</span></div></div>
+</body>
+</html>
