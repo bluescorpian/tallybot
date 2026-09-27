@@ -159,7 +159,15 @@
 				onback={() => (view = "menu")}
 			/>
 		{:else if view === "wifi"}
-			<DeviceWifi {mac} {ssid} {onprovisionwifi} onback={() => (view = "config")} />
+			<DeviceWifi
+				{mac}
+				{ssid}
+				live={wired}
+				{wifiState}
+				{rssi}
+				{onprovisionwifi}
+				onback={() => (view = "config")}
+			/>
 		{:else}
 			<!-- Header: which light, plus flash-to-identify -->
 		<div class="bg-muted/70 flex items-center justify-between gap-2 px-3 pt-3 pb-2.5">

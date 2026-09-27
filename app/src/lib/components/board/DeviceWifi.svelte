@@ -7,10 +7,14 @@
 	// device confirms immediately — there is NO live/validating join GATE, so you can provision from
 	// anywhere, not just in range of the target network. The creds apply when the device is
 	// unplugged and deployed. So this page has exactly two states: the form, and a saved
-	// confirmation — no joining spinner, no failure, no RSSI. (The device does keep a warm WiFi
-	// association while cabled and streams live wifiState/rssi, but by product choice we don't gate
-	// or display it here — a future iteration could show "connected · −55 dBm" as confirmation.)
+	// confirmation.
+	//
+	// While cabled, the device also tries the network and streams wifiState/rssi. The saved view
+	// shows that as a status line under the confirmation — never a gate: it catches a typo'd
+	// password when the network is in range, and "can't join from here" is a normal answer when
+	// it isn't, so it is worded as information, not an error.
 	import { untrack } from "svelte";
+	import type { DeviceWifiState } from "$ipc";
 	import PopoverPageHeader from "$lib/components/board/PopoverPageHeader.svelte";
 	import Eye from "@lucide/svelte/icons/eye";
 	import EyeOff from "@lucide/svelte/icons/eye-off";
@@ -20,12 +24,37 @@
 		mac: string;
 		/** SSID the device is already provisioned to join, or null — opens straight on the form. */
 		ssid: string | null;
+		/** True while the device is cabled, so `wifiState`/`rssi` are live from its STATUS. */
+		live?: boolean;
+		/** The device's current join attempt, as it reports it. */
+		wifiState?: DeviceWifiState | null;
+		/** RSSI in dBm while joined, else null. */
+		rssi?: number | null;
 		/** Persist creds on the device (save-only; no join). */
 		onprovisionwifi?: (ssid: string, pass: string) => void;
 		/** Return to the Configure pane. */
 		onback?: () => void;
 	}
-	let { mac, ssid, onprovisionwifi, onback }: Props = $props();
+	let {
+		mac,
+		ssid,
+		live = false,
+		wifiState = null,
+		rssi = null,
+		onprovisionwifi,
+		onback,
+	}: Props = $props();
+
+	// Signal in words, not dBm. Weak is flagged because a light that barely joins at the desk
+	// is the one a venue AP drops once it's placed further away (docs/wifi-troubleshooting.md).
+	function signal(dbm: number | null): { word: string; weak: boolean } {
+		if (dbm === null) return { word: "", weak: false };
+		if (dbm >= -60) return { word: "strong signal", weak: false };
+		if (dbm >= -70) return { word: "good signal", weak: false };
+		return { word: "weak signal", weak: true };
+	}
+	const joinStatus = $derived(live ? wifiState : null);
+	const strength = $derived(signal(rssi));
 
 	// SSID seeds from the stored network (for reconfigure); password is never read back off a
 	// device, so it always starts blank. A device with stored creds opens on its summary; a fresh
@@ -64,6 +93,34 @@
 				<p class="text-muted-foreground mt-0.5 text-[0.72rem]">Safe to unplug.</p>
 			</div>
 		</div>
+		{#if joinStatus === "connected" || joinStatus === "joining" || joinStatus === "failed"}
+			<div class="bg-border my-2.5 h-px"></div>
+			<div class="flex items-start gap-2 text-[0.72rem]" role="status">
+				<span
+					class="mt-1 size-2 shrink-0 rounded-full"
+					class:dot-ok={joinStatus === "connected" && !strength.weak}
+					class:dot-warn={joinStatus === "failed" || strength.weak}
+					class:dot-busy={joinStatus === "joining"}
+				></span>
+				<div class="min-w-0 flex-1">
+					{#if joinStatus === "connected"}
+						<p>Connected now{strength.word ? ` · ${strength.word}` : ""}</p>
+						{#if strength.weak}
+							<p class="text-muted-foreground mt-0.5">
+								It may drop out if the light ends up further from the router.
+							</p>
+						{/if}
+					{:else if joinStatus === "joining"}
+						<p class="text-muted-foreground">Trying the network from here…</p>
+					{:else}
+						<p>Can't join it from here</p>
+						<p class="text-muted-foreground mt-0.5">
+							Fine if the network is out of range. If it isn't, check the password.
+						</p>
+					{/if}
+				</div>
+			</div>
+		{/if}
 		<button
 			type="button"
 			class="btn-ghost mt-3 w-full"
@@ -111,6 +168,24 @@
 </div>
 
 <style>
+	/* live join status dot: green is "fine" (as the Saved check above); "look at this" is a
+	   hollow ring rather than a new colour, since the palette has no neutral warning hue. */
+	.dot-ok {
+		background: var(--preview);
+	}
+	.dot-warn {
+		box-shadow: inset 0 0 0 1.5px var(--foreground);
+	}
+	.dot-busy {
+		background: var(--muted-foreground);
+		animation: pulse 1.2s ease-in-out infinite;
+	}
+	@keyframes pulse {
+		50% {
+			opacity: 0.35;
+		}
+	}
+
 	/* flat inputs/buttons matching the picker's existing affordances. */
 	.cfg-input {
 		width: 100%;
