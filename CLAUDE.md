@@ -15,6 +15,8 @@ structural. This file is the working guide; keep the two consistent.
   and the Node.js sidecar backend (`sidecar/`).
 - `firmware/` — ESP32-C3 device firmware (PlatformIO + Arduino + FastLED).
 - `tools/` — ATEM + tally-client simulators (hardware-free dev).
+- `flasher/` — the browser firmware flasher page (ESP Web Tools), deployed to Pages with
+  the latest release's firmware by `.github/workflows/pages.yml`.
 
 Explore the tree for current files rather than trusting a static listing — specifics
 drift as the project grows.
@@ -91,7 +93,12 @@ cd app && pnpm build                # frontend only -> app/build
 # Firmware (PlatformIO)
 cd firmware && pio run              # build
 cd firmware && pio run -e esp32-c3-release -t upload    # flash with the release env (COBS framing + logs)
+cd firmware && pio run -e esp32-c3-release -t mergebin  # single 0x0 image (what the flasher ships)
 cd firmware && pio device monitor   # serial @ 115200
+
+# Release: bump the version in tauri.conf.json, app/package.json, app/sidecar/package.json
+# and Cargo.toml (+ Cargo.lock), then push a matching vX.Y.Z tag. release.yml drafts the
+# release; publishing it redeploys the flasher.
 
 # Sidecar (Node.js) — standalone dev
 cd app/sidecar && pnpm install
