@@ -1,6 +1,6 @@
 {
   "name": "@tallybot/sidecar",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "description": "TallyBot sidecar — the brain: ATEM connection, TCP/UDP device server, the tally engine, and the NDJSON IPC bridge to the UI.",
   "type": "module",
