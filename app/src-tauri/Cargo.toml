@@ -1,6 +1,6 @@
 [package]
 name = "tallybot"
-version = "1.0.2"
+version = "1.0.3"
 description = "TallyBot desktop app — reads ATEM Mini state and drives WiFi, USB and ESP-NOW tally lights"
 authors = ["Harry Kruger"]
 license = "PolyForm-Noncommercial-1.0.0"
