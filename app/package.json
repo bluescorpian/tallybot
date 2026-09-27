@@ -1,6 +1,6 @@
 {
   "name": "tallybot",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "TallyBot desktop app — Tauri 2 + SvelteKit UI for ATEM tally lights",
   "type": "module",
   "scripts": {
