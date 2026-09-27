@@ -64,29 +64,31 @@
 	// new frames to older devices" rule.
 	const espnowCapable = $derived((protocolVersion ?? 0) >= ESPNOW_MIN_VERSION);
 
-	// Mode list — data-driven so v1.3 appends a row, not a button. `page: true` rows
+	// Mode list — data-driven so v1.3 appends a row, not a button. Each row leads with the
+	// situation it's for (the reader knows their venue, not the radio protocol) and names
+	// the mechanism underneath. `page: true` rows
 	// navigate to their own setup page; others commit inline. ESP-NOW provisions
 	// exactly like No transmit (no credentials), so it commits inline too; it's only
 	// offered once the firmware reports it can speak it (`espnowCapable`).
 	const MODES = $derived([
 		{
 			id: "wifi" as const,
-			label: "Wi-Fi",
-			desc: "Join a network wirelessly",
+			label: "Venue Wi-Fi",
+			desc: "Joins a network you choose",
 			page: true,
 			disabled: false,
 		},
 		{
 			id: "notx" as const,
-			label: "No transmit",
-			desc: "USB only — dark when unplugged",
+			label: "Always plugged in",
+			desc: "USB only, dark when unplugged",
 			page: false,
 			disabled: false,
 		},
 		{
 			id: "espnow" as const,
-			label: "ESP-NOW",
-			desc: "Direct radio link, no network",
+			label: "No Wi-Fi, or it's unreliable",
+			desc: "ESP-NOW radio, via a bridge board left plugged into this PC",
 			page: false,
 			disabled: !espnowCapable,
 		},
@@ -115,7 +117,7 @@
 
 <!-- CONNECTION: a flat list of transport modes (current marked, like the assign list) -->
 <div class="px-1.5 py-1.5">
-	<p class="text-muted-foreground px-1.5 pt-1 pb-1.5 text-[0.68rem]">When unplugged, this light…</p>
+	<p class="text-muted-foreground px-1.5 pt-1 pb-1.5 text-[0.68rem]">Where will this light run?</p>
 	{#each MODES as m (m.id)}
 		{@const current = !m.disabled && provisionedMode === m.id}
 		<button
@@ -148,7 +150,7 @@
 						>
 					{/if}
 				</span>
-				<span class="text-muted-foreground block truncate text-[0.68rem] leading-tight">{m.desc}</span>
+				<span class="text-muted-foreground block text-[0.68rem] leading-tight">{m.desc}</span>
 			</span>
 			{#if current}
 				<Check class="text-primary size-4 shrink-0" />
@@ -172,7 +174,8 @@
 			<span class="min-w-0 flex-1">
 				<span class="block text-sm leading-tight {bridge ? 'font-medium' : ''}">Use as bridge</span>
 				<span class="text-muted-foreground block text-[0.68rem] leading-tight">
-					Relays tally to ESP-NOW lights. Replaces any current bridge.
+					Stays plugged in here and relays tally to no-Wi-Fi lights. Replaces any
+					current bridge.
 				</span>
 			</span>
 			<Switch

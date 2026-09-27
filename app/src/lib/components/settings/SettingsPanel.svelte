@@ -432,21 +432,13 @@
 				<div class="card">
 					<div class="row">
 						<span class="lbl">Version</span>
-						<span class="mono-val select-text">{APP_VERSION}</span>
-					</div>
-					<div class="row">
-						<div class="label-col">
-							<span class="lbl">Protocol</span>
-							<span class="hint"
-								>Device wire protocol the engine speaks.</span
-							>
-						</div>
-						<span class="mono-val select-text">
-							v{PROTOCOL_VERSION.CURRENT}
-							<span class="mono-dim"
-								>· min v{PROTOCOL_VERSION.MIN_SUPPORTED}</span
-							>
-						</span>
+						<!-- the device protocol is support detail, not something a user acts on,
+						     so it rides on the version as a tooltip rather than its own row -->
+						<span
+							class="mono-val select-text"
+							title="Device protocol v{PROTOCOL_VERSION.CURRENT} (supports v{PROTOCOL_VERSION.MIN_SUPPORTED} and up)"
+							>{APP_VERSION}</span
+						>
 					</div>
 
 					<!-- same-subnet limitation explainer -->
