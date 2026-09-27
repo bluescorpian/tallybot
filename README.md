@@ -1,18 +1,15 @@
 <p align="center">
-  <br/>
-  <a href="LICENSE.md"><img src="https://img.shields.io/badge/License-PolyForm_Noncommercial-blue.svg?style=for-the-badge&labelColor=ececec&color=3F51B5" alt="License: PolyForm Noncommercial 1.0.0"></a>
-  <a href="https://github.com/bluescorpian/tallybot/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/bluescorpian/tallybot/ci.yml?branch=main&style=for-the-badge&label=CI&labelColor=ececec" alt="CI status"></a>
-  <img src="https://img.shields.io/badge/Platforms-Linux_|_Windows-blue.svg?style=for-the-badge&labelColor=ececec&color=3F51B5" alt="Platforms: Linux and Windows">
-  <br/>
-  <br/>
-</p>
-
-<p align="center">
   <img src="app/src-tauri/icons/128x128@2x.png" width="96" alt="TallyBot app icon">
 </p>
 
 <h1 align="center">TallyBot</h1>
 <h3 align="center">Wireless camera tally lights for Blackmagic ATEM switchers</h3>
+
+<p align="center">
+  <a href="LICENSE.md"><img src="https://img.shields.io/badge/License-PolyForm_Noncommercial-blue.svg?style=for-the-badge&labelColor=ececec&color=3F51B5" alt="License: PolyForm Noncommercial 1.0.0"></a>
+  <a href="https://github.com/bluescorpian/tallybot/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/bluescorpian/tallybot/ci.yml?branch=main&style=for-the-badge&label=CI&labelColor=ececec" alt="CI status"></a>
+  <img src="https://img.shields.io/badge/Platforms-Linux_|_Windows-blue.svg?style=for-the-badge&labelColor=ececec&color=3F51B5" alt="Platforms: Linux and Windows">
+</p>
 <br/>
 
 <p align="center">
