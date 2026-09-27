@@ -277,6 +277,29 @@
 		action?: { label: string; run: () => void };
 	}
 	const FLASHER_URL = "https://tally.hrry.sh";
+
+	// A saved ATEM that never answers leaves the chip spinning forever, which reads as "wait"
+	// when the fix is on the user's side (a wrong IP, or this PC on another network). After a
+	// grace period long enough to ride out a normal connect or a brief drop, say so. The engine
+	// keeps retrying either way, so this is presentation only. `reaching` is a primitive so
+	// the timer restarts only when the attempt does, not on every snapshot.
+	const UNREACHABLE_AFTER_MS = 12_000;
+	const reaching = $derived(
+		isTauri &&
+			!engineDown &&
+			props.sourceIp !== null &&
+			(props.sourceStatus === "connecting" || props.sourceStatus === "disconnected")
+			? props.sourceIp
+			: null,
+	);
+	let unreachableIp = $state<string | null>(null);
+	$effect(() => {
+		const ip = reaching;
+		unreachableIp = null;
+		if (ip === null) return;
+		const timer = setTimeout(() => (unreachableIp = ip), UNREACHABLE_AFTER_MS);
+		return () => clearTimeout(timer);
+	});
 	let dismissed = $state<Record<string, string>>({});
 	let dismissedNotice = $state<unknown>(null);
 	const banners = $derived.by<Banner[]>(() => {
@@ -291,6 +314,15 @@
 					? `TallyBot's engine stopped (${why}) and is restarting. The board and lights aren't live until it's back.`
 					: "TallyBot's engine is restarting. The board and lights aren't live until it's back.",
 				dismissible: false,
+			});
+		}
+		if (unreachableIp !== null) {
+			list.push({
+				key: "unreachable",
+				level: "warn",
+				message: `Can't reach the ATEM at ${unreachableIp}. Check the IP address, and that this PC is on the same network as the switcher.`,
+				dismissible: true,
+				action: { label: "Settings", run: () => (settingsOpen = true) },
 			});
 		}
 		for (const e of sidecar.health.usbPortErrors) {
