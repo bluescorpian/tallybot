@@ -62,6 +62,8 @@ class SidecarStore {
 	stale = $state(false);
 
 	#unlisten: UnlistenFn[] = [];
+	/** Resolvers waiting for the first snapshot from a restarted sidecar. */
+	#awaitingFresh: (() => void)[] = [];
 
 	/** Begin listening for sidecar events. Safe to call once on mount; no-op off Tauri. */
 	async start(): Promise<void> {
@@ -73,6 +75,7 @@ class SidecarStore {
 				case "state":
 					this.state = event.state;
 					this.stale = false;
+					for (const resolve of this.#awaitingFresh.splice(0)) resolve();
 					break;
 				case "notice":
 					this.notice = event;
@@ -150,11 +153,35 @@ class SidecarStore {
 	scanSources(): void {
 		this.#send({ type: "scanSources" });
 	}
+	/**
+	 * Replace the running sidecar with a fresh one (Settings → Restart). Resolves once the
+	 * new process has sent its first snapshot; while it's down the health banner says so.
+	 */
+	async restart(): Promise<void> {
+		if (!isTauri) return;
+		// Wait only after the kill, so a last snapshot from the old process can't count;
+		// a new process takes far longer to start than this round trip.
+		await invoke("restart_sidecar");
+		// Its last snapshot is still on screen: mark it stale now rather than waiting for
+		// the shell's health push.
+		this.stale = true;
+		await new Promise<void>((resolve) => this.#awaitingFresh.push(resolve));
+	}
 	/** Dev mode only: take an input to program on the fake ATEM (see AppState.dev). */
 	setProgram(inputId: number): void {
 		this.#send({ type: "setProgram", inputId });
 	}
 }
+
+/**
+ * Launch on system startup, via the shell's autostart plugin (an OS login item: the
+ * registry Run key on Windows, an XDG autostart entry on Linux). Invoked directly rather
+ * than through `@tauri-apps/plugin-autostart`, which is only these three calls.
+ */
+export const autostart = {
+	isEnabled: () => invoke<boolean>("plugin:autostart|is_enabled"),
+	set: (enabled: boolean) => invoke<void>(enabled ? "plugin:autostart|enable" : "plugin:autostart|disable"),
+};
 
 /** The app's single sidecar connection. */
 export const sidecar = new SidecarStore();

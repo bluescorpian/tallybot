@@ -35,15 +35,21 @@ const STABLE_UPTIME: Duration = Duration::from_secs(60);
 /// Granularity for noticing app exit while waiting out a backoff.
 const SLEEP_STEP: Duration = Duration::from_millis(100);
 
-/// The running sidecar (`None` while it's down) and the exit flag that stops respawning.
+/// The running sidecar (`None` while it's down), the exit flag that stops respawning, and
+/// the operator's restart request (respawn at once, without counting it as a crash).
 pub struct SidecarState {
     child: Mutex<Option<CommandChild>>,
     stopping: AtomicBool,
+    restart_requested: AtomicBool,
 }
 
 impl SidecarState {
     pub fn new() -> Self {
-        Self { child: Mutex::new(None), stopping: AtomicBool::new(false) }
+        Self {
+            child: Mutex::new(None),
+            stopping: AtomicBool::new(false),
+            restart_requested: AtomicBool::new(false),
+        }
     }
 }
 
@@ -79,6 +85,23 @@ pub fn shutdown(app: &AppHandle) {
     }
 }
 
+/// Kill the running sidecar so the supervisor respawns it straight away, with no backoff.
+/// If it's already down and waiting out a backoff, the wait is cut short instead.
+pub fn restart(app: &AppHandle) {
+    if let Some(state) = app.try_state::<SidecarState>() {
+        state.restart_requested.store(true, Ordering::Relaxed);
+        if let Some(child) = state.child.lock().unwrap().take() {
+            let _ = child.kill();
+        }
+    }
+}
+
+/// Consume a pending restart request.
+fn take_restart(app: &AppHandle) -> bool {
+    app.try_state::<SidecarState>()
+        .is_some_and(|s| s.restart_requested.swap(false, Ordering::Relaxed))
+}
+
 fn stopping(app: &AppHandle) -> bool {
     app.try_state::<SidecarState>()
         .map_or(true, |s| s.stopping.load(Ordering::Relaxed))
@@ -103,6 +126,14 @@ fn supervise(app: &AppHandle) {
             return; // app exit killed it — don't restart
         }
 
+        if take_restart(app) {
+            // The operator asked for this: not a crash, so no backoff and no escalation.
+            eprintln!("[sidecar] restart requested; restarting now");
+            attempt = 0;
+            health::set_sidecar_down(app, Some("restart requested".into()));
+            continue;
+        }
+
         attempt = next_attempt(attempt, started.elapsed());
         let delay = restart_delay(attempt);
         eprintln!("[sidecar] {reason}; restarting in {delay:?}");
@@ -112,6 +143,10 @@ fn supervise(app: &AppHandle) {
         while slept < delay {
             if stopping(app) {
                 return;
+            }
+            if take_restart(app) {
+                attempt = 0;
+                break;
             }
             thread::sleep(SLEEP_STEP);
             slept += SLEEP_STEP;

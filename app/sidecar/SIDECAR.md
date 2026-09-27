@@ -85,8 +85,8 @@ The UI then `listen`s for `SidecarEvent`s and `invoke`s a command that forwards
   decoder, discovery, versioning). Keep its values in sync with the firmware `#define`s.
 - **`src/ipc.ts`** — the UI↔sidecar schema. Its nouns (source / input /
   device / program-gate) are shared by the schema, persisted state, and UI. The UI imports
-  these **type-only** via the `$ipc` alias (`../svelte.config.js`), so nothing from the
-  sidecar reaches the browser bundle.
+  it (types and the NDJSON codec) via the `$ipc` alias, and `protocol.ts` via `$protocol`
+  (`../svelte.config.js`), so both must stay free of Node imports to bundle for the browser.
 
 ## Toolchain and conventions
 

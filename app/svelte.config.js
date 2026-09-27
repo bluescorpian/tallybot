@@ -13,9 +13,12 @@ const config = {
       fallback: "index.html",
     }),
     alias: {
-      // The UI↔sidecar IPC contract (Phase 0). Import type-only so it's erased
-      // from the bundle: `import type { AppState } from "$ipc"`.
+      // The sidecar's shared contracts, imported straight from its source so the two
+      // ends can't drift: the UI↔sidecar IPC schema and codec, and the device
+      // protocol (for the version Settings → About reports). Both are plain TS with
+      // no Node imports, so they bundle for the browser.
       $ipc: "sidecar/src/ipc.ts",
+      $protocol: "sidecar/src/protocol.ts",
     },
   },
 };

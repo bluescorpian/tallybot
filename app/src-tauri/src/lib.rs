@@ -32,6 +32,12 @@ fn send_to_sidecar(app: tauri::AppHandle, line: String) -> Result<(), String> {
     sidecar::write_line(&app, &line)
 }
 
+/// Settings → "Restart TallyBot Engine": replace the running sidecar with a fresh one.
+#[tauri::command]
+fn restart_sidecar(app: tauri::AppHandle) {
+    sidecar::restart(&app);
+}
+
 /// Kill the sidecar (and stop respawning it), and signal the USB threads to wind down.
 /// Called on app exit so no orphan process or open serial port survives.
 fn shutdown(app: &tauri::AppHandle) {
@@ -46,6 +52,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_autostart::Builder::new().build()) // Settings → "Launch on system startup"
         .manage(SidecarState::new())
         .manage(UsbState::new())
         .manage(HealthState::new())
@@ -54,7 +61,7 @@ pub fn run() {
             usb::start(app.handle().clone()); // poll for ESP32-C3 serial ports + relay
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![send_to_sidecar, health::shell_health])
+        .invoke_handler(tauri::generate_handler![send_to_sidecar, restart_sidecar, health::shell_health])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {

@@ -14,23 +14,28 @@
 	// Cancel reverts them. Actions stay immediate (Scan-pick fills the field,
 	// Restart, links).
 	//
-	// Behaviour modelled here (mocked, no real IPC yet):
+	// Behaviour:
 	//   • Save starts the connection — no connect/disconnect/forget buttons. Reconnect
-	//     lives on the board's SourceChip, not here. On a committed IP change the panel
-	//     also calls `onsave(ip)` so the host (the board mock) can react.
+	//     lives on the board's SourceChip, not here. A committed IP change goes to the
+	//     host via `onsave(ip)`; the connecting → connected feedback under the field
+	//     then follows the live `source` the host passes back.
 	//   • Scan fills the IP field (a pending change), it does NOT connect; Save connects.
 	//   • Scan states: idle · scanning (~20s) · results · none/failed.
+	//   • Every host hook is optional: without one (the /preview design workflow, a
+	//     plain browser) the panel mocks that behaviour locally.
 	import Search from "@lucide/svelte/icons/search";
 	import LoaderCircle from "@lucide/svelte/icons/loader-circle";
 	import RotateCw from "@lucide/svelte/icons/rotate-cw";
-	import BookOpen from "@lucide/svelte/icons/book-open";
 	import Scale from "@lucide/svelte/icons/scale";
 	import ExternalLink from "@lucide/svelte/icons/external-link";
 	import Info from "@lucide/svelte/icons/info";
 	import CircleCheck from "@lucide/svelte/icons/circle-check";
 	import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
 
-	import type { SourceScanEvent } from "$ipc";
+	import { onMount, untrack } from "svelte";
+	import type { Source, SourceScanEvent } from "$ipc";
+	import { PROTOCOL_VERSION } from "$protocol";
+	import { version as APP_VERSION } from "../../../../package.json";
 	import { Button } from "$lib/components/ui/button";
 	import { Input } from "$lib/components/ui/input";
 	import { Switch } from "$lib/components/ui/switch";
@@ -45,15 +50,28 @@
 	//    lost by accident).
 	//  • dirty   — bindable mirror of the unsaved-changes state, so the host (drawer)
 	//    can guard dismissal on it.
+	//  • source    — the live source: seeds the IP field and drives the post-Save
+	//    connection feedback.
+	//  • onrestart — restart the engine; resolves once it's back.
+	//  • autostart — read / set the OS login item behind "Launch on system startup".
 	let {
+		source = null,
 		onsave,
 		onclose,
+		onrestart,
+		autostart,
 		onscan,
 		scanResult = null,
 		dirty = $bindable(false),
 	}: {
+		source?: Source | null;
 		onsave?: (ip: string) => void;
 		onclose?: () => void;
+		onrestart?: () => Promise<void>;
+		autostart?: {
+			isEnabled: () => Promise<boolean>;
+			set: (enabled: boolean) => Promise<void>;
+		};
 		// Real scan hookup (Tauri). When `onscan` is set, the Scan button asks the
 		// sidecar to sweep the subnet and results arrive via `scanResult`; when it's
 		// absent (the /preview design workflow) the mock sweep below runs instead.
@@ -62,16 +80,20 @@
 		dirty?: boolean;
 	} = $props();
 
-	// ── Version values (real ones come from app + protocol.ts; mirrored here) ──
-	const APP_VERSION = "1.0.0";
-	const PROTOCOL_CURRENT = 1; // protocol.ts PROTOCOL_VERSION.CURRENT
-	const PROTOCOL_MIN = 1; // protocol.ts PROTOCOL_VERSION.MIN_SUPPORTED
-
 	// ── Form state: draft (editing) vs committed (last saved) ────────────────────
-	let ip = $state(""); // draft
-	let savedIp = $state(""); // committed
+	// The panel mounts each time the drawer opens, so it seeds from the live values then.
+	let savedIp = $state(untrack(() => source?.ip ?? "")); // committed
+	let ip = $state(untrack(() => savedIp)); // draft
 	let launch = $state(false); // draft
 	let savedLaunch = $state(false); // committed
+	let launchError = $state<string | null>(null);
+
+	onMount(() => {
+		autostart?.isEnabled().then(
+			(on) => (launch = savedLaunch = on),
+			(e: unknown) => (launchError = String(e)),
+		);
+	});
 
 	const ipTrim = $derived(ip.trim());
 	const ipChanged = $derived(ipTrim !== savedIp);
@@ -91,21 +113,46 @@
 		isDirty && (ipChanged ? ipValid && ipTrim !== "" : true),
 	);
 
-	// connection feedback after Save (the engine starts connecting on commit)
-	let connection = $state<"idle" | "connecting" | "connected">("idle");
+	// Connection feedback after a Save that changed the IP: the live source's state
+	// once it reports the saved IP (the engine starts connecting on commit). Mocked
+	// with a timer when there's no host source.
+	let savedThisSession = $state(false);
+	let mockConnection = $state<"connecting" | "connected">("connecting");
 	let connectTimer: ReturnType<typeof setTimeout> | undefined;
+	const connection = $derived(
+		!savedThisSession
+			? "idle"
+			: !source
+				? mockConnection
+				: source.ip === savedIp && source.connection === "connected"
+					? "connected"
+					: "connecting",
+	);
 
-	function save() {
+	async function save() {
 		if (!canSave) return;
 		const ipWasChanged = ipChanged;
 		savedIp = ipTrim;
 		ip = ipTrim; // normalise the field to the committed value
-		savedLaunch = launch;
 		if (ipWasChanged) {
-			connection = "connecting";
-			clearTimeout(connectTimer);
-			connectTimer = setTimeout(() => (connection = "connected"), 1600);
-			onsave?.(savedIp); // let the host mirror the connection start
+			savedThisSession = true;
+			onsave?.(savedIp);
+			if (!source) {
+				mockConnection = "connecting";
+				clearTimeout(connectTimer);
+				connectTimer = setTimeout(() => (mockConnection = "connected"), 1600);
+			}
+		}
+		if (launchChanged) {
+			const want = launch;
+			launchError = null;
+			try {
+				await autostart?.set(want);
+				savedLaunch = want;
+			} catch (e) {
+				launch = savedLaunch; // the OS refused: show what's actually set
+				launchError = String(e);
+			}
 		}
 	}
 
@@ -165,12 +212,14 @@
 
 	// ── Restart (an action, not a saved value) ───────────────────────────────────
 	let restarting = $state(false);
-	let restartTimer: ReturnType<typeof setTimeout> | undefined;
-	function restartEngine() {
+	async function restartEngine() {
 		if (restarting) return;
 		restarting = true;
-		clearTimeout(restartTimer);
-		restartTimer = setTimeout(() => (restarting = false), 1700);
+		try {
+			await (onrestart?.() ?? new Promise((r) => setTimeout(r, 1700)));
+		} finally {
+			restarting = false;
+		}
 	}
 </script>
 
@@ -340,6 +389,14 @@
 							aria-label="Launch on system startup"
 						/>
 					</div>
+					{#if launchError}
+						<div class="row-msg error">
+							<TriangleAlert class="size-3.5 shrink-0" />
+							<span class="select-text"
+								>Couldn't change the startup setting: {launchError}</span
+							>
+						</div>
+					{/if}
 
 					<div class="row">
 						<div class="label-col">
@@ -375,7 +432,7 @@
 				<div class="card">
 					<div class="row">
 						<span class="lbl">Version</span>
-						<span class="mono-val">{APP_VERSION}</span>
+						<span class="mono-val select-text">{APP_VERSION}</span>
 					</div>
 					<div class="row">
 						<div class="label-col">
@@ -384,9 +441,11 @@
 								>Device wire protocol the engine speaks.</span
 							>
 						</div>
-						<span class="mono-val">
-							v{PROTOCOL_CURRENT}
-							<span class="mono-dim">· min v{PROTOCOL_MIN}</span>
+						<span class="mono-val select-text">
+							v{PROTOCOL_VERSION.CURRENT}
+							<span class="mono-dim"
+								>· min v{PROTOCOL_VERSION.MIN_SUPPORTED}</span
+							>
 						</span>
 					</div>
 
@@ -401,22 +460,10 @@
 						</p>
 					</div>
 
-					<!-- links -->
+					<!-- links (the README on GitHub is the user documentation) -->
 					<a
 						class="link-row"
-						href="https://example.com/docs"
-						target="_blank"
-						rel="noreferrer"
-					>
-						<BookOpen class="size-4 text-muted-foreground" />
-						<span>Documentation</span>
-						<ExternalLink
-							class="ml-auto size-3.5 text-muted-foreground"
-						/>
-					</a>
-					<a
-						class="link-row"
-						href="https://github.com"
+						href="https://github.com/bluescorpian/tallybot"
 						target="_blank"
 						rel="noreferrer"
 					>
@@ -436,12 +483,16 @@
 					</a>
 					<a
 						class="link-row"
-						href="https://opensource.org/license/mit"
+						href="https://github.com/bluescorpian/tallybot/blob/main/LICENSE.md"
 						target="_blank"
 						rel="noreferrer"
 					>
 						<Scale class="size-4 text-muted-foreground" />
-						<span>License <span class="mono-dim">· MIT</span></span>
+						<span
+							>License <span class="mono-dim"
+								>· PolyForm Noncommercial</span
+							></span
+						>
 						<ExternalLink
 							class="ml-auto size-3.5 text-muted-foreground"
 						/>
@@ -480,16 +531,6 @@
 		min-height: 0;
 		background: var(--muted);
 		color: var(--foreground);
-		/* desktop-app polish: chrome text isn't selectable; inputs opt back in below.
-		   -webkit- prefix matters — Tauri renders via WebKitGTK on Linux. */
-		-webkit-user-select: none;
-		user-select: none;
-	}
-	/* editable fields stay selectable */
-	.panel :global(input),
-	.panel :global(textarea) {
-		-webkit-user-select: text;
-		user-select: text;
 	}
 
 	.scroll {
@@ -531,6 +572,7 @@
 		padding: 14px 16px;
 	}
 	.row + .row,
+	.row-msg + .row,
 	.field + .row {
 		border-top: 1px solid var(--border);
 	}
@@ -561,6 +603,19 @@
 		line-height: 1.45;
 		color: var(--muted-foreground);
 		max-width: 42ch;
+	}
+
+	/* a message attached to the row above it (no divider between them) */
+	.row-msg {
+		display: flex;
+		align-items: center;
+		gap: 7px;
+		padding: 0 16px 12px;
+		margin-top: -4px;
+		font-size: 0.78rem;
+	}
+	.row-msg.error {
+		color: var(--destructive);
 	}
 
 	/* ATEM field block */

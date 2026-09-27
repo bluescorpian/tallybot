@@ -11,7 +11,7 @@
 	import type { AppState, Device, Input, Tally } from "$ipc";
 	import Board from "$lib/components/board/Board.svelte";
 	import { sidecarLost, toBoardProps } from "$lib/boardState";
-	import { sidecar, isTauri } from "$lib/ipc.svelte";
+	import { autostart, sidecar, isTauri } from "$lib/ipc.svelte";
 	import SettingsSheet from "$lib/components/settings/SettingsSheet.svelte";
 	import TitleBar from "$lib/components/chrome/TitleBar.svelte";
 	import Credit from "$lib/components/chrome/Credit.svelte";
@@ -199,7 +199,7 @@
 		}
 	}
 	function flash(mac: string) {
-		// the board already echoes a local blink; this fires the real IDENTIFY too
+		// the board already echoes a local blink; this streams the real locate flash too
 		if (isTauri) sidecar.identifyDevice(mac);
 	}
 	function setBrightness(mac: string, brightness: number) {
@@ -309,7 +309,10 @@
 
 	<SettingsSheet
 		bind:open={settingsOpen}
+		source={isTauri ? appState.source : null}
 		onsave={onSettingsSave}
+		onrestart={isTauri ? () => sidecar.restart() : undefined}
+		autostart={isTauri ? autostart : undefined}
 		onscan={isTauri ? () => sidecar.scanSources() : undefined}
 		scanResult={isTauri ? sidecar.scan : null}
 	/>
@@ -321,7 +324,8 @@
 			class:error={banner.level === "error"}
 			role={banner.level === "error" ? "alert" : "status"}
 		>
-			<span>{banner.message}</span>
+			<!-- selectable: an error is worth copying into a report or a search -->
+			<span class="select-text">{banner.message}</span>
 			{#if banner.dismissible}
 				<button
 					type="button"

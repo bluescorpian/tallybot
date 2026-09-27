@@ -16,16 +16,23 @@
 	import * as Sheet from "$lib/components/ui/sheet";
 	import SettingsPanel from "./SettingsPanel.svelte";
 
-	import type { SourceScanEvent } from "$ipc";
+	import type { Source, SourceScanEvent } from "$ipc";
+	import type { ComponentProps } from "svelte";
 
 	let {
 		open = $bindable(false),
+		source = null,
 		onsave,
+		onrestart,
+		autostart,
 		onscan,
 		scanResult = null,
 	}: {
 		open?: boolean;
+		source?: Source | null;
 		onsave?: (ip: string) => void;
+		onrestart?: () => Promise<void>;
+		autostart?: ComponentProps<typeof SettingsPanel>["autostart"];
 		// Provided only under Tauri — its presence switches the panel from its mock
 		// scan to the real subnet sweep, driven by `scanResult` (the latest event).
 		onscan?: () => void;
@@ -60,7 +67,10 @@
 		<!-- min-h-0 lets the panel's internal scroll area shrink within the flex column -->
 		<div class="min-h-0 flex-1">
 			<SettingsPanel
+				{source}
 				{onsave}
+				{onrestart}
+				{autostart}
 				{onscan}
 				{scanResult}
 				bind:dirty
