@@ -35,7 +35,8 @@ It was built for a church video team and is meant for any small live production:
 soldering, no hardcoded IP addresses, no per-device configuration files.
 
 > [!NOTE]
-> TallyBot supports **Linux and Windows**. macOS is out of scope.
+> TallyBot supports **Linux and Windows**. macOS isn't supported yet, only because there's
+> no Mac to test on. If you have one and can help test, please open an issue.
 
 ## Features
 
@@ -86,36 +87,32 @@ the rest over the radio, with no router involved.
 
 ## Getting started
 
-### 1. Run the app
+### 1. Install the app
 
-TallyBot is currently built from source. On NixOS, `flake.nix` provides the whole
-toolchain (`direnv allow`, or `nix develop`). Elsewhere, install the
-[Tauri prerequisites](https://tauri.app/start/prerequisites/), Node.js and pnpm.
+Download the latest build from [**Releases**](https://github.com/bluescorpian/tallybot/releases/latest):
 
-```bash
-cd app
-pnpm install
-cargo tauri dev        # builds and runs the desktop app
-```
+| System | Download |
+| :-- | :-- |
+| Windows | `TallyBot-…-windows-x64-setup.exe` (installs for your user, no admin needed). No install rights? Use the `portable.zip` and run `TallyBot.exe` from it. |
+| Linux | `.AppImage` (any distro), `.deb` (Debian, Ubuntu) or `.rpm` (Fedora) |
 
-For a portable Windows build, run [`scripts/win-build.ps1`](scripts/win-build.ps1) in an
-elevated PowerShell. It installs the prerequisites and produces a zip.
+The Windows build isn't code-signed yet, so the first launch may show "Windows protected your
+PC". Click **More info**, then **Run anyway**.
 
-### 2. Flash a light
+### 2. Flash your lights
 
-Flashing needs [PlatformIO](https://platformio.org/) for now; in-app flashing is planned.
+Open the [**TallyBot Flasher**](https://bluescorpian.github.io/tallybot/) in Chrome or Edge,
+plug a board in by USB-C, and click **Install TallyBot**. Nothing else to install. When it's
+done the light glows magenta, meaning it's ready to set up.
 
-```bash
-cd firmware
-pio run -e esp32-c3-release -t upload
-```
+### 3. Set up and assign
 
-### 3. Provision and assign
-
-Plug the flashed light into the PC by USB-C. The app detects it and asks how it should
-connect once unplugged (WiFi, ESP-NOW or USB only). Unplug it, power it from a battery,
-and assign it to an ATEM input. Until it is assigned it breathes white, so you can see it
-is alive and waiting.
+1. Open TallyBot, click **Set up your ATEM**, and enter its IP address (or click **Scan** to
+   find it).
+2. With a flashed light still plugged in, the app detects it and asks how it should connect
+   once unplugged: WiFi, ESP-NOW or USB only.
+3. Unplug it, power it from a battery, and click it in the app to assign it to an ATEM input.
+   Until it is assigned it breathes white, so you can see it is alive and waiting.
 
 In the field, without a PC to hand, a light can also switch WiFi networks on its own: hold
 its BOOT button and it raises a `TallyLight-XXXXXX` hotspot with a setup page at
@@ -143,6 +140,22 @@ run the whole system on one machine.
 
 ## Development
 
+To build the app from source: on NixOS, `flake.nix` provides the whole toolchain
+(`direnv allow`, or `nix develop`). Elsewhere, install the
+[Tauri prerequisites](https://tauri.app/start/prerequisites/), Node.js and pnpm.
+
+```bash
+cd app
+pnpm install
+cargo tauri dev        # builds and runs the desktop app
+```
+
+To flash firmware from source, use [PlatformIO](https://platformio.org/):
+`cd firmware && pio run -e esp32-c3-release -t upload`.
+
+Pushing a `vX.Y.Z` tag drafts a release with the installers and firmware; publishing it
+updates the web flasher.
+
 | Guide | What it covers |
 | :-- | :-- |
 | [`app/sidecar/README.md`](app/sidecar/README.md) | Running and testing the Node.js backend on its own |
@@ -155,7 +168,7 @@ run the whole system on one machine.
 **Next up**
 
 - **In-app firmware flashing**, so a bare board goes from the box to a working light
-  without PlatformIO. This also lays the groundwork for over-the-air updates.
+  without leaving the app. This also lays the groundwork for over-the-air updates.
 - **Multi-ME support** for larger ATEM models with more than one mix effects bus.
 
 **Further out**
