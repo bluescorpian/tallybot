@@ -36,8 +36,6 @@
 		font-size: var(--wm-size);
 		/* let pointer events fall through to the titlebar drag region */
 		pointer-events: none;
-		user-select: none;
-		-webkit-user-select: none;
 	}
 
 	.seg-tally {

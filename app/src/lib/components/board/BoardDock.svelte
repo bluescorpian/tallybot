@@ -97,7 +97,6 @@
 		letter-spacing: 0.04em;
 		text-transform: uppercase;
 		color: var(--muted-foreground);
-		user-select: none;
 	}
 	.dock-head .count {
 		display: inline-flex;

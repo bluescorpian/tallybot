@@ -165,6 +165,25 @@
 	body {
 		@apply bg-background text-foreground;
 	}
+	/* Desktop-app selection policy: like a native app, labels, controls and chrome
+	   aren't selectable, and dragging across the window never paints a highlight.
+	   Editable fields stay selectable, and text worth copying (an error to report,
+	   the version) opts back in with Tailwind's `select-text`. The -webkit- prefix
+	   matters: Tauri renders via WebKitGTK on Linux. */
+	body {
+		-webkit-user-select: none;
+		user-select: none;
+		cursor: default;
+	}
+	input,
+	textarea,
+	[contenteditable="true"] {
+		-webkit-user-select: text;
+		user-select: text;
+	}
+	img {
+		-webkit-user-drag: none;
+	}
 	html {
 		@apply font-sans;
 	}

@@ -103,8 +103,6 @@
 		height: var(--titlebar-h, 36px);
 		padding: 4px 6px 0 14px;
 		background: transparent;
-		user-select: none;
-		-webkit-user-select: none;
 	}
 
 	.controls {

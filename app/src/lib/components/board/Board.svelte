@@ -516,7 +516,6 @@
 		justify-content: center;
 		gap: 4px;
 		text-align: center;
-		user-select: none;
 	}
 	.board-empty-title {
 		margin: 0;

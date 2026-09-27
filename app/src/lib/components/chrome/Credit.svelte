@@ -27,7 +27,5 @@
 		color: var(--muted-foreground);
 		opacity: 0.7;
 		pointer-events: none;
-		user-select: none;
-		-webkit-user-select: none;
 	}
 </style>
