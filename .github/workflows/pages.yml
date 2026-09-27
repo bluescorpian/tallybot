@@ -37,13 +37,16 @@ jobs:
           cp flasher/index.html site/
           cp app/src-tauri/icons/128x128.png site/icon.png
           tag=${TAG:-$(gh release view --json tagName -q .tagName)}
-          gh release download "$tag" --pattern tallybot-firmware-esp32c3.bin --dir site
-          jq -n --arg v "${tag#v}" '{
+          # Versioned name on the site: the CDN in front of Pages caches .bin files, so a
+          # fixed name would keep serving the previous release's firmware after a publish.
+          bin="tallybot-firmware-esp32c3-${tag#v}.bin"
+          gh release download "$tag" --pattern tallybot-firmware-esp32c3.bin --output "site/$bin"
+          jq -n --arg v "${tag#v}" --arg bin "$bin" '{
             name: "TallyBot",
             version: $v,
             new_install_prompt_erase: true,
             builds: [{ chipFamily: "ESP32-C3",
-                       parts: [{ path: "tallybot-firmware-esp32c3.bin", offset: 0 }] }]
+                       parts: [{ path: $bin, offset: 0 }] }]
           }' > site/manifest.json
       - uses: actions/upload-pages-artifact@v3
         with:
