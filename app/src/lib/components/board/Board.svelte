@@ -173,10 +173,16 @@
 	const noticeBottom = NOTICE_TOP + NOTICE_H;
 	const bodyBottom = $derived(hasInputs ? columnsBottom : noticeBottom);
 	// The dock is shown only when it holds lights; when empty it's hidden and
-	// reserves no height (the board shrinks to fit the body).
+	// reserves no height (the board shrinks to fit the body). With no lights at all
+	// (first run), a hint takes the dock's place: otherwise nothing on the board
+	// says how lights get here.
 	const hasDock = $derived(unassigned.length > 0);
+	const noLights = $derived(lights.length === 0);
+	const HINT_H = 64;
 	const dockY = $derived(bodyBottom + DOCK_GAP);
-	const boardH = $derived((hasDock ? dockY + dockH : bodyBottom) + PADBOTTOM);
+	const boardH = $derived(
+		(hasDock ? dockY + dockH : noLights ? dockY + HINT_H : bodyBottom) + PADBOTTOM,
+	);
 
 	const place = (cx: number, y: number, w: number) =>
 		`left:${cx - w / 2}px; top:${y}px; width:${w}px;`;
@@ -446,6 +452,14 @@
 					onsetbridge={(mac) => onsetbridge?.(mac)}
 				/>
 			</div>
+		{:else if noLights}
+			<div
+				class="abs no-lights"
+				style="left:{PADX}px; top:{dockY}px; width:{contentW}px; height:{HINT_H}px;"
+			>
+				<p class="board-empty-title">No lights yet</p>
+				<p class="board-empty-sub">Plug a light into this PC by USB to add it.</p>
+			</div>
 		{/if}
 	</div>
 </div>
@@ -506,6 +520,20 @@
 			inset 1px 2px 4px oklch(0.5 0.01 286 / 0.16),
 			inset -1px -1px 3px oklch(1 0 0 / 0.8),
 			0 1px 0 oklch(1 0 0 / 0.5);
+	}
+
+	/* First-run hint in the dock's place: the dock's recessed tray, dashed because
+	   it's a slot waiting to be filled, not a container. */
+	.no-lights {
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
+		gap: 3px;
+		box-sizing: border-box;
+		padding: 0 22px;
+		border-radius: 16px;
+		border: 1.5px dashed color-mix(in oklch, var(--board), black 18%);
+		background: color-mix(in oklch, var(--board), black 3%);
 	}
 
 	/* Empty-state notice where the schematic would be (connected, no inputs) */
