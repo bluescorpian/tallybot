@@ -125,12 +125,13 @@
 	// Multi-page popover: the compact menu (assign / flash / brightness), the
 	// Configure pane (transport mode list), and the Wi-Fi credentials page. Only a
 	// wired (USB) device can be configured — provisioning rides the cable — so the
-	// entry only appears then. Reset to the menu on close.
+	// entry only appears then. Back to the menu once closed: after the exit animation, so the
+	// page being dismissed doesn't swap to the menu while it fades out.
 	let view = $state<"menu" | "config" | "wifi">("menu");
 	const wired = $derived(transport === "usb");
-	$effect(() => {
-		if (!open) view = "menu";
-	});
+	function onclosed(isOpen: boolean) {
+		if (!isOpen) view = "menu";
+	}
 
 	// Width per page: compact menu, a slightly roomier mode list, and the Wi-Fi form.
 	const contentClass = $derived(
@@ -157,7 +158,7 @@
 	}
 </script>
 
-<Popover bind:open>
+<Popover bind:open onOpenChangeComplete={onclosed}>
 	<PopoverTrigger>
 		{#snippet child({ props })}
 			<button {...props} class="light-trigger" aria-label={`Light ${mac} — assign or flash`}>

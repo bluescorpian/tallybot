@@ -44,13 +44,21 @@
 			: "",
 	);
 
+	// Restart once the dialog has closed: starting it first flips the status to "restarting",
+	// which this dialog doesn't render, so its body would blank out while it fades.
+	let restartOnClose = false;
 	function restart() {
-		updater.restart();
+		restartOnClose = true;
 		open = false;
+	}
+	function onclosed(isOpen: boolean) {
+		if (isOpen || !restartOnClose) return;
+		restartOnClose = false;
+		updater.restart();
 	}
 </script>
 
-<Dialog.Root bind:open>
+<Dialog.Root bind:open onOpenChangeComplete={onclosed}>
 	<!-- light, unblurred backdrop, like the flasher drawer's: the tally monitor stays readable -->
 	<Dialog.Content
 		showCloseButton={false}

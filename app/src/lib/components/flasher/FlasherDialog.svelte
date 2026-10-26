@@ -150,9 +150,6 @@
 		keep = true;
 		form = { ...(currentSettings ?? DEFAULTS) };
 	}
-	$effect(() => {
-		if (!open) step = "review";
-	});
 	async function runApply() {
 		const mac = st.status === "done" ? st.mac : null;
 		if (!mac || !pending) return;
@@ -224,11 +221,16 @@
 		if (!running) confirmStop = false;
 	});
 
-	// Closing mid-install leaves it running (the titlebar pill reopens the drawer); closing
-	// after it clears the outcome so the next open starts fresh.
-	$effect(() => {
-		if (!open && !running && st.status !== "idle") flasher.reset();
-	});
+	// Closing mid-install leaves it running (the titlebar pill reopens the dialog); closing
+	// after it clears the outcome so the next open starts fresh. The reset waits for the exit
+	// animation: clearing the outcome while it still fades out swaps the dialog to the review step.
+	function onclosed(isOpen: boolean) {
+		if (isOpen) return;
+		step = "review";
+		wasWireless = false;
+		replug = false;
+		if (!running && st.status !== "idle") flasher.reset();
+	}
 
 	const name = $derived(job?.kind === "light" ? job.label : null);
 	// a light already on this app's firmware: installing again is a reinstall, not an update
@@ -247,10 +249,7 @@
 	// Asked to plug the board back in (the cable came out) rather than plug it in for the first time.
 	let replug = $state(false);
 	$effect(() => {
-		if (!open) {
-			wasWireless = false;
-			replug = false;
-		} else if (view === "plug" && !replug) wasWireless = true;
+		if (open && view === "plug" && !replug) wasWireless = true;
 	});
 
 	function target(): FlashTarget | null {
@@ -329,7 +328,7 @@
 	const portName = $derived(job?.port ?? "the USB port");
 </script>
 
-<Dialog.Root bind:open>
+<Dialog.Root bind:open onOpenChangeComplete={onclosed}>
 	<Dialog.Content
 		showCloseButton={false}
 		overlayClass="bg-black/10 supports-backdrop-filter:backdrop-blur-none"

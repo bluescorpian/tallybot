@@ -167,9 +167,8 @@
 	}
 
 	function cancel() {
-		// discard pending edits and ask the host to dismiss the drawer
-		ip = savedIp;
-		launch = savedLaunch;
+		// Discard & close: the drafts go with the panel, which the sheet unmounts once its exit
+		// animation ends. Reverting them here would swap the fields back while it slides out.
 		onclose?.();
 	}
 
