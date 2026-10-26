@@ -19,22 +19,37 @@
 		/** The input the light is assigned to, if any — flashing takes it dark. */
 		input: { label: string; live: boolean } | null;
 	}
+
+	/** A board on USB the flasher can work on, offered when it's opened from the titlebar. */
+	export interface FlashCandidate {
+		kind: "blank" | "light";
+		port: string;
+		/** Full MAC (lights only). */
+		mac: string | null;
+		/** The board's label for a light (MAC tail), null for a blank board. */
+		label: string | null;
+		/** Firmware a light runs, when known. */
+		version: string | null;
+		/** Older than this app's firmware (or missing). */
+		outdated: boolean;
+	}
 </script>
 
 <script lang="ts">
-	// The flasher drawer: sets up a blank board, or updates a light's firmware. A right-side
-	// Sheet like Settings, for the same reason (DESIGN.md → "Why a drawer"): the board stays
-	// visible beside it, so you watch the light drop off, then come back into the dock or its
-	// column when it's done.
+	// The flasher: sets up a blank board, or updates or reinstalls a light's firmware. A centred
+	// dialog sized to its content (a drawer put its buttons a screen away from its few lines on
+	// a large monitor), over a light, unblurred backdrop so the board stays visible: you watch
+	// the light drop off, then come back into the dock or its column when it's done.
 	//
-	// Flow: [plug in, wireless lights only] → review → flashing → done | failed | stopped.
+	// Flow: [choose a board, when opened from the titlebar] → [plug in, wireless lights only] →
+	// review → installing → done | failed | stopped.
 	// Review is where a deliberate choice is made: it says what goes dark, and, if a newer
 	// TallyBot ships newer firmware, offers "update TallyBot first" beside "install anyway".
-	// While flashing the drawer can't be dismissed by a stray click; Stop asks first.
+	// Closing mid-install keeps it going (the titlebar pill reopens it); Stop asks first.
 	//
 	// It drives a `Flasher` (start / cancel / reset + reactive state); the page decides
 	// whether that's the mock or the real espflash driver.
-	import * as Sheet from "$lib/components/ui/sheet";
+	import * as Dialog from "$lib/components/ui/dialog";
 	import { Button } from "$lib/components/ui/button";
 	import { Progress } from "$lib/components/ui/progress";
 	import type { Flasher, FlashStage, FlashTarget } from "$lib/mock/flasher.svelte";
@@ -50,7 +65,6 @@
 	import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
 	import ArrowRight from "@lucide/svelte/icons/arrow-right";
 	import CircleArrowUp from "@lucide/svelte/icons/circle-arrow-up";
-	import Radio from "@lucide/svelte/icons/radio";
 	import Zap from "@lucide/svelte/icons/zap";
 	import Lightbulb from "@lucide/svelte/icons/lightbulb";
 
@@ -68,6 +82,9 @@
 		onreveal?: (mac: string, pick: boolean) => void;
 		/** Flash-to-identify a light (to find which physical unit to plug in). */
 		onidentify?: (mac: string) => void;
+		/** Boards on USB to choose from when there's no job yet (opened from the titlebar). */
+		candidates?: FlashCandidate[];
+		onpick?: (c: FlashCandidate) => void;
 	}
 	let {
 		open = $bindable(false),
@@ -78,6 +95,8 @@
 		onupdateapp,
 		onreveal,
 		onidentify,
+		candidates = [],
+		onpick,
 	}: Props = $props();
 
 	const fw = $derived(flasher.firmwareVersion);
@@ -102,9 +121,19 @@
 		lastPort = port;
 	});
 
-	type View = "plug" | "found" | "review" | "running" | "done" | "failed" | "cancelled";
+	type View = "waiting" | "choose" | "plug" | "found" | "review" | "running" | "done" | "failed" | "cancelled";
 	const view = $derived<View>(
-		st.status === "idle" ? (job && job.port === null ? "plug" : found ? "found" : "review") : st.status,
+		st.status !== "idle"
+			? st.status
+			: !job
+				? candidates.length
+					? "choose"
+					: "waiting"
+				: job.port === null
+					? "plug"
+					: found
+						? "found"
+						: "review",
 	);
 	$effect(() => {
 		if (!running) confirmStop = false;
@@ -117,8 +146,16 @@
 	});
 
 	const name = $derived(job?.kind === "light" ? job.label : null);
+	// a light already on this app's firmware: installing again is a reinstall, not an update
+	const current = $derived(job?.kind === "light" && !job.missing && job.fromVersion === fw);
 	const title = $derived(
-		job?.kind === "blank" ? "Set up a new light" : job?.missing ? "Reinstall light firmware" : "Update light firmware",
+		!job
+			? "Install light firmware"
+			: job.kind === "blank"
+				? "Set up a new light"
+				: job.missing || current
+					? "Reinstall light firmware"
+					: "Update light firmware",
 	);
 	// A wireless light plugged in just for the update can be unplugged again afterwards.
 	let wasWireless = $state(false);
@@ -153,7 +190,7 @@
 		if (job?.port == null) replug = true;
 		else start();
 	}
-	const leanUpdateFirst = $derived(!!newerUpdate && job?.kind === "light" && !job.missing);
+	const leanUpdateFirst = $derived(!!newerUpdate && job?.kind === "light" && !job.missing && !current);
 	function finish(pick: boolean) {
 		const mac = newMac;
 		open = false;
@@ -194,20 +231,56 @@
 	const portName = $derived(job?.port ?? "the USB port");
 </script>
 
-<Sheet.Root bind:open>
-	<Sheet.Content
-		side="right"
+<Dialog.Root bind:open>
+	<Dialog.Content
 		showCloseButton={false}
 		overlayClass="bg-black/10 supports-backdrop-filter:backdrop-blur-none"
-		class="w-full gap-0 p-0 sm:max-w-[400px]"
+		class="gap-0 overflow-hidden rounded-3xl p-0 sm:max-w-[440px]"
 	>
-		<Sheet.Header class="flex-row items-center gap-2.5 border-b px-5 py-3.5">
+		<div class="head">
 			<Cpu class="text-muted-foreground size-[18px]" />
-			<Sheet.Title class="text-[0.95rem] font-semibold tracking-tight">{title}</Sheet.Title>
-		</Sheet.Header>
+			<Dialog.Title class="text-[0.95rem] font-semibold tracking-tight">{title}</Dialog.Title>
+		</div>
 
 		<div class="body">
-			{#if job}
+			{#if !job && view === "choose"}
+				<p class="lead">Choose the board to install firmware on.</p>
+				<ul class="pick">
+					{#each candidates as c (c.port)}
+						<li>
+							<button type="button" class="pick-row" onclick={() => onpick?.(c)}>
+								<span class="target-icon">
+									{#if c.kind === "blank"}<Cpu class="size-[18px]" />{:else}<Lightbulb class="size-[18px]" />{/if}
+								</span>
+								<span class="target-text">
+									<span class="target-id">
+										{#if c.kind === "blank"}New board{:else}<span class="font-mono font-medium">{c.label}</span>{/if}
+										<span class="text-muted-foreground font-mono">· {c.port}</span>
+									</span>
+								</span>
+								<span class="versions">
+									{#if c.kind === "blank"}
+										<span class="ver old">not set up</span>
+									{:else if c.outdated}
+										<span class="ver old">{c.version ?? "none"}</span>
+										<ArrowRight class="text-muted-foreground size-3" />
+										<span class="ver new">{fw}</span>
+									{:else}
+										<span class="ver old">{c.version ?? fw}</span>
+									{/if}
+								</span>
+							</button>
+						</li>
+					{/each}
+				</ul>
+			{:else if !job}
+				<div class="plug">
+					<span class="plug-icon"><Usb class="size-7" /></span>
+					<h3>Plug a board into this PC by USB</h3>
+					<p>A brand-new board to set up as a light, or an existing light to update or reinstall.</p>
+					<p class="waiting"><LoaderCircle class="size-3.5 animate-spin" /> Waiting for a board…</p>
+				</div>
+			{:else}
 				<!-- What's being flashed: the board/light, and the version it goes to. Constant across
 				     every step so the drawer always says what it's working on. -->
 				<div class="target">
@@ -246,10 +319,6 @@
 							<p>Then the install starts over from the beginning. Nothing is damaged.</p>
 						{:else}
 							<h3>Plug {name} into this PC</h3>
-							<p>
-								Firmware can only be installed over a USB cable. Use a USB-C cable that carries
-								data (some charge-only cables don't).
-							</p>
 						{/if}
 						{#if job.wrongLight}
 							<p class="wrong">
@@ -282,9 +351,11 @@
 							{name} has no firmware after an interrupted install, so it's dark. This installs
 							{fw} and brings it back{job.input ? ` on ${job.input.label}` : ""}. It takes about a
 							minute.
+						{:else if current}
+							{name} already runs {fw}. Reinstalling puts a fresh copy on it. It takes about a minute.
 						{:else}
 							{name} runs firmware {job.fromVersion ?? "older than this app's"}. Updating installs
-							{fw}, the version made for this copy of TallyBot. It takes about a minute.
+							{fw}. It takes about a minute.
 						{/if}
 					</p>
 
@@ -303,13 +374,6 @@
 						</div>
 					{/if}
 
-					<ul class="facts">
-						<li><Usb class="size-4 shrink-0" /> Keep the cable plugged in until it's finished.</li>
-						<li>
-							<Radio class="size-4 shrink-0" />
-							{job.kind === "blank" ? "Your lights" : "Your other lights"} stay live the whole time.
-						</li>
-					</ul>
 
 					{#if newerUpdate}
 						<!-- Product rule: if a newer TallyBot ships newer firmware, say so here, before
@@ -378,8 +442,7 @@
 								{#if job.kind === "blank"}
 									<h3>New light <span class="font-mono">{newTail}</span> is ready</h3>
 									<p>
-										It's waiting in the <strong>Unassigned</strong> tray at the bottom of the board.
-										Click it there to choose its input.
+										It's in the <strong>Unassigned</strong> tray.
 									</p>
 								{:else}
 									<h3>{job.missing || fromVersion === null ? `${name} is working again` : `${name} is up to date`}</h3>
@@ -480,14 +543,14 @@
 					<Button variant={leanUpdateFirst ? "outline" : "default"} onclick={start}>
 						{job?.kind === "blank"
 							? "Set up light"
-							: job?.missing
+							: job?.missing || current
 								? "Reinstall firmware"
 								: leanUpdateFirst
 									? `Install ${fw} anyway`
 									: `Update to ${fw}`}
 					</Button>
 				</div>
-			{:else if view === "plug" || view === "found"}
+			{:else if view === "plug" || view === "found" || view === "choose" || view === "waiting"}
 				<span></span>
 				<Button variant="ghost" onclick={() => (open = false)}>Cancel</Button>
 			{:else if view === "done"}
@@ -510,13 +573,19 @@
 				</div>
 			{/if}
 		</footer>
-	</Sheet.Content>
-</Sheet.Root>
+	</Dialog.Content>
+</Dialog.Root>
 
 <style>
+	.head {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		padding: 16px 22px 14px;
+		border-bottom: 1px solid var(--border);
+	}
 	.body {
-		flex: 1;
-		min-height: 0;
+		max-height: calc(100vh - 220px);
 		overflow-y: auto;
 		padding: 20px;
 		display: flex;
@@ -616,20 +685,29 @@
 		margin: 0;
 	}
 
-	.facts {
+	.pick {
 		list-style: none;
 		margin: 0;
-		padding: 0 2px;
+		padding: 0;
 		display: flex;
 		flex-direction: column;
 		gap: 8px;
-		font-size: 0.8rem;
-		color: var(--muted-foreground);
 	}
-	.facts li {
+	.pick-row {
 		display: flex;
 		align-items: center;
-		gap: 9px;
+		gap: 12px;
+		width: 100%;
+		padding: 10px 14px;
+		text-align: left;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-xl);
+		background: var(--background);
+		cursor: pointer;
+		transition: border-color 0.12s ease;
+	}
+	.pick-row:hover {
+		border-color: color-mix(in oklab, var(--primary), transparent 50%);
 	}
 
 	.newer {

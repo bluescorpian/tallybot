@@ -35,6 +35,8 @@ export type UpdaterState =
 export interface Updater {
 	readonly currentVersion: string;
 	readonly state: UpdaterState;
+	/** When the last check finished, or null if it hasn't run yet. */
+	readonly lastChecked: Date | null;
 	check(): void;
 	download(): void;
 	/** Install now: restarts TallyBot (lights drop for a few seconds). */
@@ -72,6 +74,7 @@ const MOCK_UPDATE: AppUpdate = {
 export class MockUpdater implements Updater {
 	currentVersion = $state(APP_VERSION);
 	state = $state<UpdaterState>({ status: "idle" });
+	lastChecked = $state<Date | null>(null);
 
 	#available: boolean;
 	#failDownload: boolean;
@@ -84,13 +87,17 @@ export class MockUpdater implements Updater {
 	constructor(opts: { available?: boolean; failDownload?: boolean } = {}) {
 		this.#available = opts.available ?? false;
 		this.#failDownload = opts.failDownload ?? false;
-		if (this.#available) this.state = { status: "available", update: MOCK_UPDATE };
+		if (this.#available) {
+			this.state = { status: "available", update: MOCK_UPDATE };
+			this.lastChecked = new Date();
+		}
 	}
 
 	check(): void {
 		if (this.state.status === "checking" || this.state.status === "downloading") return;
 		this.state = { status: "checking" };
 		setTimeout(() => {
+			this.lastChecked = new Date();
 			this.state =
 				this.#available && isNewer(MOCK_UPDATE.version, this.currentVersion)
 					? { status: "available", update: MOCK_UPDATE }

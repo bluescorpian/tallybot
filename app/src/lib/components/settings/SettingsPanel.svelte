@@ -220,6 +220,11 @@
 		ip = hit.ip;
 	}
 
+	// "checked 14:05" for the Updates row
+	const checkedAt = $derived(
+		updater?.lastChecked?.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }) ?? null,
+	);
+
 	// ── Restart (an action, not a saved value) ───────────────────────────────────
 	let restarting = $state(false);
 	async function restartEngine() {
@@ -460,19 +465,21 @@
 								<span class="lbl">Updates</span>
 								<span class="hint">
 									{#if us.status === "checking"}
-										Checking for a newer TallyBot…
+										Checking…
 									{:else if us.status === "current"}
-										You're on the latest version.
+										You're on the latest version{checkedAt ? ` · checked ${checkedAt}` : ""}.
 									{:else if us.status === "available"}
-										<span class="text-primary font-medium">TallyBot {us.update.version} is available.</span>
+										<span class="text-primary font-medium">{us.update.version} is available</span>{checkedAt
+											? ` · checked ${checkedAt}`
+											: ""}
 									{:else if us.status === "downloading"}
 										Downloading {us.update.version}… {Math.round((us.received / us.update.sizeBytes) * 100)}%
 									{:else if us.status === "ready"}
-										{us.update.version} is downloaded. It installs when TallyBot next starts.
+										{us.update.version} is downloaded, ready to install.
 									{:else if us.status === "error"}
 										<span class="text-destructive">The update didn't download.</span>
 									{:else}
-										TallyBot checks when it starts. Nothing installs without asking.
+										Not checked yet.
 									{/if}
 								</span>
 							</div>

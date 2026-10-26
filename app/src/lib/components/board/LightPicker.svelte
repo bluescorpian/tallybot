@@ -274,7 +274,7 @@
 						{#if firmwareMissing}
 							No firmware, so it stays dark
 						{:else if !wired}
-							Needs a USB cable
+							Plug into PC
 						{:else if firmwareVersion && firmwareAvailable}
 							<span class="font-mono">{firmwareVersion} → {firmwareAvailable}</span>
 						{:else}

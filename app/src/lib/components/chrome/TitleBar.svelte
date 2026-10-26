@@ -34,6 +34,7 @@
 	import XIcon from "@lucide/svelte/icons/x";
 	import CircleArrowUp from "@lucide/svelte/icons/circle-arrow-up";
 	import RotateCw from "@lucide/svelte/icons/rotate-cw";
+	import Cpu from "@lucide/svelte/icons/cpu";
 
 	let {
 		onsettings,
@@ -41,12 +42,15 @@
 		onupdate,
 		install = null,
 		oninstall,
+		onfirmware,
 	}: {
 		onsettings: () => void;
 		update?: UpdatePill | null;
 		onupdate?: () => void;
 		install?: InstallPill | null;
 		oninstall?: () => void;
+		/** Open the light-firmware installer (always available, nothing plugged in needed). */
+		onfirmware?: () => void;
 	} = $props();
 
 	// Window controls only work inside the Tauri webview. Under `pnpm dev` in a
@@ -118,6 +122,18 @@
 				{:else}
 					<CircleArrowUp class="size-[14px]" /> Update available
 				{/if}
+			</button>
+		{/if}
+		{#if onfirmware}
+			<!-- Permanent way into the firmware installer, so a dismissed "new light" notice is never
+			     the only door. A chip icon, not the zap: that one means flash-to-identify. -->
+			<button
+				class="tb-btn"
+				onclick={onfirmware}
+				aria-label="Install light firmware"
+				title="Install light firmware"
+			>
+				<Cpu class="size-[16px]" />
 			</button>
 		{/if}
 		<button

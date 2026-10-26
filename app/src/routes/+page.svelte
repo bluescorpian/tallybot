@@ -21,7 +21,10 @@
 	import SettingsSheet from "$lib/components/settings/SettingsSheet.svelte";
 	import TitleBar from "$lib/components/chrome/TitleBar.svelte";
 	import Credit from "$lib/components/chrome/Credit.svelte";
-	import FlasherSheet, { type FlashJob } from "$lib/components/flasher/FlasherSheet.svelte";
+	import FlasherDialog, {
+		type FlashCandidate,
+		type FlashJob,
+	} from "$lib/components/flasher/FlasherDialog.svelte";
 	import UpdateDialog from "$lib/components/updates/UpdateDialog.svelte";
 	import type { InstallPill, UpdatePill } from "$lib/components/chrome/TitleBar.svelte";
 	import { MockFlasher, leavesBlank, type FlashFailure } from "$lib/mock/flasher.svelte";
@@ -357,12 +360,13 @@
 
 	// What the flasher drawer is working on. Resolved from live state each time, so a wireless
 	// light gains its port the moment it's plugged in.
-	type FlashRequest = { kind: "blank"; port: string } | { kind: "light"; mac: string };
+	// "any" = opened from the titlebar: the dialog lists what's on USB (or waits for a board).
+	type FlashRequest = { kind: "any" } | { kind: "blank"; port: string } | { kind: "light"; mac: string };
 	let flashRequest = $state<FlashRequest | null>(null);
 	let flashOpen = $state(false);
 	const flashJob = $derived.by<FlashJob | null>(() => {
 		const r = flashRequest;
-		if (!r) return null;
+		if (!r || r.kind === "any") return null;
 		if (r.kind === "blank")
 			return {
 				kind: "blank",
@@ -380,7 +384,7 @@
 		return {
 			kind: "light",
 			// the shell would know the real port; the mock pretends
-			port: d.transport === "usb" && !mockUnplugged ? "COM7" : null,
+			port: d.transport === "usb" && !mockUnplugged ? mockPort(d.mac) : null,
 			mac: d.mac,
 			// the board labels a light by the last two octets of its MAC
 			label: d.mac.split(":").slice(-2).join(":"),
@@ -395,6 +399,45 @@
 		flashOpen = true;
 	}
 	const newerUpdate = $derived(newerFirmwareUpdate(updater.state, flasher.firmwareVersion));
+
+	// The shell would know each cabled light's port; the mock numbers them from COM7.
+	function mockPort(mac: string): string {
+		const wired = devices.filter((d) => d.transport === "usb");
+		return `COM${7 + Math.max(0, wired.findIndex((d) => d.mac === mac))}`;
+	}
+	// What's on USB for the titlebar entry to choose from: blank boards, then cabled lights.
+	const flashCandidates = $derived<FlashCandidate[]>([
+		...mockUnflashed.map((port) => ({
+			kind: "blank" as const,
+			port,
+			mac: null,
+			label: null,
+			version: null,
+			outdated: false,
+		})),
+		...devices
+			.filter((d) => d.transport === "usb")
+			.map((d) => {
+				const v = d.mac in mockFirmware ? mockFirmware[d.mac] : flasher.firmwareVersion;
+				return {
+					kind: "light" as const,
+					port: mockPort(d.mac),
+					mac: d.mac,
+					label: d.mac.split(":").slice(-2).join(":"),
+					version: v,
+					outdated: v === null || isNewer(flasher.firmwareVersion, v),
+				};
+			}),
+	]);
+	function pickCandidate(c: FlashCandidate) {
+		openFlasher(c.kind === "blank" || !c.mac ? { kind: "blank", port: c.port } : { kind: "light", mac: c.mac });
+	}
+	// Mock: opened with nothing plugged in, a blank board "arrives" after a few seconds.
+	$effect(() => {
+		if (!mockOnly || !flashOpen || flashRequest?.kind !== "any" || flashCandidates.length) return;
+		const t = setTimeout(() => (mockUnflashed = [...mockUnflashed, "COM6"]), 3500);
+		return () => clearTimeout(t);
+	});
 
 	// Mock: a board the user was asked to plug in (a wireless light, or one whose cable came
 	// out) "arrives" over USB after a moment.
@@ -596,13 +639,13 @@
 			if (mockOnly) {
 				// the drawer already says everything while it's working on this board
 				if ((flashOpen || installRunning) && flashRequest?.kind === "blank" && flashRequest.port === port) continue;
-				// Not dismissible: it's the only way into setting the board up, and it goes away by
-				// itself once the board is set up or unplugged.
+				// Dismissible: the titlebar's firmware button is always a way back in. A dismissal
+				// lasts while the board stays plugged in (cleared when its port goes away).
 				list.push({
 					key: `unflashed:${port}`,
 					level: "info",
 					message: "A new tally light is plugged in but isn't set up yet.",
-					dismissible: false,
+					dismissible: true,
 					action: { label: "Set up as a light", run: () => openFlasher({ kind: "blank", port }) },
 				});
 				continue;
@@ -660,6 +703,18 @@
 		}
 		return list.filter((b) => dismissed[b.key] !== b.message);
 	});
+	// A blank board unplugged and plugged back in is news again: forget its dismissal.
+	$effect(() => {
+		const ports = new Set(health.unflashedPorts);
+		const stale = Object.keys(untrack(() => dismissed)).filter(
+			(k) => k.startsWith("unflashed:") && !ports.has(k.slice("unflashed:".length)),
+		);
+		if (stale.length) {
+			const next = { ...untrack(() => dismissed) };
+			for (const k of stale) delete next[k];
+			dismissed = next;
+		}
+	});
 	function dismiss(banner: Banner) {
 		if (banner.key === "notice") dismissedNotice = sidecar.notice;
 		else dismissed = { ...dismissed, [banner.key]: banner.message };
@@ -674,6 +729,7 @@
 		onupdate={() => (updateOpen = true)}
 		install={installPill}
 		oninstall={() => (flashOpen = true)}
+		onfirmware={() => openFlasher({ kind: "any" })}
 	/>
 
 	<SettingsSheet
@@ -692,7 +748,9 @@
 		}}
 	/>
 
-	<FlasherSheet
+	<FlasherDialog
+		candidates={flashCandidates}
+		onpick={pickCandidate}
 		bind:open={flashOpen}
 		job={flashJob}
 		{flasher}

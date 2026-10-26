@@ -107,13 +107,11 @@
 					</div>
 					<p class="fw">
 						<Cpu class="size-4 shrink-0" />
-						<span>Comes with light firmware <span class="font-mono">{update.firmwareVersion}</span>. Update each light from its menu afterwards.</span>
+						<span>Comes with light firmware <span class="font-mono">{update.firmwareVersion}</span>.</span>
 					</p>
 				{/if}
 
-				{#if st.status === "available"}
-					<p class="reassure">Downloading won't interrupt the show. Nothing installs until you choose to restart.</p>
-				{:else if st.status === "downloading"}
+				{#if st.status === "downloading"}
 					<div class="dl">
 						<Progress value={pct} class="bg-foreground/10 h-1.5" />
 						<span class="dl-meta">
@@ -140,7 +138,6 @@
 					<Button variant="ghost" onclick={() => (open = false)}>Not now</Button>
 					<Button onclick={() => updater.download()}>Download · {mb(update.sizeBytes)} MB</Button>
 				{:else if st.status === "downloading"}
-					<span class="foot-note">You can close this — it keeps downloading.</span>
 					<Button variant="ghost" onclick={() => (open = false)}>Hide</Button>
 				{:else if st.status === "error"}
 					<Button variant="ghost" onclick={() => (open = false)}>Close</Button>
