@@ -253,26 +253,69 @@ fn wait_for_rejoin(app: &AppHandle, mac: &str) -> bool {
     false
 }
 
-/// Turns espflash's per-segment chunk counts into one 0–1 progress across the whole image, and
-/// is where a stop request takes effect (see [`run`]).
-struct Progress<'a> {
-    app: &'a AppHandle,
-    cancel: &'a AtomicBool,
+/// Where a multi-segment write is: espflash reports chunks per segment, the dialog shows one 0–1
+/// bar for the whole image, weighted by each segment's size.
+struct WriteTally {
     /// (address, length) of each segment, in write order.
     segments: Vec<(u32, usize)>,
     total: usize,
-    /// Bytes in segments already finished.
+    /// Bytes in segments already finished, and how many segments that is.
     done: usize,
-    current: Option<(usize, usize)>, // (segment length, chunk count) of the segment being written
+    finished: usize,
+    /// (length, chunk count) of the segment being written.
+    current: Option<(usize, usize)>,
+}
+
+impl WriteTally {
+    fn new(segments: Vec<(u32, usize)>) -> Self {
+        let total = segments.iter().map(|(_, len)| len).sum();
+        Self { segments, total, done: 0, finished: 0, current: None }
+    }
+
+    /// espflash's `init(addr, chunks)`: a segment starts.
+    fn begin(&mut self, addr: u32, chunks: usize) {
+        let len = self.segments.iter().find(|(a, _)| *a == addr).map_or(0, |(_, len)| *len);
+        self.current = Some((len, chunks.max(1)));
+    }
+
+    /// espflash's `update(chunk)`: the whole image's progress, 0–1.
+    fn progress(&self, chunk: usize) -> f64 {
+        let Some((len, chunks)) = self.current else { return self.done as f64 / self.total.max(1) as f64 };
+        let written = self.done + len * chunk.min(chunks) / chunks;
+        written as f64 / self.total.max(1) as f64
+    }
+
+    /// espflash's `finish`: the current segment is written.
+    fn end(&mut self) {
+        if let Some((len, _)) = self.current.take() {
+            self.done += len;
+            self.finished += 1;
+        }
+    }
+
+    fn on_first_segment(&self) -> bool {
+        self.finished == 0
+    }
+
+    fn on_last_segment(&self) -> bool {
+        self.finished + 1 >= self.segments.len()
+    }
+}
+
+/// Feeds espflash's progress into `"flash"` events (through a [`WriteTally`]), and is where a stop
+/// request takes effect (see [`run`]).
+struct Progress<'a> {
+    app: &'a AppHandle,
+    cancel: &'a AtomicBool,
+    tally: WriteTally,
     stage: Stage,
     last_emit: Instant,
 }
 
 impl<'a> Progress<'a> {
     fn new(app: &'a AppHandle, segments: &[Segment<'_>], cancel: &'a AtomicBool) -> Self {
-        let segments: Vec<(u32, usize)> = segments.iter().map(|s| (s.addr, s.data.len())).collect();
-        let total = segments.iter().map(|(_, len)| len).sum();
-        Self { app, cancel, segments, total, done: 0, current: None, stage: Stage::Erase, last_emit: Instant::now() }
+        let tally = WriteTally::new(segments.iter().map(|s| (s.addr, s.data.len())).collect());
+        Self { app, cancel, tally, stage: Stage::Erase, last_emit: Instant::now() }
     }
 
     fn emit(&mut self, stage: Stage, progress: f64) {
@@ -291,32 +334,31 @@ impl<'a> Progress<'a> {
 impl ProgressCallbacks for Progress<'_> {
     fn init(&mut self, addr: u32, chunks: usize) {
         self.check_cancel();
-        let len = self.segments.iter().find(|(a, _)| *a == addr).map_or(0, |(_, len)| *len);
-        self.current = Some((len, chunks.max(1)));
+        self.tally.begin(addr, chunks);
         // The first segment's begin erases the flash ahead of its data.
-        if self.done == 0 {
+        if self.tally.on_first_segment() {
             self.emit(Stage::Erase, 0.0);
         }
     }
 
     fn update(&mut self, chunk: usize) {
         self.check_cancel();
-        let Some((len, chunks)) = self.current else { return };
-        let written = self.done + len * chunk.min(chunks) / chunks;
         if self.stage != Stage::Write || self.last_emit.elapsed() >= Duration::from_millis(100) {
-            self.emit(Stage::Write, written as f64 / self.total.max(1) as f64);
+            self.emit(Stage::Write, self.tally.progress(chunk));
         }
     }
 
+    // espflash verifies each segment as it's written; the dialog's one Verify stage is the last's,
+    // so the bar doesn't hop back from Verify to Write between segments.
     fn verifying(&mut self) {
         self.check_cancel();
-        self.emit(Stage::Verify, 0.0);
+        if self.tally.on_last_segment() {
+            self.emit(Stage::Verify, 0.0);
+        }
     }
 
     fn finish(&mut self, _skipped: bool) {
-        if let Some((len, _)) = self.current.take() {
-            self.done += len;
-        }
+        self.tally.end();
     }
 }
 
