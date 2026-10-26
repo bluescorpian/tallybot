@@ -71,7 +71,7 @@
 	import { Switch } from "$lib/components/ui/switch";
 	import * as Select from "$lib/components/ui/select";
 	import * as RadioGroup from "$lib/components/ui/radio-group";
-	import BrightnessBar from "$lib/components/board/BrightnessBar.svelte";
+	import BrightnessBar, { toLevel, LEVELS } from "$lib/components/board/BrightnessBar.svelte";
 	import { TRANSPORT_MODES, BRIDGE_LABEL, BRIDGE_DESC, type TransportMode } from "$lib/components/board/transportModes";
 	import type { Flasher, FlashStage, FlashTarget } from "$lib/mock/flasher.svelte";
 	import { FLASH_STAGES, leavesBlank } from "$lib/mock/flasher.svelte";
@@ -141,7 +141,13 @@
 		inputId: null,
 		brightness: 128,
 	};
-	let step = $state<"review" | "settings">("review");
+	let step = $state<"review" | "settings" | "summary">("review");
+	/** What the summary shows and the install applies: null = set up later. */
+	let chosen = $state<LightSettings | null>(null);
+	function toSummary(settings: LightSettings | null) {
+		chosen = settings;
+		step = "summary";
+	}
 	let keep = $state(true);
 	let form = $state<LightSettings>({ ...DEFAULTS });
 	/** Settings waiting to be applied once the install is done (null = skipped). */
@@ -199,6 +205,7 @@
 		| "found"
 		| "review"
 		| "settings"
+		| "summary"
 		| "running"
 		| "done"
 		| "failed"
@@ -264,7 +271,7 @@
 	// The version the light had when flashing began: the job is live state, so once the light
 	// comes back its reported version is already the new one.
 	let fromAtStart = $state<string | null>(null);
-	const fromVersion = $derived(view === "plug" || view === "found" || view === "review" || view === "settings" ? (job?.fromVersion ?? null) : fromAtStart);
+	const fromVersion = $derived(view === "plug" || view === "found" || view === "review" || view === "settings" || view === "summary" ? (job?.fromVersion ?? null) : fromAtStart);
 	function start(settings: LightSettings | null) {
 		const t = target();
 		if (!t) return;
@@ -555,6 +562,30 @@
 							<BrightnessBar value={form.brightness} onchange={(v) => (form.brightness = v)} />
 						</div>
 					{/if}
+				{:else if view === "summary"}
+					<dl class="summary">
+						<dt>Firmware</dt>
+						<dd class="font-mono">{fw}</dd>
+						{#if chosen}
+							<dt>Runs on</dt>
+							<dd>
+								{TRANSPORT_MODES.find((m) => m.id === chosen?.transport)?.label}{#if chosen.transport === "wifi" && chosen.ssid}<span
+										class="text-muted-foreground">{" · "}{chosen.ssid}</span
+									>{/if}
+							</dd>
+							{#if chosen.bridge}
+								<dt>Bridge</dt>
+								<dd>Yes</dd>
+							{/if}
+							<dt>Input</dt>
+							<dd>{inputs.find((i) => i.id === chosen?.inputId)?.label ?? "Unassigned"}</dd>
+							<dt>Brightness</dt>
+							<dd>{toLevel(chosen.brightness)} of {LEVELS}</dd>
+						{:else}
+							<dt>Settings</dt>
+							<dd class="text-muted-foreground">Set up later, from the light's menu</dd>
+						{/if}
+					</dl>
 				{:else if view === "running" || view === "done"}
 					<ol class="steps">
 						{#each stages as s, i (s)}
@@ -721,14 +752,18 @@
 				<Button variant="ghost" onclick={() => (step = "review")}>Back</Button>
 				<div class="foot-actions">
 					{#if job?.kind === "blank"}
-						<Button variant="ghost" onclick={() => start(null)}>Skip</Button>
+						<Button variant="ghost" onclick={() => toSummary(null)}>Later</Button>
 					{/if}
 					<Button
-						onclick={() => start(job?.kind === "light" && keep ? currentSettings : $state.snapshot(form))}
+						onclick={() => toSummary(job?.kind === "light" && keep ? currentSettings : $state.snapshot(form))}
+						>Next</Button
 					>
-						{job?.kind === "light" && (job.missing || current) ? "Reinstall firmware" : `Install ${fw}`}
-					</Button>
 				</div>
+			{:else if view === "summary"}
+				<Button variant="ghost" onclick={() => (step = "settings")}>Back</Button>
+				<Button onclick={() => start(chosen)}>
+					{job?.kind === "light" && (job.missing || current) ? "Reinstall firmware" : `Install ${fw}`}
+				</Button>
 			{:else if view === "plug" || view === "found" || view === "choose" || view === "waiting"}
 				<span></span>
 				<Button variant="ghost" onclick={() => (open = false)}>Cancel</Button>
@@ -900,6 +935,24 @@
 	.bright-label {
 		font-size: 0.85rem;
 		font-weight: 500;
+	}
+	.summary {
+		display: grid;
+		grid-template-columns: auto 1fr;
+		gap: 8px 16px;
+		margin: 0;
+		padding: 12px 14px;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-xl);
+		background: var(--background);
+		font-size: 0.85rem;
+	}
+	.summary dt {
+		color: var(--muted-foreground);
+	}
+	.summary dd {
+		margin: 0;
+		min-width: 0;
 	}
 	.lead {
 		font-size: 0.85rem;
