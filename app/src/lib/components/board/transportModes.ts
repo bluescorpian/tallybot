@@ -1,16 +1,15 @@
 // What a light does when unplugged — the one list both the light's Configure pane and the
-// flasher's Settings step offer, so the two say the same thing. Each row leads with the
-// situation it's for (the reader knows their venue, not the radio protocol) and names the
-// mechanism underneath.
+// flasher's Settings step offer, so the two say the same thing. Each row names the transport
+// and says in the small text when to pick it (Harry's call: name first, reason second).
 export type TransportMode = "wifi" | "notx" | "espnow";
 
 export const TRANSPORT_MODES: { id: TransportMode; label: string; desc: string }[] = [
-	{ id: "wifi", label: "Venue Wi-Fi", desc: "Joins a network you choose" },
-	{ id: "notx", label: "Always plugged in", desc: "USB only, dark when unplugged" },
+	{ id: "wifi", label: "Wi-Fi", desc: "When the venue Wi-Fi is reliable" },
+	{ id: "notx", label: "USB only", desc: "When the light stays plugged into this PC" },
 	{
 		id: "espnow",
-		label: "No Wi-Fi, or it's unreliable",
-		desc: "ESP-NOW radio, via a bridge board left plugged into this PC",
+		label: "ESP-NOW",
+		desc: "No venue Wi-Fi, or it's unreliable. Needs a bridge plugged into this PC",
 	},
 ];
 

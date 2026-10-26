@@ -69,7 +69,10 @@
 	import { Input } from "$lib/components/ui/input";
 	import { Label } from "$lib/components/ui/label";
 	import { Switch } from "$lib/components/ui/switch";
-	import { TRANSPORT_MODES, BRIDGE_LABEL, BRIDGE_DESC } from "$lib/components/board/transportModes";
+	import * as Select from "$lib/components/ui/select";
+	import * as RadioGroup from "$lib/components/ui/radio-group";
+	import BrightnessBar from "$lib/components/board/BrightnessBar.svelte";
+	import { TRANSPORT_MODES, BRIDGE_LABEL, BRIDGE_DESC, type TransportMode } from "$lib/components/board/transportModes";
 	import type { Flasher, FlashStage, FlashTarget } from "$lib/mock/flasher.svelte";
 	import { FLASH_STAGES, leavesBlank } from "$lib/mock/flasher.svelte";
 	import type { AppUpdate } from "$lib/mock/updater.svelte";
@@ -489,23 +492,32 @@
 				{:else if view === "settings"}
 					{#if job.kind === "light"}
 						<!-- an existing light: its current settings come back after the install unless changed -->
-						<div class="keep" role="radiogroup" aria-label="Settings">
-							<label><input type="radio" bind:group={keep} value={true} /> Keep as is</label>
-							<label><input type="radio" bind:group={keep} value={false} /> Change</label>
-						</div>
+						<RadioGroup.Root
+							class="keep"
+							aria-label="Settings"
+							bind:value={() => (keep ? "keep" : "change"), (v) => (keep = v === "keep")}
+						>
+							<label><RadioGroup.Item value="keep" /> Keep as is</label>
+							<label><RadioGroup.Item value="change" /> Change</label>
+						</RadioGroup.Root>
 					{/if}
 					{#if job.kind === "blank" || !keep}
 						<fieldset class="cfg">
 							<legend>Where will this light run?</legend>
-							{#each TRANSPORT_MODES as m (m.id)}
-								<label class="mode">
-									<input type="radio" bind:group={form.transport} value={m.id} />
-									<span>
-										<span class="mode-label">{m.label}</span>
-										<span class="mode-desc">{m.desc}</span>
-									</span>
-								</label>
-							{/each}
+							<RadioGroup.Root
+								class="gap-0"
+								bind:value={() => form.transport, (v) => (form.transport = v as TransportMode)}
+							>
+								{#each TRANSPORT_MODES as m (m.id)}
+									<label class="mode">
+										<RadioGroup.Item value={m.id} class="mt-0.5" />
+										<span>
+											<span class="mode-label">{m.label}</span>
+											<span class="mode-desc">{m.desc}</span>
+										</span>
+									</label>
+								{/each}
+							</RadioGroup.Root>
 							{#if form.transport === "wifi"}
 								<div class="wifi">
 									<Label for="fl-ssid">Network (SSID)</Label>
@@ -524,15 +536,23 @@
 						</div>
 						<div class="cfg grid2">
 							<Label for="fl-input">Input</Label>
-							<select id="fl-input" class="sel" bind:value={form.inputId}>
-								<option value={null}>Unassigned</option>
-								{#each inputs as i (i.id)}<option value={i.id}>{i.label}</option>{/each}
-							</select>
-							<Label for="fl-bright">Brightness</Label>
-							<span class="bright">
-								<input id="fl-bright" type="range" min="10" max="255" bind:value={form.brightness} />
-								<span class="pct">{Math.round((form.brightness / 255) * 100)}%</span>
-							</span>
+							<!-- "none" stands for unassigned: the select's value is always a string -->
+							<Select.Root
+								type="single"
+								bind:value={() => form.inputId ?? "none", (v) => (form.inputId = v === "none" ? null : v)}
+							>
+								<Select.Trigger id="fl-input" class="w-full">
+									{inputs.find((i) => i.id === form.inputId)?.label ?? "Unassigned"}
+								</Select.Trigger>
+								<Select.Content>
+									<Select.Item value="none" label="Unassigned" />
+									{#each inputs as i (i.id)}
+										<Select.Item value={i.id} label={i.label} />
+									{/each}
+								</Select.Content>
+							</Select.Root>
+							<span class="bright-label">Brightness</span>
+							<BrightnessBar value={form.brightness} onchange={(v) => (form.brightness = v)} />
 						</div>
 					{/if}
 				{:else if view === "running" || view === "done"}
@@ -817,22 +837,22 @@
 	}
 
 	/* Settings step */
-	.keep {
+	/* .keep sits on RadioGroup.Root (a component), so it needs :global to reach it */
+	:global(.keep) {
 		display: flex;
 		gap: 18px;
 		font-size: 0.85rem;
 	}
-	.keep label,
+	:global(.keep) label,
 	.mode {
 		display: flex;
-		align-items: flex-start;
+		align-items: center;
 		gap: 8px;
 		cursor: pointer;
 	}
-	.keep input,
-	.mode input {
-		margin-top: 3px;
-		accent-color: var(--primary);
+	.mode {
+		align-items: flex-start;
+		padding: 3px 0;
 	}
 	.cfg {
 		display: flex;
@@ -877,22 +897,9 @@
 		gap: 6px;
 		padding-left: 22px;
 	}
-	.sel {
-		height: 32px;
-		border: 1px solid var(--input);
-		border-radius: var(--radius-md);
-		background: var(--background);
-		padding: 0 8px;
+	.bright-label {
 		font-size: 0.85rem;
-	}
-	.bright {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-	}
-	.bright input {
-		flex: 1;
-		accent-color: var(--primary);
+		font-weight: 500;
 	}
 	.lead {
 		font-size: 0.85rem;
