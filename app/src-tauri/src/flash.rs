@@ -484,4 +484,38 @@ mod tests {
         let beyond = image(0xC000, &[entry(0x01, 0x02, 0x3F0000, 0x6000)]);
         assert_eq!(layout(&beyond), vec![(0x0, 0xC000)]);
     }
+
+    #[test]
+    fn write_progress_is_one_bar_across_segments_weighted_by_size() {
+        // 100 bytes in 4 chunks, then 300 bytes in 3 chunks: 400 bytes in all.
+        let mut t = WriteTally::new(vec![(0x0, 100), (0x10000, 300)]);
+        t.begin(0x0, 4);
+        assert_eq!(t.progress(0), 0.0);
+        assert_eq!(t.progress(2), 50.0 / 400.0);
+        assert_eq!(t.progress(4), 100.0 / 400.0);
+        t.end();
+        t.begin(0x10000, 3);
+        assert_eq!(t.progress(0), 100.0 / 400.0);
+        assert_eq!(t.progress(1), 200.0 / 400.0);
+        assert_eq!(t.progress(3), 1.0);
+        t.end();
+    }
+
+    #[test]
+    fn the_first_and_last_segment_are_told_apart() {
+        let mut t = WriteTally::new(vec![(0x0, 100), (0x9000, 100), (0x10000, 100)]);
+        t.begin(0x0, 1);
+        assert!(t.on_first_segment() && !t.on_last_segment());
+        t.end();
+        t.begin(0x9000, 1);
+        assert!(!t.on_first_segment() && !t.on_last_segment());
+        t.end();
+        t.begin(0x10000, 1);
+        assert!(!t.on_first_segment() && t.on_last_segment());
+
+        // A single-segment write is both.
+        let mut one = WriteTally::new(vec![(0x0, 100)]);
+        one.begin(0x0, 1);
+        assert!(one.on_first_segment() && one.on_last_segment());
+    }
 }

@@ -31,11 +31,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@main
-      - name: Frontend check + build
+      - name: Frontend check, tests + build
         working-directory: app
         run: |
           nix develop .. -c pnpm install --frozen-lockfile
           nix develop .. -c pnpm check
+          nix develop .. -c pnpm test
           nix develop .. -c pnpm build
       - name: Rust shell tests
         working-directory: app/src-tauri
