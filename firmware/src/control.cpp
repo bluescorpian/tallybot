@@ -25,13 +25,28 @@ struct Snapshot {
 };
 Snapshot g_last;
 unsigned long g_lastEmit = 0;
+
+// The last SET_COLOR colour logged. The server re-asserts the current colour every keyframe (4 Hz)
+// and streams breathe frames at 10 Hz with a new brightness each, so only an RGB change is logged:
+// one line per state change, not one per frame.
+struct Rendered {
+  bool valid = false;
+  uint8_t r = 0, g = 0, b = 0;
+};
+Rendered g_rendered;
 }  // namespace
 
 void control::dispatch(const ServerMessage& msg) {
   switch (msg.kind) {
     case ServerMessage::SET_COLOR:
       led::setTally(msg.r, msg.g, msg.b, msg.brightness, led::STEADY);
-      TLOG(LOG_LEVEL_INFO, "SET_COLOR rgb(%u,%u,%u) bri=%u\n", msg.r, msg.g, msg.b, msg.brightness);
+      if (!g_rendered.valid || msg.r != g_rendered.r || msg.g != g_rendered.g || msg.b != g_rendered.b) {
+        g_rendered.valid = true;
+        g_rendered.r = msg.r;
+        g_rendered.g = msg.g;
+        g_rendered.b = msg.b;
+        TLOG(LOG_LEVEL_INFO, "SET_COLOR rgb(%u,%u,%u) bri=%u\n", msg.r, msg.g, msg.b, msg.brightness);
+      }
       break;
     case ServerMessage::SET_WIFI:
       wifi::provision(msg.ssid, msg.pass);

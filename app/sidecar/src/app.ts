@@ -165,14 +165,17 @@ const IDENTIFY_DURATION_MS = IDENTIFY_HALF_MS * 6; // three white/off cycles (~0
  * How often to re-assert every connected device's current colour, regardless of change. Treats
  * SET_COLOR as periodic *state* rather than a one-shot *event*: a packet lost in flight self-heals
  * on the next tick. Reliable transports (TCP, USB-CDC) don't need it, but the cost is trivial
- * (~6 payload bytes × devices/s) and it's applied uniformly so the firmware never has to know its
- * transport's reliability. It's the safeguard that makes v1.3's fire-and-forget ESP-NOW path
+ * (~6 payload bytes × 4/s per device) and it's applied uniformly so the firmware never has to know
+ * its transport's reliability. It's the safeguard that makes v1.3's fire-and-forget ESP-NOW path
  * trustworthy — and it lets a light that power-cycles or drifts into range mid-show recover within
- * a tick, without waiting on a reconnect handshake. Animated devices already re-send every
- * {@link ANIM_TICK_MS}; this keyframe is their redundant-but-harmless backstop and the only resend
- * a steady device gets.
+ * a tick, without waiting on a reconnect handshake. 250 ms (not 1 s) because the keyframe is also
+ * an ESP-NOW light's only proof its bridge is alive: its 5 s link timeout
+ * (`ESPNOW_LINK_TIMEOUT_MS`) then takes 20 consecutive lost keyframes rather than 5, and a light
+ * that did lose the link relinks on the next keyframe to reach it. Animated devices already re-send
+ * every {@link ANIM_TICK_MS}; this keyframe is their redundant-but-harmless backstop and the only
+ * resend a steady device gets.
  */
-const REFRESH_PERIOD_MS = 1000;
+const REFRESH_PERIOD_MS = 250;
 
 /**
  * The brightness to drive a breathing device this tick: its configured brightness modulated by

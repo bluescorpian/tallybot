@@ -15,7 +15,7 @@
 
 namespace {
 const uint8_t kBroadcast[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-constexpr unsigned long kHelloIntervalMs = 1000;  // re-send HELLO until the first bridge frame
+constexpr unsigned long kHelloIntervalMs = 1000;  // HELLO cadence: awaiting the first frame, or relinking
 
 // Which role owns the radio right now. The single RX callback dispatches on this — a frame
 // means "discovery/colour from the bridge" to a light, "discovery/relay-up" to a bridge.
@@ -31,8 +31,9 @@ uint8_t g_channel = ESPNOW_CHANNEL;
 
 // ── Inbound ring buffer ────────────────────────────────────────────────────────
 // The ESP-NOW recv callback runs off the main loop; it only copies frames here. The loop drains
-// them so FastLED / usb::send() never run in callback context. Our frames are tiny (≤ 12 B) and
-// discovery strings 10 B, so a small per-slot cap is ample; an over-long frame is dropped.
+// them so FastLED / usb::send() never run in callback context. Our frames are tiny (≤ 12 B),
+// discovery strings 10 B, and a light's LOG is capped to fit, so a small per-slot cap is ample;
+// an over-long frame is dropped.
 constexpr size_t kMaxFrame = 32;
 constexpr size_t kRingSlots = 8;
 struct Frame {
@@ -47,7 +48,7 @@ volatile size_t g_ringTail = 0;  // written by the callback (enqueue)
 void enqueue(const uint8_t* src, const uint8_t* data, int len) {
   if (len <= 0 || (size_t)len > kMaxFrame) return;
   size_t next = (g_ringTail + 1) % kRingSlots;
-  if (next == g_ringHead) return;  // full — drop (the keyframe re-asserts within ~1s)
+  if (next == g_ringHead) return;  // full — drop (the next keyframe, ≤ 250 ms away, re-asserts)
   volatile Frame& f = g_ring[g_ringTail];
   memcpy((void*)f.src, src, 6);
   f.len = (uint8_t)len;
@@ -162,14 +163,23 @@ void resetBridgeStats(unsigned long now) {
 }
 
 // ── Light role state ───────────────────────────────────────────────────────────
-uint8_t g_bridge[6];          // the bridge we linked to (valid while g_linked)
-bool g_linked = false;        // registered the bridge as a peer + handed off discovery
+// The light keeps at most one bridge peer. A link timeout doesn't forget it: the light shows
+// lost-bridge blue and resumes discovery (another bridge may have been designated), but keeps the
+// bridge as a peer, so the next decodable frame from it relinks at once (the bridge keeps
+// relaying keyframes while the sidecar still has the light online) and a HELLO unicast to it gets
+// a sidecar that did drop the light sending again. Only a TALLY_HERE from a different bridge
+// replaces it — the old peer is deleted then, so the peer table never holds a stale bridge.
+uint8_t g_bridge[6];          // our bridge (valid while g_haveBridge)
+bool g_haveBridge = false;    // g_bridge is registered as a peer (linked, or remembered after a timeout)
+bool g_linked = false;        // the link to g_bridge is live (a frame within ESPNOW_LINK_TIMEOUT_MS)
 bool g_gotFrame = false;      // received the first frame from the bridge (stops HELLO re-send)
 bool g_everHadBridge = false; // splits "first hunt" (cyan) from "lost the bridge" (steady blue)
 unsigned long g_lastBroadcast = 0;
 unsigned long g_lastHello = 0;
 unsigned long g_lastHeartbeat = 0;
-unsigned long g_lastRx = 0;
+unsigned long g_lastRx = 0;   // the last frame from the bridge; across an outage, its start
+uint32_t g_linkTimeouts = 0;  // link timeouts since boot, reported with each relink
+bool g_inOutage = false;      // a link timed out and hasn't been restored yet (a relink reports it)
 
 void sendRaw(const uint8_t* peer, const uint8_t* payload, size_t len) {
   // Fire-and-forget; the keyframe covers loss. The result only feeds the bridge's diagnostics.
@@ -191,16 +201,47 @@ void radioDown() {
   g_ringHead = g_ringTail = 0;  // drop anything the callback queued mid-teardown
 }
 
-// Drop the bridge link and fall back to searching. The LED follows the tally.cpp pattern: cyan
-// while still hunting for a first bridge, steady blue once we've held a link and lost it.
-void resetLink() {
-  if (g_linked) esp_now_del_peer(g_bridge);
+// Mark the link down and fall back to searching, keeping any remembered bridge peer. The LED
+// follows the tally.cpp pattern: cyan while still hunting for a first bridge, steady blue once
+// we've held a link and lost it.
+void unlink() {
   g_linked = false;
   g_gotFrame = false;
   if (g_everHadBridge)
     ind::lostServer();  // steady blue — we lost the bridge (LED.md state 10)
   else
     ind::searching();   // cyan pulse — never linked yet (state 4)
+}
+
+// Report the outage a relink just ended, to the bridge (which relays it up as any peer frame) and
+// to the local log. The text stays ≤ 30 B so the LOG payload fits the bridge ring's kMaxFrame.
+void reportRelink(unsigned long now) {
+  if (!g_inOutage) return;
+  g_inOutage = false;
+  char text[31];
+  int n = snprintf(text, sizeof(text), "relink gap %lums timeout#%lu", (unsigned long)(now - g_lastRx),
+                   (unsigned long)g_linkTimeouts);
+  if (n < 0) return;
+  size_t len = (size_t)n < sizeof(text) ? (size_t)n : sizeof(text) - 1;
+  uint8_t frame[kMaxFrame];
+  sendRaw(g_bridge, frame, encodeLogPayload(frame, sizeof(frame), LOG_LEVEL_WARN, text, len));
+  TLOG(LOG_LEVEL_WARN, "%s\n", text);
+}
+
+// Adopt `mac` as our bridge peer, replacing (and deleting) a different remembered one.
+bool adoptBridge(const uint8_t* mac) {
+  if (g_haveBridge && memcmp(g_bridge, mac, 6) == 0) return true;
+  if (g_haveBridge) esp_now_del_peer(g_bridge);
+  g_haveBridge = false;
+  memcpy(g_bridge, mac, 6);
+  if (!addPeer(g_bridge)) return false;
+  g_haveBridge = true;
+  return true;
+}
+
+void sendHello() {
+  uint8_t hello[8];
+  sendRaw(g_bridge, hello, encodeHelloPayload(hello, g_mac));
 }
 }  // namespace
 
@@ -216,7 +257,9 @@ void espnow::startLight() {
   radioUp();
   g_role = Role::LIGHT;
   g_lastBroadcast = millis() - DISCOVERY_INTERVAL_MS;  // broadcast on the next tick
-  resetLink();
+  g_haveBridge = false;  // radioUp() starts with an empty peer table
+  g_inOutage = false;
+  unlink();
   TLOG(LOG_LEVEL_INFO, "ESP-NOW light: searching for a bridge\n");
 }
 
@@ -231,28 +274,35 @@ void espnow::loopLight(unsigned long now) {
   Frame f;
   while (dequeue(&f)) {
     if (isDiscoveryPrefix(f.data, f.len, DISCOVERY_RESPONSE_PREFIX)) {  // ignore the port suffix
-      if (!g_linked) {  // a bridge answered — register it as our single peer and say HELLO
-        memcpy(g_bridge, f.src, 6);
-        if (addPeer(g_bridge)) {
-          g_linked = true;
-          g_everHadBridge = true;
-          g_gotFrame = false;
-          g_lastRx = now;
-          g_lastHello = now - kHelloIntervalMs;  // HELLO on the next tick
-          ind::unassigned();  // white breathe until the first SET_COLOR (state-5 hand-off)
-          TLOG(LOG_LEVEL_INFO, "Linked to bridge %02x:%02x:%02x:%02x:%02x:%02x\n", g_bridge[0],
-               g_bridge[1], g_bridge[2], g_bridge[3], g_bridge[4], g_bridge[5]);
-        }
+      if (!g_linked) {  // a bridge answered — make it our single peer and say HELLO
+        if (!adoptBridge(f.src)) continue;
+        g_linked = true;
+        g_everHadBridge = true;
+        g_gotFrame = false;
+        reportRelink(now);  // before g_lastRx moves: the gap runs from the last frame to this one
+        g_lastRx = now;
+        g_lastHello = now - kHelloIntervalMs;  // HELLO on the next tick
+        ind::unassigned();  // white breathe until the first SET_COLOR (state-5 hand-off)
+        TLOG(LOG_LEVEL_INFO, "Linked to bridge %02x:%02x:%02x:%02x:%02x:%02x\n", g_bridge[0],
+             g_bridge[1], g_bridge[2], g_bridge[3], g_bridge[4], g_bridge[5]);
       }
       continue;
     }
     // A binary frame from our bridge: decode + dispatch like any other transport.
-    if (g_linked && memcmp(f.src, g_bridge, 6) == 0) {
-      g_lastRx = now;
-      g_gotFrame = true;
-      ServerMessage msg;
-      if (decodeServerMessage(f.data, f.len, &msg) && g_handler) g_handler(msg);
+    if (!g_haveBridge || memcmp(f.src, g_bridge, 6) != 0) continue;
+    ServerMessage msg;
+    bool decoded = decodeServerMessage(f.data, f.len, &msg);
+    if (!g_linked) {
+      // Fast relink: the remembered bridge is still relaying to us, so a decodable frame is proof
+      // enough — restore the link without waiting on TALLY_HERE + a HELLO round-trip.
+      if (!decoded) continue;
+      g_linked = true;
+      reportRelink(now);
+      TLOG(LOG_LEVEL_INFO, "Relinked to bridge on a relayed frame\n");
     }
+    g_lastRx = now;
+    g_gotFrame = true;
+    if (decoded && g_handler) g_handler(msg);
   }
 
   if (!g_linked) {  // searching: broadcast TALLY_FIND until a bridge answers
@@ -261,22 +311,31 @@ void espnow::loopLight(unsigned long now) {
       if (!esp_now_is_peer_exist(kBroadcast)) addPeer(kBroadcast);
       sendRaw(kBroadcast, (const uint8_t*)DISCOVERY_REQUEST, strlen(DISCOVERY_REQUEST));
     }
+    // ...and HELLO the remembered bridge, so a sidecar that dropped us re-learns us and resumes
+    // sending without depending on a broadcast getting through.
+    if (g_haveBridge && now - g_lastHello >= kHelloIntervalMs) {
+      g_lastHello = now;
+      sendHello();
+    }
     return;
   }
 
-  // Linked: no traffic for the timeout means the bridge is gone — drop the link, resume discovery.
+  // Linked: no traffic for the timeout means the link is down — show it and resume discovery,
+  // remembering the bridge for a fast relink.
   if (now - g_lastRx >= ESPNOW_LINK_TIMEOUT_MS) {
-    TLOG(LOG_LEVEL_WARN, "Bridge link timed out; resuming discovery\n");
+    g_linkTimeouts++;
+    g_inOutage = true;
+    TLOG(LOG_LEVEL_WARN, "Bridge link timed out (#%lu); resuming discovery\n", (unsigned long)g_linkTimeouts);
     g_lastBroadcast = now - DISCOVERY_INTERVAL_MS;
-    resetLink();
+    g_lastHello = now - kHelloIntervalMs;
+    unlink();
     return;
   }
 
   if (!g_gotFrame) {  // re-send HELLO every 1s until the bridge's first frame arrives
     if (now - g_lastHello >= kHelloIntervalMs) {
       g_lastHello = now;
-      uint8_t hello[8];
-      sendRaw(g_bridge, hello, encodeHelloPayload(hello, g_mac));
+      sendHello();
     }
     return;
   }

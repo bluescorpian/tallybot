@@ -30,7 +30,8 @@ export const DISCOVERY_PORT = 7001;
 // Device→server and server→device type spaces are independent; both start at 0x01.
 // HELLO/HEARTBEAT/SET_COLOR travel over both transports; the rest are USB-only
 // provisioning/diagnostics frames (a USB device is by definition new enough to
-// speak them — see the versioning note below).
+// speak them — see the versioning note below), except that an ESP-NOW light also
+// sends LOG to its bridge, which relays it up inside a RELAY envelope.
 
 /** Device → server (a.k.a. device → host) message types. */
 export const DeviceMessageType = {
@@ -38,7 +39,10 @@ export const DeviceMessageType = {
   HEARTBEAT: 0x02,
   /** Transport/WiFi status snapshot, pushed on change and in reply to GET_STATUS (USB). */
   STATUS: 0x03,
-  /** A framed log line — replaces raw Serial.print on release firmware (USB). */
+  /**
+   * A framed log line — replaces raw Serial.print on release firmware (USB). An ESP-NOW light
+   * also sends one to its bridge (e.g. its relink gap report), arriving inside a RELAY.
+   */
   LOG: 0x04,
   /** WiFi scan result. Reserved; deferred post-v1.2 (the user types the SSID for now). */
   SCAN_RESULT: 0x05,
@@ -109,6 +113,16 @@ export const LogLevel = {
   WARN: 1,
   ERROR: 2,
 } as const;
+
+/** A {@link LogLevel} as the name the sidecar's `log` events carry. */
+export type LogLevelName = "info" | "warn" | "error";
+
+const LOG_LEVEL_NAME: readonly LogLevelName[] = ["info", "warn", "error"];
+
+/** Name a wire {@link LogLevel}; an unknown level reads as `info`. */
+export function logLevelName(level: number): LogLevelName {
+  return LOG_LEVEL_NAME[level] ?? "info";
+}
 
 // ── Protocol versioning ─────────────────────────────────────────────────────
 // HELLO carries the version a device speaks. Backward-compat lives in the server
@@ -389,7 +403,8 @@ export type DeviceMessage =
 /**
  * Decode one unframed device→server payload (as produced by {@link FrameDecoder} on TCP,
  * or by COBS deframing on USB). The first byte is the message type. Throws on an unknown
- * type or a payload whose length doesn't match its type. STATUS/LOG only arrive over USB.
+ * type or a payload whose length doesn't match its type. STATUS only arrives over USB; LOG
+ * arrives over USB or relayed from an ESP-NOW light.
  */
 export function decodeDeviceMessage(payload: Uint8Array): DeviceMessage {
   if (payload.length === 0) {

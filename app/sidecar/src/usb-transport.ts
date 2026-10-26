@@ -24,6 +24,7 @@ import {
   WifiState,
   getStatusPayload,
   isSupportedVersion,
+  logLevelName,
   setBridgePayload,
   setColorPayload,
   setTransportPayload,
@@ -67,8 +68,6 @@ const WIFI_STATE_NAME: Record<number, DeviceWifiState> = {
   [WifiState.CONNECTED]: "connected",
   [WifiState.FAILED]: "failed",
 };
-
-const LOG_LEVEL_NAME = ["info", "warn", "error"] as const;
 
 // Typed events (the interface merges with the class and is erased at build).
 export interface UsbTransport {
@@ -202,7 +201,7 @@ export class UsbTransport extends EventEmitter {
         bridge: decoded.bridge,
       });
     } else if (decoded.kind === "log") {
-      this.emit("log", { mac: frame.mac, level: LOG_LEVEL_NAME[decoded.level] ?? "info", text: decoded.text });
+      this.emit("log", { mac: frame.mac, level: logLevelName(decoded.level), text: decoded.text });
     } else if (decoded.kind === "relayed") {
       // A bridge unwrapped a peer's ESP-NOW frame and forwarded it up. The bridge MAC is the USB
       // device the frame arrived on; the EspNowTransport decodes `inner` itself (the envelope is

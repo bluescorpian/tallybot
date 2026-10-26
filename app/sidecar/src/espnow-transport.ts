@@ -19,13 +19,22 @@
  *
  * Diagnostics ride a `log` event shaped like the {@link UsbTransport}'s device-log stream (keyed by
  * the light's MAC), so they reach the same places a bridge's own LOG lines do: an expired light,
- * the edges of an outbound outage, and a HEARTBEAT from a light we never saw HELLO from.
+ * the edges of an outbound outage, a HEARTBEAT from a light we never saw HELLO from, and a light's
+ * own relayed LOG lines (its gap report when it relinks after losing the bridge).
  */
 
 import { EventEmitter } from "node:events";
 
 import { HEARTBEAT_TIMEOUT_MS } from "./device-server.ts";
-import { type Color, decodeDeviceMessage, isSupportedVersion, relayPayload, setColorPayload } from "./protocol.ts";
+import {
+  type Color,
+  type LogLevelName,
+  decodeDeviceMessage,
+  isSupportedVersion,
+  logLevelName,
+  relayPayload,
+  setColorPayload,
+} from "./protocol.ts";
 import type { UsbTransport } from "./usb-transport.ts";
 
 /** How often the expiry sweep runs — coarse, since the 30 s timeout has no tight deadline. */
@@ -39,8 +48,6 @@ export interface EspNowTransportOptions {
   /** Clock source (injectable so tests drive expiry without the wall clock). */
   now?: () => number;
 }
-
-type LogLevel = "info" | "warn" | "error";
 
 /** Why `sendColor` can't reach the bridge — the two cases a live outage splits into. */
 type SendFailure = "no bridge designated" | "bridge not on USB";
@@ -57,7 +64,7 @@ export interface EspNowTransport {
   on(event: "deviceConnected", listener: (info: { mac: string; version: number }) => void): this;
   on(event: "deviceDisconnected", listener: (info: { mac: string }) => void): this;
   on(event: "deviceUnsupported", listener: (info: { mac: string; version: number }) => void): this;
-  on(event: "log", listener: (entry: { mac: string; level: LogLevel; text: string }) => void): this;
+  on(event: "log", listener: (entry: { mac: string; level: LogLevelName; text: string }) => void): this;
   on(event: "error", listener: (err: Error) => void): this;
 }
 
@@ -154,7 +161,7 @@ export class EspNowTransport extends EventEmitter {
     return false;
   }
 
-  #log(mac: string, level: LogLevel, text: string): void {
+  #log(mac: string, level: LogLevelName, text: string): void {
     this.emit("log", { mac, level, text });
   }
 
@@ -188,8 +195,14 @@ export class EspNowTransport extends EventEmitter {
         this.#unknownHeartbeats.add(srcMac);
         this.#log(srcMac, "warn", `ESP-NOW HEARTBEAT from unknown light ${srcMac} (no HELLO seen); ignoring it`);
       }
+    } else if (message.kind === "log") {
+      // A light's own LOG line (its relink gap report), relayed up by the bridge. Like any valid
+      // frame on TCP it proves a known light alive; an unknown one's line is still worth surfacing.
+      const light = this.#lights.get(srcMac);
+      if (light) light.lastSeen = this.#now();
+      this.#log(srcMac, logLevelName(message.level), message.text);
     }
-    // STATUS/LOG never ride ESP-NOW (USB-only frames); anything else is ignored.
+    // STATUS never rides ESP-NOW (USB-only); anything else is ignored.
   }
 
   /** Drop every relayed light (the bridge went away). */
