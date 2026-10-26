@@ -16,6 +16,9 @@
 //! A board that never sends HELLO (no TallyBot firmware) isn't the sidecar's business: the
 //! shell reports it straight to the UI through `health` and releases its port.
 //!
+//! The in-app flasher (`crate::flash`) borrows a port through [`claim`]: the port's comms thread
+//! lets go and the supervisor leaves it alone until [`release`].
+//!
 //! The v1.3 ESP-NOW bridge relays many lights behind one port, and the shell stays
 //! out of it by construction: a RELAY-wrapped send is just a `usbSend` to the bridge's
 //! MAC, and a RELAY uplink frame isn't an 8-byte HELLO so it forwards opaque as a
@@ -27,7 +30,7 @@ mod supervisor;
 
 pub use supervisor::start;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicBool;
 use std::sync::{mpsc, Arc, Mutex};
 
@@ -50,6 +53,12 @@ struct UsbDevice {
 pub struct UsbState {
     /// mac → the device's port thread. Doubles as the list of detected devices.
     devices: Mutex<HashMap<String, UsbDevice>>,
+    /// Port paths with a live comms thread — so the supervisor doesn't open one twice.
+    tracked: Arc<Mutex<HashSet<String>>>,
+    /// Ports holding an unflashed board — not reopened until they're unplugged.
+    parked: Arc<Mutex<HashSet<String>>>,
+    /// Ports the flasher has borrowed: their comms thread exits and the supervisor skips them.
+    claimed: Arc<Mutex<HashSet<String>>>,
     /// Flipped on app exit so the supervisor + port threads wind down.
     pub stop: Arc<AtomicBool>,
 }
@@ -58,6 +67,9 @@ impl UsbState {
     pub fn new() -> Self {
         Self {
             devices: Mutex::new(HashMap::new()),
+            tracked: Arc::default(),
+            parked: Arc::default(),
+            claimed: Arc::default(),
             stop: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -99,12 +111,14 @@ pub fn handle_outbound(app: &AppHandle, line: &str) -> bool {
 }
 
 /// Register a detected device under its MAC and announce it to the sidecar (on HELLO).
-fn register_device(app: &AppHandle, mac: &str, version: u8, tx: mpsc::Sender<Vec<u8>>) {
+fn register_device(app: &AppHandle, mac: &str, version: u8, path: &str, tx: mpsc::Sender<Vec<u8>>) {
     if let Some(state) = app.try_state::<UsbState>() {
         if let Ok(mut devices) = state.devices.lock() {
             devices.insert(mac.to_string(), UsbDevice { tx, version });
         }
     }
+    // The UI reads a light's port from health; the flasher targets it by that path.
+    crate::health::set_light_port(app, mac, Some(path));
     let _ = crate::sidecar::write_line(app, &connected_message(mac, version));
 }
 
@@ -115,6 +129,7 @@ fn deregister_device(app: &AppHandle, mac: &str) {
             devices.remove(mac);
         }
     }
+    crate::health::set_light_port(app, mac, None);
     let msg = serde_json::json!({ "type": "usbDeviceDisconnected", "mac": mac });
     let _ = crate::sidecar::write_line(app, &msg.to_string());
 }
@@ -136,6 +151,47 @@ pub fn replay_connected(app: &AppHandle) {
     for line in lines {
         let _ = crate::sidecar::write_line(app, &line);
     }
+}
+
+/// True while a TallyBot light with this MAC is detected on USB (it has sent HELLO).
+pub fn has_device(app: &AppHandle, mac: &str) -> bool {
+    app.try_state::<UsbState>()
+        .is_some_and(|s| s.devices.lock().is_ok_and(|d| d.contains_key(mac)))
+}
+
+/// Borrow a port for the flasher: its comms thread exits (the light drops off USB as far as
+/// the sidecar is concerned) and the supervisor won't reopen it until [`release`]. Returns
+/// once the port is free, or false if its thread didn't let go within `timeout`.
+pub fn claim(app: &AppHandle, path: &str, timeout: std::time::Duration) -> bool {
+    let Some(state) = app.try_state::<UsbState>() else {
+        return false;
+    };
+    state.claimed.lock().unwrap().insert(path.to_string());
+    let deadline = std::time::Instant::now() + timeout;
+    while state.tracked.lock().unwrap().contains(path) {
+        if std::time::Instant::now() > deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    true
+}
+
+/// Hand a borrowed port back. It's probed afresh on the supervisor's next poll — also when it
+/// held an unflashed board, since the flasher has just written firmware to it.
+pub fn release(app: &AppHandle, path: &str) {
+    let Some(state) = app.try_state::<UsbState>() else {
+        return;
+    };
+    state.parked.lock().unwrap().remove(path);
+    crate::health::set_unflashed_port(app, path, false);
+    state.claimed.lock().unwrap().remove(path);
+}
+
+/// True while the flasher holds this port.
+fn is_claimed(app: &AppHandle, path: &str) -> bool {
+    app.try_state::<UsbState>()
+        .is_some_and(|s| s.claimed.lock().is_ok_and(|c| c.contains(path)))
 }
 
 fn connected_message(mac: &str, version: u8) -> String {

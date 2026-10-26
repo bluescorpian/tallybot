@@ -14,13 +14,18 @@
 //! USB-serial provisioning (v1.2) extends this same bridge: the `usb` module owns the
 //! serial port(s) on dedicated threads and exchanges `usb*` JSON messages with the
 //! sidecar over the very stdin/stdout pipe used here — see `usb/mod.rs`.
+//!
+//! The `flash` module installs the firmware bundled with this app onto a board on USB,
+//! borrowing its port from the `usb` module for the duration.
 
+mod flash;
 mod health;
 mod sidecar;
 mod usb;
 
 use tauri::{Manager, RunEvent};
 
+use flash::FlashState;
 use health::HealthState;
 use sidecar::SidecarState;
 use usb::UsbState;
@@ -56,12 +61,20 @@ pub fn run() {
         .manage(SidecarState::new())
         .manage(UsbState::new())
         .manage(HealthState::new())
+        .manage(FlashState::default())
         .setup(|app| {
             sidecar::start(app.handle().clone()); // spawn + respawn-on-crash supervisor
             usb::start(app.handle().clone()); // poll for ESP32-C3 serial ports + relay
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![send_to_sidecar, restart_sidecar, health::shell_health])
+        .invoke_handler(tauri::generate_handler![
+            send_to_sidecar,
+            restart_sidecar,
+            health::shell_health,
+            flash::firmware_info,
+            flash::flash_start,
+            flash::flash_cancel,
+        ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {

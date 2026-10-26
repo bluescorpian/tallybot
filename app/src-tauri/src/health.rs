@@ -1,5 +1,6 @@
 //! Shell-side health the operator must see: a dead sidecar, USB ports we can't open, and
-//! boards on USB that aren't running TallyBot firmware.
+//! boards on USB that aren't running TallyBot firmware — plus which port each wired light is
+//! on, which only the shell knows and the flasher needs.
 //!
 //! None can travel over the `"sidecar"` event channel — one is the sidecar being gone,
 //! the others are known only to the shell — so the shell keeps its own small snapshot and
@@ -26,6 +27,14 @@ pub struct Health {
     /// Ports holding an ESP32-C3 that never sent HELLO (no TallyBot firmware), sorted. The
     /// shell has released each one so the web flasher can open it; cleared on unplug.
     pub unflashed_ports: Vec<String>,
+    /// Lights detected on USB (they sent HELLO) and the port each is on, sorted by MAC.
+    pub light_ports: Vec<LightPort>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct LightPort {
+    pub mac: String,
+    pub port: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -98,6 +107,30 @@ pub fn set_unflashed_port(app: &AppHandle, port: &str, unflashed: bool) {
                 true
             }
             _ => false,
+        }
+    });
+}
+
+/// Record the port a light is on (`Some`), or that it left USB (`None`). Emits only on change.
+pub fn set_light_port(app: &AppHandle, mac: &str, port: Option<&str>) {
+    update(app, |h| {
+        let existing = h.light_ports.iter().position(|l| l.mac == mac);
+        match (existing, port) {
+            (Some(i), Some(p)) if h.light_ports[i].port == p => false,
+            (Some(i), Some(p)) => {
+                h.light_ports[i].port = p.to_string();
+                true
+            }
+            (Some(i), None) => {
+                h.light_ports.remove(i);
+                true
+            }
+            (None, Some(p)) => {
+                h.light_ports.push(LightPort { mac: mac.to_string(), port: p.to_string() });
+                h.light_ports.sort_by(|a, b| a.mac.cmp(&b.mac));
+                true
+            }
+            (None, None) => false,
         }
     });
 }

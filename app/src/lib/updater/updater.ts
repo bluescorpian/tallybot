@@ -50,7 +50,7 @@ export function isNewer(a: string, b: string): boolean {
 }
 
 /** The update that would bring newer light firmware than `firmwareVersion`, if any is known. */
-export function newerFirmwareUpdate(state: UpdaterState, firmwareVersion: string): AppUpdate | null {
+export function newerFirmwareUpdate(state: UpdaterState, firmwareVersion: string | null): AppUpdate | null {
 	const update = "update" in state ? state.update : null;
-	return update && isNewer(update.firmwareVersion, firmwareVersion) ? update : null;
+	return update && firmwareVersion !== null && isNewer(update.firmwareVersion, firmwareVersion) ? update : null;
 }

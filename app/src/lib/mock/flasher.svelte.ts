@@ -17,6 +17,8 @@ const DETAIL: Record<FlashFailure, string> = {
 	"no-response": "espflash: Failed to connect to the chip (timed out waiting for packet header)",
 	"port-busy": "espflash: Failed to open serial port: Device or resource busy",
 	unplugged: "espflash: Serial port disconnected while writing (0x0002f000)",
+	"wrong-light": "The board on COM7 is 30:ae:a4:00:77:88",
+	error: "espflash: Flash command failed",
 };
 
 export class MockFlasher implements Flasher {

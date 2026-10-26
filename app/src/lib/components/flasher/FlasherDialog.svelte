@@ -130,9 +130,10 @@
 	}: Props = $props();
 
 	// ── Settings step (after review, before the install) ──
-	// Installing the full image can wipe the light's saved settings, so an existing light's
-	// current settings are reapplied after it ("keep as is", the default); a blank board gets
-	// the user's choices, or nothing when skipped (set it up later from its menu).
+	// A reinstall keeps the light's saved settings (the shell writes around them), so "keep as
+	// is" (the default) applies nothing afterwards; "change" applies the new choices once the
+	// light is back. A blank board gets the user's choices, or nothing when skipped (set it up
+	// later from its menu).
 	const DEFAULTS: LightSettings = {
 		transport: "notx",
 		ssid: "",
@@ -176,7 +177,8 @@
 		}
 	});
 
-	const fw = $derived(flasher.firmwareVersion);
+	// The page only offers the flasher when the build bundles firmware, so this is set here.
+	const fw = $derived(flasher.firmwareVersion ?? "");
 	const st = $derived(flasher.state);
 	const running = $derived(st.status === "running");
 	let confirmStop = $state(false);
@@ -671,6 +673,17 @@
 									Another program is connected to this board. Close any serial monitor, Arduino IDE
 									or web flasher tab that's using it, then try again.
 								</p>
+							{:else if st.failure === "wrong-light"}
+								<h3>That's a different light</h3>
+								<p>
+									The board on {portName} isn't {name ?? "the light you picked"}, so nothing was installed.
+									Plug in {name ?? "that light"} and try again.
+								</p>
+							{:else if st.failure === "error"}
+								<h3>The install didn't finish</h3>
+								<p>
+									Try again. If it keeps failing, unplug the board, plug it back in, and try once more.
+								</p>
 							{:else}
 								<h3>The cable came out</h3>
 								<p>
@@ -761,7 +774,8 @@
 				</div>
 			{:else if view === "summary"}
 				<Button variant="ghost" onclick={() => (step = "settings")}>Back</Button>
-				<Button onclick={() => start(chosen)}>
+				<!-- the summary shows the kept settings, but a reinstall leaves them in place untouched -->
+				<Button onclick={() => start(job?.kind === "light" && keep ? null : chosen)}>
 					{job?.kind === "light" && (job.missing || current) ? "Reinstall firmware" : `Install ${fw}`}
 				</Button>
 			{:else if view === "plug" || view === "found" || view === "choose" || view === "waiting"}

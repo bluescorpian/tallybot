@@ -36,9 +36,17 @@ export interface ShellHealth {
 	usbPortErrors: { port: string; message: string }[];
 	/** Ports holding a board with no TallyBot firmware; the shell has released each one. */
 	unflashedPorts: string[];
+	/** Lights on USB and the port each is on (what the flasher targets). */
+	lightPorts: { mac: string; port: string }[];
 }
 
-const HEALTHY: ShellHealth = { revision: 0, sidecarDown: null, usbPortErrors: [], unflashedPorts: [] };
+const HEALTHY: ShellHealth = {
+	revision: 0,
+	sidecarDown: null,
+	usbPortErrors: [],
+	unflashedPorts: [],
+	lightPorts: [],
+};
 
 /** True when running inside the Tauri webview (mirrors `TitleBar.svelte`). */
 export const isTauri =

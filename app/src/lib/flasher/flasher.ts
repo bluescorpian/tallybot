@@ -19,12 +19,14 @@ export const FLASH_STAGES = ["connect", "erase", "write", "verify", "restart", "
 export type FlashStage = (typeof FLASH_STAGES)[number];
 
 /**
- * The failures worth a tailored fix:
+ * The failures worth a tailored fix, plus a catch-all:
  *   no-response — the chip didn't enter download mode (fix: hold BOOT while plugging in)
  *   port-busy   — another program holds the serial port
  *   unplugged   — the cable came out mid-write (board left blank, recoverable)
+ *   wrong-light — the board on the port isn't the light being updated (nothing was written)
+ *   error       — anything else; `detail` says what
  */
-export type FlashFailure = "no-response" | "port-busy" | "unplugged";
+export type FlashFailure = "no-response" | "port-busy" | "unplugged" | "wrong-light" | "error";
 
 export type FlashState =
 	| { status: "idle" }
@@ -36,11 +38,17 @@ export type FlashState =
 	| { status: "cancelled"; target: FlashTarget; stage: FlashStage };
 
 export interface Flasher {
-	/** The firmware bundled with this app — the only version it flashes. */
-	readonly firmwareVersion: string;
+	/**
+	 * The firmware bundled with this app — the only version it flashes. Null when this build
+	 * carries none (a dev build that didn't stage one), and until the driver has asked.
+	 */
+	readonly firmwareVersion: string | null;
 	readonly state: FlashState;
 	start(target: FlashTarget): void;
-	/** Abort a running flash. Leaves the board blank (recoverable by flashing again). */
+	/**
+	 * Stop a running flash. Mid-write it leaves the board blank (recoverable by flashing again);
+	 * see `leavesBlank`.
+	 */
 	cancel(): void;
 	/** Back to idle once the UI has shown the outcome. */
 	reset(): void;

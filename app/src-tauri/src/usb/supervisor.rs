@@ -9,13 +9,14 @@
 //! [`OpenFailures`] decides which reach the operator (via `health`) and keeps the 1.5 s
 //! re-poll from repeating them.
 //!
+//! A port the in-app flasher has claimed is skipped until it's released (`super::claim`).
+//!
 //! A port whose board turned out unflashed is *parked*: reported via `health` and left
 //! closed until it drops out of enumeration (unplug), so the web flasher can have it. The
 //! replug after flashing then reads as a new device.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -29,8 +30,13 @@ const POLL_STEP: Duration = Duration::from_millis(100);
 
 /// Start the discovery loop on a dedicated thread. Returns immediately.
 pub fn start(app: AppHandle) {
-    let stop = match app.try_state::<UsbState>() {
-        Some(state) => state.stop.clone(),
+    let (stop, tracked, parked, claimed) = match app.try_state::<UsbState>() {
+        Some(state) => (
+            state.stop.clone(),
+            state.tracked.clone(),
+            state.parked.clone(),
+            state.claimed.clone(),
+        ),
         None => {
             eprintln!("[usb] UsbState not managed; serial disabled");
             return;
@@ -38,10 +44,6 @@ pub fn start(app: AppHandle) {
     };
 
     thread::spawn(move || {
-        // Port paths with a live comms thread — so we don't open the same port twice.
-        let tracked: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
-        // Ports holding an unflashed board — not reopened until they're unplugged.
-        let parked: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
 
         let mut failures = OpenFailures::default();
 
@@ -57,7 +59,10 @@ pub fn start(app: AppHandle) {
                 }
                 let path = info.port_name.clone();
                 present.insert(path.clone());
-                if tracked.lock().unwrap().contains(&path) || parked.lock().unwrap().contains(&path) {
+                if tracked.lock().unwrap().contains(&path)
+                    || parked.lock().unwrap().contains(&path)
+                    || claimed.lock().unwrap().contains(&path)
+                {
                     continue;
                 }
                 let opened = match port::open(&path) {

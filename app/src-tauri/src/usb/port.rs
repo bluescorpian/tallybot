@@ -11,7 +11,7 @@ use serialport::SerialPort;
 use tauri::AppHandle;
 
 use super::protocol::{cobs_frame, parse_hello, CobsStream, MSG_GET_STATUS};
-use super::{deregister_device, register_device, to_hex};
+use super::{deregister_device, is_claimed, register_device, to_hex};
 
 const BAUD: u32 = 115_200;
 /// Read timeout — a timeout is the normal idle case, not an error. Short enough to keep
@@ -26,7 +26,7 @@ const DETECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Why a comms thread ended.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Outcome {
-    /// The port went away (unplug), or the app is exiting.
+    /// The port went away (unplug), the flasher claimed it, or the app is exiting.
     Closed,
     /// No HELLO within [`DETECT_TIMEOUT`]: not TallyBot firmware. The port has been closed so
     /// another program (the web flasher) can open it.
@@ -61,6 +61,11 @@ pub fn run(app: &AppHandle, path: &str, mut port: Box<dyn SerialPort>, stop: &At
     }
 
     while !stop.load(Ordering::Relaxed) {
+        // The flasher wants the port: let go, as if the device had been unplugged.
+        if is_claimed(app, path) {
+            eprintln!("[usb] {path} claimed by the flasher");
+            break;
+        }
         // Drain outbound: COBS-frame each payload and write it.
         while let Ok(payload) = rx.try_recv() {
             if let Err(e) = port.write_all(&cobs_frame(&payload)) {
@@ -112,7 +117,7 @@ fn handle_frame(
 ) {
     if mac.is_none() {
         if let Some(hello) = parse_hello(&payload) {
-            register_device(app, &hello.mac, hello.version, tx.clone());
+            register_device(app, &hello.mac, hello.version, path, tx.clone());
             eprintln!("[usb] {path} is {} (protocol v{})", hello.mac, hello.version);
             *mac = Some(hello.mac);
         }

@@ -29,7 +29,8 @@
 	import UpdateDialog from "$lib/components/updates/UpdateDialog.svelte";
 	import type { InstallPill, UpdatePill } from "$lib/components/chrome/TitleBar.svelte";
 	import { MockFlasher } from "$lib/mock/flasher.svelte";
-	import { leavesBlank, type FlashFailure } from "$lib/flasher/flasher";
+	import { TauriFlasher } from "$lib/flasher/tauri.svelte";
+	import { leavesBlank, type FlashFailure, type Flasher } from "$lib/flasher/flasher";
 	import { MockUpdater } from "$lib/mock/updater.svelte";
 	import { isNewer, newerFirmwareUpdate } from "$lib/updater/updater";
 	import LoaderCircle from "@lucide/svelte/icons/loader-circle";
@@ -229,23 +230,22 @@
 	// the rig with every light offline and the source reconnecting — never old tally.
 	const engineDown = $derived(isTauri ? sidecar.stale : demo === "enginedown");
 	const props = $derived(toBoardProps(engineDown ? sidecarLost(appState) : appState));
-	// Devices don't report a firmware version yet (only a protocol version); the mock knows
-	// one per light so the flasher can show "1.0.1 → 1.0.3".
+	// Each light's firmware against the firmware THIS app ships, so an app update re-badges lights.
 	const lights = $derived(
-		isTauri
-			? props.lights
-			: props.lights.map((l) => {
-					if (!(l.mac in mockFirmware)) return l;
-					const v = mockFirmware[l.mac];
-					return {
-						...l,
-						firmwareVersion: v,
-						firmwareMissing: v === null,
-						// outdated against the firmware THIS app ships, so an app update re-badges lights
-						firmwareOutdated: v === null || isNewer(flasher.firmwareVersion, v),
-						firmwareAvailable: flasher.firmwareVersion,
-					};
-				}),
+		props.lights.map((l) => {
+			const d = appState.devices.find((x) => x.mac === l.mac);
+			if (!d) return l;
+			const f = lightFirmware(d);
+			return {
+				...l,
+				firmwareVersion: f.version,
+				firmwareMissing: f.missing,
+				// the engine also flags firmware below its protocol minimum; the mock's flag is only
+				// the demo's starting point, which `mockFirmware` already carries
+				firmwareOutdated: (isTauri && l.firmwareOutdated) || isOutdated(f),
+				firmwareAvailable: flasher.firmwareVersion,
+			};
+		}),
 	);
 
 	// Command handlers: under Tauri they send the real UiCommand; otherwise they
@@ -329,22 +329,52 @@
 		connectTimer = setTimeout(() => (sourceMode = "connected"), 1600);
 	}
 
-	// ── Firmware flasher + app updater (mock drivers) ─────────────────────────
-	// Both run on fake drivers until the real ones land (espflash in the shell; the Tauri
-	// updater plugin). Under Tauri they stay out of the way: a blank board keeps pointing at
-	// the web flasher and no update is offered, so a hardware session never fakes a flash.
+	// ── Firmware flasher + app updater ─────────────────────────────────────────
+	// Real drivers under Tauri (espflash in the shell; the Tauri updater plugin), fake ones in
+	// a plain browser (the design preview and the `?demo=` states). The mock-only effects below
+	// stand in for the engine and the shell, which do this for real under Tauri.
 	const mockOnly = !isTauri;
 	const updater = new MockUpdater({
 		available: demo === "update" || demo === "newerfw",
 		failDownload: fail === "download",
 	});
-	// The flasher ships the firmware released with this app, so it follows an app update.
-	const flasher = new MockFlasher({
-		failOnce: ({ noresponse: "no-response", busy: "port-busy", unplugged: "unplugged" } as const)[
-			fail as "noresponse" | "busy" | "unplugged"
-		] as FlashFailure | undefined,
-		bundled: () => updater.currentVersion,
-	});
+	// The flasher ships the firmware released with this app (the mock's follows a mock update).
+	const flasher: Flasher = isTauri
+		? new TauriFlasher()
+		: new MockFlasher({
+				failOnce: ({ noresponse: "no-response", busy: "port-busy", unplugged: "unplugged" } as const)[
+					fail as "noresponse" | "busy" | "unplugged"
+				] as FlashFailure | undefined,
+				bundled: () => updater.currentVersion,
+			});
+	if (flasher instanceof TauriFlasher) void flasher.init();
+	// A build that bundles no firmware (a dev build without `pnpm firmware:stage`) offers no
+	// flasher: blank boards point at the web flasher, as before the in-app one existed.
+	const flasherReady = $derived(flasher.firmwareVersion !== null);
+
+	/**
+	 * What firmware a light runs. `version` is null when unknown; `known` says whether "unknown"
+	 * means old firmware (it connected this session and reported none: older than 1.1) or just
+	 * not heard from. The mock also models a light left blank by an interrupted install, which
+	 * under Tauri shows up as a blank board instead.
+	 */
+	function lightFirmware(d: Device): { version: string | null; missing: boolean; known: boolean } {
+		if (isTauri) {
+			const version = d.firmwareVersion ?? null;
+			return { version, missing: false, known: version !== null || d.protocolVersion !== null };
+		}
+		const version = d.mac in mockFirmware ? mockFirmware[d.mac] : flasher.firmwareVersion;
+		return { version, missing: version === null, known: true };
+	}
+	function isOutdated(f: ReturnType<typeof lightFirmware>): boolean {
+		const bundled = flasher.firmwareVersion;
+		return bundled !== null && f.known && (f.version === null || isNewer(bundled, f.version));
+	}
+	/** The USB port a light is on, or null when it isn't plugged in. */
+	function portOf(d: Device): string | null {
+		if (isTauri) return health.lightPorts.find((l) => l.mac === d.mac)?.port ?? null;
+		return d.transport === "usb" && !mockUnplugged ? mockPort(d.mac) : null;
+	}
 	let updateOpen = $state(false);
 
 	/**
@@ -362,6 +392,17 @@
 	// `?fail=wronglight`: the label of a different light plugged in while waiting for another.
 	let mockWrong = $state<string | null>(null);
 	let wrongOnce = fail === "wronglight";
+	// Off Tauri there's no shell; `?demo=unflashed` stands in for its health snapshot.
+	const health = $derived(
+		isTauri
+			? sidecar.health
+			: {
+					sidecarDown: demo === "enginedown" ? "exit code 1" : null,
+					usbPortErrors: [],
+					unflashedPorts: mockUnflashed,
+					lightPorts: [],
+				},
+	);
 
 	// What the flasher drawer is working on. Resolved from live state each time, so a wireless
 	// light gains its port the moment it's plugged in.
@@ -375,7 +416,7 @@
 		if (r.kind === "blank")
 			return {
 				kind: "blank",
-				port: mockUnplugged ? null : r.port,
+				port: isTauri ? (health.unflashedPorts.includes(r.port) ? r.port : null) : mockUnplugged ? null : r.port,
 				mac: null,
 				label: null,
 				fromVersion: null,
@@ -383,18 +424,18 @@
 				wrongLight: null,
 				input: null,
 			};
-		const d = devices.find((x) => x.mac === r.mac);
+		const d = appState.devices.find((x) => x.mac === r.mac);
 		if (!d) return null;
-		const input = inputs.find((i) => i.id === d.inputId);
+		const input = appState.inputs.find((i) => i.id === d.inputId);
+		const f = lightFirmware(d);
 		return {
 			kind: "light",
-			// the shell would know the real port; the mock pretends
-			port: d.transport === "usb" && !mockUnplugged ? mockPort(d.mac) : null,
+			port: portOf(d),
 			mac: d.mac,
 			// the board labels a light by the last two octets of its MAC
 			label: d.mac.split(":").slice(-2).join(":"),
-			fromVersion: mockFirmware[d.mac] ?? null,
-			missing: mockFirmware[d.mac] === null,
+			fromVersion: f.version,
+			missing: f.missing,
 			wrongLight: mockWrong,
 			input: input ? { label: input.label, live: input.tally === "live" } : null,
 		};
@@ -413,7 +454,7 @@
 	}
 	// What's on USB for the titlebar entry to choose from: blank boards, then cabled lights.
 	const flashCandidates = $derived<FlashCandidate[]>([
-		...mockUnflashed.map((port) => ({
+		...health.unflashedPorts.map((port) => ({
 			kind: "blank" as const,
 			port,
 			mac: null,
@@ -421,19 +462,21 @@
 			version: null,
 			outdated: false,
 		})),
-		...devices
-			.filter((d) => d.transport === "usb")
-			.map((d) => {
-				const v = d.mac in mockFirmware ? mockFirmware[d.mac] : flasher.firmwareVersion;
-				return {
+		...appState.devices.flatMap((d) => {
+			const port = portOf(d);
+			if (port === null) return [];
+			const f = lightFirmware(d);
+			return [
+				{
 					kind: "light" as const,
-					port: mockPort(d.mac),
+					port,
 					mac: d.mac,
 					label: d.mac.split(":").slice(-2).join(":"),
-					version: v,
-					outdated: v === null || isNewer(flasher.firmwareVersion, v),
-				};
-			}),
+					version: f.version,
+					outdated: isOutdated(f),
+				},
+			];
+		}),
 	]);
 	function pickCandidate(c: FlashCandidate) {
 		openFlasher(c.kind === "blank" || !c.mac ? { kind: "blank", port: c.port } : { kind: "light", mac: c.mac });
@@ -508,7 +551,7 @@
 	// The Settings step's prefill: the light's settings as they are now (null for a blank board).
 	const flashCurrentSettings = $derived.by<LightSettings | null>(() => {
 		const r = flashRequest;
-		const d = r?.kind === "light" ? devices.find((x) => x.mac === r.mac) : undefined;
+		const d = r?.kind === "light" ? appState.devices.find((x) => x.mac === r.mac) : undefined;
 		if (!d) return null;
 		return {
 			transport: d.provisionedMode ?? "notx",
@@ -519,12 +562,12 @@
 			brightness: d.brightness,
 		};
 	});
-	// Mock: apply the Settings step once the light is back, through the same handlers its
-	// Configure pane uses. `?fail=bridge` makes the bridge role not take once (the light
-	// never reports `bridging`); a retry succeeds.
-	let bridgeFailOnce = fail === "bridge";
+	// Apply the Settings step once the light is back, through the same handlers its Configure
+	// pane uses. Mock: it takes a moment, and `?fail=bridge` makes the bridge role not take
+	// once (the light never reports `bridging`); a retry succeeds.
+	let bridgeFailOnce = mockOnly && fail === "bridge";
 	async function applySettings(mac: string, s: LightSettings): Promise<string | null> {
-		await new Promise((r) => setTimeout(r, 1600));
+		if (mockOnly) await new Promise((r) => setTimeout(r, 1600));
 		if (s.inputId === null) unassign(mac);
 		else assign(mac, s.inputId);
 		setBrightness(mac, s.brightness);
@@ -636,16 +679,6 @@
 		const timer = setTimeout(() => (unreachableIp = ip), UNREACHABLE_AFTER_MS);
 		return () => clearTimeout(timer);
 	});
-	// Off Tauri there's no shell; `?demo=unflashed` stands in for its health snapshot.
-	const health = $derived(
-		isTauri
-			? sidecar.health
-			: {
-					sidecarDown: demo === "enginedown" ? "exit code 1" : null,
-					usbPortErrors: [],
-					unflashedPorts: mockUnflashed,
-				},
-	);
 	const openWebFlasher = () =>
 		isTauri ? void openUrl(FLASHER_URL) : void window.open(FLASHER_URL, "_blank");
 	let dismissed = $state<Record<string, string>>({});
@@ -676,7 +709,7 @@
 			list.push({ key: `usb:${e.port}`, level: "warn", message: e.message, dismissible: true });
 		}
 		for (const port of health.unflashedPorts) {
-			if (mockOnly) {
+			if (flasherReady) {
 				// the drawer already says everything while it's working on this board
 				// one install at a time: no other board is offered while one runs
 				if (installRunning) continue;
@@ -771,7 +804,7 @@
 		onupdate={() => (updateOpen = true)}
 		install={installPill}
 		oninstall={() => (flashOpen = true)}
-		onfirmware={() => openFlasher({ kind: "any" })}
+		onfirmware={flasherReady ? () => openFlasher({ kind: "any" }) : undefined}
 	/>
 
 	<SettingsSheet
@@ -828,7 +861,7 @@
 			onprovisionwifi={provisionWifi}
 			onsettransport={setTransport}
 			onsetbridge={setBridge}
-			onupdatefirmware={mockOnly ? (mac) => openFlasher({ kind: "light", mac }) : undefined}
+			onupdatefirmware={flasherReady ? (mac) => openFlasher({ kind: "light", mac }) : undefined}
 			onsetup={setup}
 			oninputclick={devMode ? onInputClick : undefined}
 		/>
