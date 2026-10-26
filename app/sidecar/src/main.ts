@@ -9,11 +9,14 @@
  * thin: there is almost nothing here that the orchestrator's tests don't already cover.
  *
  * stdout is reserved for the NDJSON protocol (`src/ipc.ts`); all logging goes to
- * stderr.
+ * stderr, and is also kept in a rotating diagnostic log file beside the state file
+ * (`src/log-file.ts`) — the release build has no console, so that file is the only
+ * after-the-show record of why a light dropped.
  */
 
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { format } from "node:util";
 
 import { Atem } from "atem-connection";
 
@@ -23,25 +26,15 @@ import { CompositeDeviceServer } from "./composite-device-server.ts";
 import { DeviceServer } from "./device-server.ts";
 import { EspNowTransport } from "./espnow-transport.ts";
 import { IpcBridge } from "./ipc-bridge.ts";
+import { RotatingLogFile } from "./log-file.ts";
+import { macTail } from "./protocol.ts";
 import { ConfigStore } from "./store.ts";
 import { UsbTransport } from "./usb-transport.ts";
 
-// stdout is the NDJSON IPC channel the Tauri shell parses; one stray library log line on
-// it corrupts the stream. `atem-connection`/`threadedClass` log via console.log/info/debug,
-// so route those to stderr before any Atem is constructed (the adapter below, and the
-// scanner). console.warn/error already go to stderr. (ARCHITECTURE "Packaging the Sidecar",
-// warning 2.)
-const logToStderr = (...args: unknown[]): void => {
-  process.stderr.write(`${args.map(String).join(" ")}\n`);
-};
-console.log = logToStderr;
-console.info = logToStderr;
-console.debug = logToStderr;
-
 /**
- * Where the persisted config lives. `TALLYBOT_STATE_FILE` wins; otherwise an
- * XDG-style per-user path. Phase 5 (the Tauri shell) will pass an explicit
- * app-data path, making the default below only matter for standalone runs.
+ * Where the persisted config lives. `TALLYBOT_STATE_FILE` wins (the Tauri shell sets it
+ * to a path in the OS app-config dir); otherwise an XDG-style per-user path, which only
+ * standalone runs use.
  */
 function stateFilePath(): string {
   const override = process.env["TALLYBOT_STATE_FILE"];
@@ -50,7 +43,50 @@ function stateFilePath(): string {
   return join(base, "tallybot", "state.json");
 }
 
+/**
+ * The diagnostic log sits beside the state file, so the packaged app's lands in the same
+ * app-config dir the Tauri shell points `TALLYBOT_STATE_FILE` at (`src-tauri/src/sidecar.rs`).
+ */
+function logFilePath(): string {
+  return join(dirname(stateFilePath()), "sidecar.log");
+}
+
+/**
+ * The busiest steady writer is an ESP-NOW bridge's once-a-second summary (~170 bytes with
+ * the timestamp): ~0.6 MB an hour, ~10 MB over a 16-hour show day. 5 MB × (live + 4 rotated)
+ * keeps about 40 hours of it — a whole day plus the one before — in at most 25 MB.
+ */
+const LOG_ROTATION = { maxBytes: 5 * 1024 * 1024, keep: 4 };
+
+// stdout is the NDJSON IPC channel the Tauri shell parses; one stray library log line on
+// it corrupts the stream. `atem-connection`/`threadedClass` log via console.log/info/debug,
+// so route those to stderr before any Atem is constructed (the adapter below, and the
+// scanner). (ARCHITECTURE "Packaging the Sidecar", warning 2.) Every console method also
+// goes through `diag`, so library warnings and errors land in the log file too.
+const logFile = new RotatingLogFile(logFilePath(), LOG_ROTATION);
+
+/** One diagnostic line: stderr as before, plus the timestamped log file. */
+function diag(line: string): void {
+  process.stderr.write(`${line}\n`);
+  logFile.write(line);
+}
+
+const logToDiag = (...args: unknown[]): void => diag(format(...args));
+console.log = logToDiag;
+console.info = logToDiag;
+console.debug = logToDiag;
+console.warn = logToDiag;
+console.error = logToDiag;
+
+/** Exit once the log file has the last lines — but never let a stuck disk hold the exit up. */
+function exitAfterFlush(code: number): void {
+  const exit = (): never => process.exit(code);
+  setTimeout(exit, 1000).unref();
+  void logFile.flush().then(exit);
+}
+
 async function main(): Promise<void> {
+  diag(`tallybot sidecar starting (pid ${process.pid}); log file ${logFile.path}`);
   const store = await ConfigStore.load(stateFilePath());
 
   // The real Atem's typings are broader than the slice we use; the AtemLike seam is
@@ -75,9 +111,14 @@ async function main(): Promise<void> {
     usb,
   );
 
-  const app = new SidecarApp({ atem, deviceServer, provisioning: deviceServer, espnow, store, ipc });
+  // Every device line, INFO included (a bridge's 1 s summary is what shows a relay outage), goes
+  // to the file only: the UI already gets them as `deviceLog`, and at one a second they would
+  // drown everything else on stderr.
+  deviceServer.on("log", ({ mac, level, text }) => logFile.write(`[device ${macTail(mac)}] ${level}: ${text}`));
+
+  const app = new SidecarApp({ atem, deviceServer, provisioning: deviceServer, espnow, store, ipc, log: diag });
   await app.start();
-  process.stderr.write("tallybot sidecar started\n");
+  diag("tallybot sidecar started");
 
   let shuttingDown = false;
   const shutdown = (): void => {
@@ -85,8 +126,11 @@ async function main(): Promise<void> {
     shuttingDown = true;
     void app
       .stop()
-      .catch((err: unknown) => process.stderr.write(`shutdown error: ${(err as Error).message}\n`))
-      .finally(() => process.exit(0));
+      .catch((err: unknown) => diag(`shutdown error: ${(err as Error).message}`))
+      .finally(() => {
+        diag("tallybot sidecar stopped");
+        exitAfterFlush(0);
+      });
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
@@ -97,6 +141,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-  process.stderr.write(`fatal: ${(err as Error).stack ?? String(err)}\n`);
-  process.exit(1);
+  diag(`fatal: ${(err as Error).stack ?? String(err)}`);
+  exitAfterFlush(1);
 });
