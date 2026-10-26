@@ -118,6 +118,18 @@ test("an inbound LOG frame becomes a log event", () => {
   assert.deepEqual(logs, [{ mac: MAC, level: "error", text: "boom" }]);
 });
 
+test("an inbound FIRMWARE frame becomes a firmware event for that device", () => {
+  const bridge = new FakeBridge();
+  const usb = new UsbTransport(bridge);
+  const reported: unknown[] = [];
+  usb.on("firmware", (f) => reported.push(f));
+  bridge.feed({ type: "usbDeviceConnected", mac: MAC, version: 3 });
+
+  const payload = Uint8Array.of(0x07, ...new TextEncoder().encode("1.1.0"));
+  bridge.feed({ type: "usbFrame", mac: MAC, payloadHex: toHex(payload) });
+  assert.deepEqual(reported, [{ mac: MAC, version: "1.1.0" }]);
+});
+
 // ── v1.3 ESP-NOW ─────────────────────────────────────────────────────────────────
 
 test("transportModeValue maps espnow to the ESPNOW wire byte", () => {

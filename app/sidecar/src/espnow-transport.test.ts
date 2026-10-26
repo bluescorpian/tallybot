@@ -190,6 +190,20 @@ test("a HEARTBEAT from an unknown light is ignored (HELLO must come first)", () 
   assert.deepEqual(espnow.connectedMacs(), []);
 });
 
+test("a relayed FIRMWARE is reported for a light whose HELLO was seen, and ignored before it", () => {
+  const usb = new FakeUsb();
+  const espnow = new EspNowTransport(usb.asUsb());
+  const reported: Array<{ mac: string; version: string }> = [];
+  espnow.on("firmware", (i) => reported.push(i));
+  const firmware = Uint8Array.of(0x07, ...new TextEncoder().encode("1.1.0"));
+
+  usb.relay(BRIDGE, LIGHT, firmware); // unknown light: ignored
+  assert.deepEqual(reported, []);
+  usb.relay(BRIDGE, LIGHT, helloInner(3));
+  usb.relay(BRIDGE, LIGHT, firmware);
+  assert.deepEqual(reported, [{ mac: LIGHT, version: "1.1.0" }]);
+});
+
 test("orphan HEARTBEATs warn once per MAC, and a HELLO re-arms the warning", () => {
   const usb = new FakeUsb();
   const espnow = new EspNowTransport(usb.asUsb());

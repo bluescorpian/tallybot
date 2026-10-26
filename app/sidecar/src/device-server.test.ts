@@ -119,6 +119,27 @@ test("a HELLO below the minimum version also fires deviceUnsupported", async () 
   }
 });
 
+test("FIRMWARE is reported against the MAC its socket's HELLO identified, and ignored before one", async () => {
+  const { server } = await startServer();
+  const socket = connect(server);
+  const firmwareFrame = frame(Uint8Array.of(0x07, ...new TextEncoder().encode("1.1.0")));
+  try {
+    const reported: Array<{ mac: string; version: string }> = [];
+    server.on("firmware", (info) => reported.push(info));
+    const connected = once(server, "deviceConnected");
+    socket.write(firmwareFrame); // no HELLO yet: no MAC to attribute it to
+    socket.write(helloFrame("aa:bb:cc:dd:ee:ff", 3));
+    await connected;
+    const firmware = once(server, "firmware");
+    socket.write(firmwareFrame);
+    await firmware;
+    assert.deepEqual(reported, [{ mac: "aa:bb:cc:dd:ee:ff", version: "1.1.0" }]);
+  } finally {
+    socket.destroy();
+    await server.stop();
+  }
+});
+
 // ── Routing outgoing commands ────────────────────────────────────────────────
 
 test("sendColor delivers a SET_COLOR to the addressed device", async () => {

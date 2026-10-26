@@ -123,3 +123,13 @@ test("log lines are forwarded from every member, not only USB", () => {
   usb.emit("log", fromUsb);
   assert.deepEqual(logs, [fromTcp, fromUsb]);
 });
+
+test("firmware is forwarded from any member, even one that doesn't own the device", () => {
+  const { usb, tcp, composite } = setup();
+  const reported: unknown[] = [];
+  composite.on("firmware", (i) => reported.push(i));
+  usb.connect(MAC);
+  tcp.connect(MAC); // USB owns the device; TCP is the suppressed duplicate
+  tcp.emit("firmware", { mac: MAC, version: "1.1.0" });
+  assert.deepEqual(reported, [{ mac: MAC, version: "1.1.0" }]);
+});

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import { type AddressInfo, type Server, type Socket, createServer } from "node:net";
 import { createSocket } from "node:dgram";
+import { readFileSync } from "node:fs";
 
 // The server side of the protocol — what a real sidecar would use to read HELLO
 // and HEARTBEAT and to encode the commands it sends back.
@@ -56,6 +57,35 @@ test("on connect the client sends a HELLO carrying its MAC and version", async (
     assert.deepEqual(await helloReceived, { kind: "hello", version: 1, mac });
   } finally {
     client.close();
+    server.close();
+  }
+});
+
+test("after HELLO the client reports this checkout's firmware/VERSION, or nothing when firmwareVersion is null", async () => {
+  const { server, port } = await startServer();
+  const expected = readFileSync(new URL("../../firmware/VERSION", import.meta.url), "utf8").trim();
+  const sessions: DeviceMessage[][] = [];
+  server.on("connection", (socket) => {
+    const messages: DeviceMessage[] = [];
+    sessions.push(messages);
+    onDeviceMessages(socket, (m) => messages.push(m));
+  });
+  const current = new TallyClient({ mac: "aa:bb:cc:dd:ee:01", heartbeatIntervalMs: 60_000 });
+  const legacy = new TallyClient({ mac: "aa:bb:cc:dd:ee:02", firmwareVersion: null, heartbeatIntervalMs: 60_000 });
+
+  try {
+    current.connect("127.0.0.1", port);
+    await once(current, "connected");
+    await delay(50);
+    legacy.connect("127.0.0.1", port);
+    await once(legacy, "connected");
+    await delay(50);
+    assert.deepEqual(sessions[0]!.map((m) => m.kind), ["hello", "firmware"]);
+    assert.deepEqual(sessions[0]![1], { kind: "firmware", version: expected });
+    assert.deepEqual(sessions[1]!.map((m) => m.kind), ["hello"]);
+  } finally {
+    current.close();
+    legacy.close();
     server.close();
   }
 });

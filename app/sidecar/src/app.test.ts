@@ -489,6 +489,22 @@ test("setSource persists the IP and connects the ATEM", async () => {
   assert.deepEqual(atem.connects, ["10.0.0.9"]);
 });
 
+test("Device.firmwareVersion is null until the device reports one, and survives a reconnect", async () => {
+  const { app, server, ipc } = setup();
+  await app.start();
+  const firmwareOf = () => ipc.lastState()!.state.devices.find((d) => d.mac === MAC)!.firmwareVersion;
+
+  server.connectDevice(MAC);
+  assert.equal(firmwareOf(), null, "pre-1.1 firmware never reports one");
+
+  server.emit("firmware", { mac: MAC, version: "1.1.0" });
+  assert.equal(firmwareOf(), "1.1.0");
+
+  server.disconnectDevice(MAC);
+  server.connectDevice(MAC); // its FIRMWARE hasn't arrived yet on the new link
+  assert.equal(firmwareOf(), "1.1.0");
+});
+
 test("an unsupported-firmware device raises a warning notice", async () => {
   const { app, server, ipc } = setup();
   await app.start();

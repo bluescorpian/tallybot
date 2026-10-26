@@ -302,6 +302,12 @@ test("decodeDeviceMessage rejects malformed payloads", () => {
   assert.throws(() => decodeDeviceMessage(Uint8Array.of(0x7f)), RangeError); // unknown type
 });
 
+test("decodeDeviceMessage reads FIRMWARE (0x07) as the device's UTF-8 version, and rejects one with no version", () => {
+  const payload = Uint8Array.of(0x07, ...new TextEncoder().encode("1.1.0"));
+  assert.deepEqual(decodeDeviceMessage(payload), { kind: "firmware", version: "1.1.0" });
+  assert.throws(() => decodeDeviceMessage(Uint8Array.of(0x07)), RangeError);
+});
+
 // ── MAC helpers ────────────────────────────────────────────────────────────────
 
 test("formatMac renders six bytes as a lower-case colon MAC", () => {
