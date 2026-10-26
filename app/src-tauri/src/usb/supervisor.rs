@@ -65,9 +65,13 @@ pub fn start(app: AppHandle) {
                 {
                     continue;
                 }
+                // Tracked before the open, so a flasher claiming the port in between waits for the
+                // comms thread (which sees the claim and lets go) instead of racing this open.
+                tracked.lock().unwrap().insert(path.clone());
                 let opened = match port::open(&path) {
                     Ok(p) => p,
                     Err(e) => {
+                        tracked.lock().unwrap().remove(&path);
                         let message = open_error_message(&path, &e);
                         match failures.fail(&path, &message) {
                             FailureAction::Log => eprintln!("[usb] open {path} failed: {e}"),
@@ -81,7 +85,6 @@ pub fn start(app: AppHandle) {
                 };
                 failures.clear(&path);
                 health::set_usb_port_error(&app, &path, None);
-                tracked.lock().unwrap().insert(path.clone());
                 let app = app.clone();
                 let tracked = tracked.clone();
                 let parked = parked.clone();

@@ -39,8 +39,7 @@
     ],
     "resources": {
       "resources/firmware/": "firmware/"
-    },
-    "createUpdaterArtifacts": true
+    }
   },
   "plugins": {
     "updater": {

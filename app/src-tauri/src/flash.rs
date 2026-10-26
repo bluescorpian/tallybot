@@ -100,6 +100,48 @@ pub struct FlashState {
     cancel: Arc<AtomicBool>,
 }
 
+/// True while a flash is running (restarting the app now would leave the board half-written).
+pub fn is_running(app: &AppHandle) -> bool {
+    app.state::<FlashState>().running.load(Ordering::SeqCst)
+}
+
+/// Ends a flash job however its thread ends, a panic included: hands the port back and clears
+/// `running`, so neither the light nor the flasher stays locked out until the app restarts.
+struct Job {
+    app: AppHandle,
+    port: String,
+    released: bool,
+    reported: bool,
+}
+
+impl Job {
+    fn release_port(&mut self) {
+        if !self.released {
+            self.released = true;
+            usb::release(&self.app, &self.port);
+        }
+    }
+
+    fn report(&mut self, event: FlashEvent) {
+        self.reported = true;
+        let _ = self.app.emit("flash", event);
+    }
+}
+
+impl Drop for Job {
+    fn drop(&mut self) {
+        self.release_port();
+        if !self.reported {
+            self.report(FlashEvent::Failed {
+                stage: Stage::Connect,
+                failure: Failure::Error,
+                detail: "The install stopped unexpectedly".into(),
+            });
+        }
+        self.app.state::<FlashState>().running.store(false, Ordering::SeqCst);
+    }
+}
+
 /// Start flashing the board on `port`. `mac` is the light the user picked, if any: the flash
 /// stops before writing anything when the board on the port turns out to be another one.
 /// Progress arrives as `"flash"` events; this returns once the job has started.
@@ -113,8 +155,9 @@ pub fn flash_start(app: AppHandle, port: String, mac: Option<String>) -> Result<
     let cancel = state.cancel.clone();
     let job_app = app.clone();
     thread::spawn(move || {
+        let mut job = Job { app: job_app.clone(), port: port.clone(), released: false, reported: false };
         let outcome = run(&job_app, &port, mac.as_deref(), &cancel);
-        usb::release(&job_app, &port);
+        job.release_port();
         let event = match outcome {
             Ok(mac) => match wait_for_rejoin(&job_app, &mac) {
                 true => FlashEvent::Done { mac },
@@ -126,15 +169,14 @@ pub fn flash_start(app: AppHandle, port: String, mac: Option<String>) -> Result<
             },
             Err(event) => event,
         };
-        let _ = job_app.emit("flash", event);
-        job_app.state::<FlashState>().running.store(false, Ordering::SeqCst);
+        job.report(event);
     });
     Ok(())
 }
 
-/// Ask the running flash to stop. Before the write starts nothing has changed; during it the
-/// board is left without working firmware (flashing again recovers it); after it, the new
-/// firmware is already in place and the stop is moot.
+/// Ask the running flash to stop. Before the write starts nothing has changed (the board is reset
+/// back into its old firmware); during it the board is left without working firmware (flashing
+/// again recovers it); after it, the new firmware is already in place and the stop is moot.
 #[tauri::command]
 pub fn flash_cancel(app: AppHandle) {
     app.state::<FlashState>().cancel.store(true, Ordering::SeqCst);
@@ -154,42 +196,51 @@ fn run(app: &AppHandle, port: &str, expected: Option<&str>, cancel: &AtomicBool)
     }
 
     let mut flasher = connect(port).map_err(|(failure, detail)| failed(Stage::Connect, failure, detail))?;
-    let mac = flasher
-        .device_info()
-        .ok()
-        .and_then(|info| info.mac_address)
-        .map(|m| m.to_lowercase())
-        .ok_or_else(|| failed(Stage::Connect, Failure::Error, "The chip didn't report its MAC address".into()))?;
+    // Connecting put the chip in its ROM loader. Every way out from here resets it, or the board
+    // sits there dark (and later reads as unflashed) until someone power-cycles it.
+    let Some(mac) = flasher.device_info().ok().and_then(|info| info.mac_address).map(|m| m.to_lowercase()) else {
+        return give_up(&mut flasher, failed(Stage::Connect, Failure::Error, "The chip didn't report its MAC address".into()));
+    };
     if let Some(want) = expected {
         if !want.eq_ignore_ascii_case(&mac) {
-            return Err(failed(Stage::Connect, Failure::WrongLight, format!("The board on {port} is {mac}")));
+            return give_up(&mut flasher, failed(Stage::Connect, Failure::WrongLight, format!("The board on {port} is {mac}")));
         }
     }
     if cancel.load(Ordering::SeqCst) {
-        return Err(FlashEvent::Cancelled { stage: Stage::Connect });
+        return give_up(&mut flasher, FlashEvent::Cancelled { stage: Stage::Connect });
     }
 
     let segments = segments_around_nvs(&image);
     let mut progress = Progress::new(app, &segments, cancel);
-    // espflash has no cancel hook, so a stop unwinds out of its progress callback (`Progress`);
-    // dropping the flasher closes the port. The board is left half-written either way.
+    // espflash has no cancel hook, so a stop unwinds out of its progress callback (`Progress`).
+    // Then, or on an error, reset the chip out of the loader: a stop before the first write boots
+    // the old firmware again; later the board is left half-written and stays blank.
     let result = panic::catch_unwind(AssertUnwindSafe(|| flasher.write_bins_to_flash(&segments, &mut progress)));
     let stage = progress.stage;
-    match result {
-        Err(_) if cancel.load(Ordering::SeqCst) => return Err(FlashEvent::Cancelled { stage }),
-        Err(_) => return Err(failed(stage, Failure::Error, "The flash stopped unexpectedly".into())),
+    let event = match result {
+        Ok(Ok(())) => None,
+        Err(_) if cancel.load(Ordering::SeqCst) => Some(FlashEvent::Cancelled { stage }),
+        Err(_) => Some(failed(stage, Failure::Error, "The flash stopped unexpectedly".into())),
         Ok(Err(e)) => {
-            drop(flasher);
             let failure = if still_present(port) { Failure::Error } else { Failure::Unplugged };
-            return Err(failed(stage, failure, format!("espflash: {e}")));
+            Some(failed(stage, failure, format!("espflash: {e}")))
         }
-        Ok(Ok(())) => {}
+    };
+    if let Some(event) = event {
+        let _ = flasher.connection().reset();
+        return Err(event);
     }
     // `write_bins_to_flash` finishes with the hard reset (ResetAfterOperation::HardReset).
     emit(Stage::Restart, 0.0);
     drop(flasher);
     emit(Stage::Rejoin, 0.0);
     Ok(mac)
+}
+
+/// Reset the chip out of its ROM loader (back into whatever firmware it has) and fail with `event`.
+fn give_up(flasher: &mut Flasher, event: FlashEvent) -> Result<String, FlashEvent> {
+    let _ = flasher.connection().reset();
+    Err(event)
 }
 
 fn connect(port: &str) -> Result<Flasher, (Failure, String)> {
@@ -217,8 +268,12 @@ fn connect(port: &str) -> Result<Flasher, (Failure, String)> {
         ResetBeforeOperation::DefaultReset,
         115_200,
     );
-    Flasher::connect(connection, true, true, false, Some(Chip::Esp32c3), None)
-        .map_err(|e| (Failure::NoResponse, format!("espflash: {e}")))
+    Flasher::try_connect(connection, true, true, false, Some(Chip::Esp32c3), None).map_err(|failed| {
+        // The reset sequence may have left the chip in its ROM loader: reset it back out.
+        let (e, mut connection) = *failed;
+        let _ = connection.reset();
+        (Failure::NoResponse, format!("espflash: {e}"))
+    })
 }
 
 /// Read the bundled image and check it against its manifest.

@@ -111,6 +111,11 @@ pub async fn update_download(app: AppHandle) -> Result<(), String> {
 /// TallyBot); on Linux the AppImage is replaced in place and the app restarts into it.
 #[tauri::command]
 pub fn update_install(app: AppHandle) -> Result<(), String> {
+    // Restarting mid-flash would leave that board half-written. The UI holds Restart back while
+    // one runs; this is the backstop.
+    if crate::flash::is_running(&app) {
+        return Err("A light's firmware is being installed. Restart once it's finished.".into());
+    }
     let state = app.state::<UpdaterState>();
     let update = state.update.lock().unwrap().clone().ok_or("No update to install")?;
     let bytes = state.bytes.lock().unwrap().take().ok_or("The update hasn't been downloaded")?;

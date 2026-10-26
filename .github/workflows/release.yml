@@ -72,9 +72,11 @@ jobs:
           pnpm -C app install --frozen-lockfile
       # beforeBuildCommand builds the frontend and the sidecar binary; bundling makes both
       # the NSIS setup .exe (per-user install, no admin needed) and an .msi.
+      # tauri.release.conf.json adds the signed updater artifacts (release builds only, so a
+      # local `tauri build` doesn't need the private key).
       - name: Build
-        run: pnpm -C app tauri build
-        # Signs the installers for the in-app updater (createUpdaterArtifacts): the app trusts
+        run: pnpm -C app tauri build --config src-tauri/tauri.release.conf.json
+        # Signs the installers for the in-app updater: the app trusts
         # only the public key in tauri.conf.json. The key has no password.
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -95,6 +97,8 @@ jobs:
           $portable = New-Item -ItemType Directory -Force portable
           Copy-Item "$rel\tallybot.exe" "$portable\TallyBot.exe"
           Copy-Item 'app\src-tauri\binaries\tallybot-sidecar-x86_64-pc-windows-msvc.exe' "$portable\tallybot-sidecar.exe"
+          # The bundled firmware: a bare exe's resource dir is its own folder.
+          Copy-Item -Recurse 'app\src-tauri\resources\firmware' "$portable\firmware"
           Compress-Archive -Path "$portable\*" -DestinationPath "dist\TallyBot-$v-windows-x64-portable.zip"
       - uses: actions/upload-artifact@v4
         with:
@@ -138,8 +142,8 @@ jobs:
           pnpm -C app/sidecar install --frozen-lockfile
           pnpm -C app install --frozen-lockfile
       - name: Build
-        run: pnpm -C app tauri build
-        # Signs the installers for the in-app updater (createUpdaterArtifacts): the app trusts
+        run: pnpm -C app tauri build --config src-tauri/tauri.release.conf.json
+        # Signs the installers for the in-app updater: the app trusts
         # only the public key in tauri.conf.json. The key has no password.
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
