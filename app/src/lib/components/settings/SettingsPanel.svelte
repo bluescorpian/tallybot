@@ -40,7 +40,7 @@
 	import { Input } from "$lib/components/ui/input";
 	import { Switch } from "$lib/components/ui/switch";
 	import { Badge } from "$lib/components/ui/badge";
-	import type { Updater } from "$lib/updater/updater";
+	import { downloadProgress, type Updater } from "$lib/updater/updater";
 
 	// Host hooks:
 	//  • onsave  — fired after Save commits a *changed* IP, so a host can mirror the
@@ -472,7 +472,7 @@
 											? ` · checked ${checkedAt}`
 											: ""}
 									{:else if us.status === "downloading"}
-										Downloading {us.update.version}… {Math.round((us.received / us.update.sizeBytes) * 100)}%
+										Downloading {us.update.version}… {Math.round(downloadProgress(us.received, us.update) * 100)}%
 									{:else if us.status === "ready"}
 										{us.update.version} is downloaded, ready to install.
 									{:else if us.status === "error"}

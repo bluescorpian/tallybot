@@ -13,7 +13,20 @@ export interface AppUpdate {
 	date: string;
 	/** Short, user-facing release notes. */
 	notes: string[];
-	sizeBytes: number;
+	/** Download size; null until the download starts (latest.json doesn't carry it). */
+	sizeBytes: number | null;
+	/**
+	 * Whether this install can update itself. Installer builds (Windows setup/MSI, AppImage) can;
+	 * the portable zip, .deb and .rpm get the release page instead (`releaseUrl`).
+	 */
+	installable: boolean;
+	/** The release's GitHub page. */
+	releaseUrl: string;
+}
+
+/** Download progress 0–1, or 0 while the size isn't known yet. */
+export function downloadProgress(received: number, update: AppUpdate): number {
+	return update.sizeBytes ? Math.min(1, received / update.sizeBytes) : 0;
 }
 
 export type UpdaterState =
@@ -23,7 +36,7 @@ export type UpdaterState =
 	| { status: "current"; justUpdated?: string }
 	| { status: "available"; update: AppUpdate }
 	| { status: "downloading"; update: AppUpdate; received: number }
-	/** Downloaded: installs on "Restart now", or on the next launch. */
+	/** Downloaded: installs on "Restart now". Until then the titlebar pill keeps reminding. */
 	| { status: "ready"; update: AppUpdate }
 	| { status: "restarting"; update: AppUpdate }
 	| { status: "error"; message: string; update: AppUpdate | null };

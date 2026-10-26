@@ -39,6 +39,18 @@
     ],
     "resources": {
       "resources/firmware/": "firmware/"
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEY5NDgyQjE0NEI1NzdDNDQKUldSRWZGZExGQ3RJK1ZlMG5CTndDaUVPUW55RFdXV0JhZlN5WE0wSVQ3WURwT3h4Ti81Z0dobEUK",
+      "endpoints": [
+        "https://github.com/bluescorpian/tallybot/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

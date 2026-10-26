@@ -2,8 +2,9 @@ name: Release
 
 # Pushing a `vX.Y.Z` tag builds the firmware image, then the Windows and Linux installers
 # with that image bundled (the in-app flasher installs only the firmware released with the
-# app), then opens a DRAFT GitHub Release with them attached. Publishing that draft (by hand,
-# after a look) triggers pages.yml, which ships the firmware to the web flasher.
+# app), then opens a DRAFT GitHub Release with them attached, plus the updater signatures.
+# Publishing that draft (by hand, after a look) triggers pages.yml, which ships the firmware
+# to the web flasher, and update-manifest.yml, which offers the release to installed apps.
 #
 # A manual run (Actions → Release → Run workflow) builds everything as workflow artifacts
 # without creating a release, to check the pipeline before tagging.
@@ -73,6 +74,11 @@ jobs:
       # the NSIS setup .exe (per-user install, no admin needed) and an .msi.
       - name: Build
         run: pnpm -C app tauri build
+        # Signs the installers for the in-app updater (createUpdaterArtifacts): the app trusts
+        # only the public key in tauri.conf.json. The key has no password.
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
       - name: Collect installers + portable zip
         shell: pwsh
         run: |
@@ -81,6 +87,9 @@ jobs:
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item "$rel\bundle\nsis\*.exe" "dist\TallyBot-$v-windows-x64-setup.exe"
           Copy-Item "$rel\bundle\msi\*.msi" "dist\TallyBot-$v-windows-x64.msi"
+          # The updater signatures; update-manifest.yml puts them in latest.json on publish.
+          Copy-Item "$rel\bundle\nsis\*.exe.sig" "dist\TallyBot-$v-windows-x64-setup.exe.sig"
+          Copy-Item "$rel\bundle\msi\*.msi.sig" "dist\TallyBot-$v-windows-x64.msi.sig"
           # Portable build for PCs where installing isn't allowed: the exe plus its sidecar,
           # which the runtime resolves next to the exe without the target-triple suffix.
           $portable = New-Item -ItemType Directory -Force portable
@@ -130,12 +139,18 @@ jobs:
           pnpm -C app install --frozen-lockfile
       - name: Build
         run: pnpm -C app tauri build
+        # Signs the installers for the in-app updater (createUpdaterArtifacts): the app trusts
+        # only the public key in tauri.conf.json. The key has no password.
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
       - name: Collect packages
         run: |
           v=${{ needs.version.outputs.version }}
           b=app/src-tauri/target/release/bundle
           mkdir dist
           cp $b/appimage/*.AppImage "dist/TallyBot-$v-linux-x86_64.AppImage"
+          cp $b/appimage/*.AppImage.sig "dist/TallyBot-$v-linux-x86_64.AppImage.sig"
           cp $b/deb/*.deb "dist/TallyBot-$v-linux-amd64.deb"
           cp $b/rpm/*.rpm "dist/TallyBot-$v-linux-x86_64.rpm"
       - uses: actions/upload-artifact@v4

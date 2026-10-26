@@ -13,7 +13,10 @@ const MOCK_UPDATE: AppUpdate = {
 		"Brightness changes apply instantly over ESP-NOW",
 	],
 	sizeBytes: 38_400_000,
+	installable: true,
+	releaseUrl: "https://github.com/bluescorpian/tallybot/releases/tag/v1.1.0",
 };
+const SIZE = 38_400_000;
 
 export class MockUpdater implements Updater {
 	currentVersion = $state(APP_VERSION);
@@ -59,13 +62,13 @@ export class MockUpdater implements Updater {
 		let received = 0;
 		this.state = { status: "downloading", update, received };
 		this.#timer = setInterval(() => {
-			received = Math.min(update.sizeBytes, received + update.sizeBytes / 40);
-			if (fail && received > update.sizeBytes * 0.55) {
+			received = Math.min(SIZE, received + SIZE / 40);
+			if (fail && received > SIZE * 0.55) {
 				clearInterval(this.#timer);
 				this.state = { status: "error", message: "The download was interrupted. Check this PC's internet connection and try again.", update };
 				return;
 			}
-			if (received >= update.sizeBytes) {
+			if (received >= SIZE) {
 				clearInterval(this.#timer);
 				this.state = { status: "ready", update };
 			} else {

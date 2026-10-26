@@ -32,7 +32,8 @@
 	import { TauriFlasher } from "$lib/flasher/tauri.svelte";
 	import { leavesBlank, type FlashFailure, type Flasher } from "$lib/flasher/flasher";
 	import { MockUpdater } from "$lib/mock/updater.svelte";
-	import { isNewer, newerFirmwareUpdate } from "$lib/updater/updater";
+	import { TauriUpdater } from "$lib/updater/tauri.svelte";
+	import { downloadProgress, isNewer, newerFirmwareUpdate, type Updater } from "$lib/updater/updater";
 	import LoaderCircle from "@lucide/svelte/icons/loader-circle";
 
 	// ── Live wiring (Tauri) ────────────────────────────────────────────────────
@@ -334,10 +335,13 @@
 	// a plain browser (the design preview and the `?demo=` states). The mock-only effects below
 	// stand in for the engine and the shell, which do this for real under Tauri.
 	const mockOnly = !isTauri;
-	const updater = new MockUpdater({
-		available: demo === "update" || demo === "newerfw",
-		failDownload: fail === "download",
-	});
+	const updater: Updater = isTauri
+		? new TauriUpdater()
+		: new MockUpdater({
+				available: demo === "update" || demo === "newerfw",
+				failDownload: fail === "download",
+			});
+	if (updater instanceof TauriUpdater) void updater.init();
 	// The flasher ships the firmware released with this app (the mock's follows a mock update).
 	const flasher: Flasher = isTauri
 		? new TauriFlasher()
@@ -594,9 +598,10 @@
 	// Titlebar pill: only once there's something to act on, and never as a popup.
 	const updatePill = $derived.by<UpdatePill | null>(() => {
 		const s = updater.state;
-		if (!mockOnly) return null;
-		if (s.status === "available" || s.status === "error") return { kind: "available", version: s.update?.version ?? "" };
-		if (s.status === "downloading") return { kind: "downloading", progress: s.received / s.update.sizeBytes };
+		// A failed check (offline at launch) stays quiet: it's only news once an update is known.
+		if (s.status === "available") return { kind: "available", version: s.update.version };
+		if (s.status === "error" && s.update) return { kind: "available", version: s.update.version };
+		if (s.status === "downloading") return { kind: "downloading", progress: downloadProgress(s.received, s.update) };
 		if (s.status === "ready") return { kind: "ready" };
 		return null;
 	});
@@ -815,7 +820,7 @@
 		autostart={isTauri ? autostart : undefined}
 		onscan={isTauri ? () => sidecar.scanSources() : undefined}
 		scanResult={isTauri ? sidecar.scan : null}
-		updater={mockOnly ? updater : undefined}
+		{updater}
 		restartBlocked={installBlocked}
 		onviewupdate={() => {
 			settingsOpen = false;

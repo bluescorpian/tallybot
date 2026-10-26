@@ -16,11 +16,12 @@
 //! sidecar over the very stdin/stdout pipe used here — see `usb/mod.rs`.
 //!
 //! The `flash` module installs the firmware bundled with this app onto a board on USB,
-//! borrowing its port from the `usb` module for the duration.
+//! borrowing its port from the `usb` module for the duration; `updater` updates the app itself.
 
 mod flash;
 mod health;
 mod sidecar;
+mod updater;
 mod usb;
 
 use tauri::{Manager, RunEvent};
@@ -28,6 +29,7 @@ use tauri::{Manager, RunEvent};
 use flash::FlashState;
 use health::HealthState;
 use sidecar::SidecarState;
+use updater::UpdaterState;
 use usb::UsbState;
 
 /// Forward one already-serialized NDJSON `UiCommand` line to the sidecar's stdin.
@@ -45,7 +47,7 @@ fn restart_sidecar(app: tauri::AppHandle) {
 
 /// Kill the sidecar (and stop respawning it), and signal the USB threads to wind down.
 /// Called on app exit so no orphan process or open serial port survives.
-fn shutdown(app: &tauri::AppHandle) {
+pub(crate) fn shutdown(app: &tauri::AppHandle) {
     if let Some(usb) = app.try_state::<UsbState>() {
         usb.stop.store(true, std::sync::atomic::Ordering::Relaxed);
     }
@@ -58,10 +60,12 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_autostart::Builder::new().build()) // Settings → "Launch on system startup"
+        .plugin(tauri_plugin_updater::Builder::new().build()) // updater.rs; config in tauri.conf.json
         .manage(SidecarState::new())
         .manage(UsbState::new())
         .manage(HealthState::new())
         .manage(FlashState::default())
+        .manage(UpdaterState::default())
         .setup(|app| {
             sidecar::start(app.handle().clone()); // spawn + respawn-on-crash supervisor
             usb::start(app.handle().clone()); // poll for ESP32-C3 serial ports + relay
@@ -74,6 +78,9 @@ pub fn run() {
             flash::firmware_info,
             flash::flash_start,
             flash::flash_cancel,
+            updater::update_check,
+            updater::update_download,
+            updater::update_install,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

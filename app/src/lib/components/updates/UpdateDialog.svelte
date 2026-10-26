@@ -6,13 +6,16 @@
 	//   Download   — harmless mid-show (the board and lights carry on); the dialog can be
 	//                closed and the download continues, with the titlebar pill showing progress.
 	//   Restart    — installs the update, which restarts TallyBot and its engine, so every
-	//                light drops for a few seconds. "Later" installs it on the next launch.
+	//                light drops for a few seconds. "Later" keeps the download; the titlebar
+	//                pill stays until it's installed.
+	// An install that can't update itself (portable zip, .deb, .rpm) gets the release page instead.
 	// A centred dialog rather than a drawer: this is a short decision, not a task you watch
 	// play out on the board.
 	import * as Dialog from "$lib/components/ui/dialog";
 	import { Button } from "$lib/components/ui/button";
 	import { Progress } from "$lib/components/ui/progress";
-	import type { Updater } from "$lib/updater/updater";
+	import { downloadProgress, type Updater } from "$lib/updater/updater";
+	import { openUrl } from "@tauri-apps/plugin-opener";
 	import CircleArrowUp from "@lucide/svelte/icons/circle-arrow-up";
 	import CircleCheck from "@lucide/svelte/icons/circle-check";
 	import CircleX from "@lucide/svelte/icons/circle-x";
@@ -35,9 +38,7 @@
 	const st = $derived(updater.state);
 	const update = $derived("update" in st ? st.update : null);
 	const mb = (bytes: number) => (bytes / 1_000_000).toFixed(1);
-	const pct = $derived(
-		st.status === "downloading" ? Math.round((st.received / st.update.sizeBytes) * 100) : 0,
-	);
+	const pct = $derived(st.status === "downloading" ? Math.round(downloadProgress(st.received, st.update) * 100) : 0);
 	const date = $derived(
 		update
 			? new Date(update.date).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" })
@@ -124,7 +125,9 @@
 						<Progress value={pct} class="bg-foreground/10 h-1.5" />
 						<span class="dl-meta">
 							<span>Downloading…</span>
-							<span class="font-mono">{mb(st.received)} / {mb(update.sizeBytes)} MB</span>
+							<span class="font-mono"
+								>{mb(st.received)}{#if update.sizeBytes} / {mb(update.sizeBytes)}{/if} MB</span
+							>
 						</span>
 					</div>
 				{:else if st.status === "error"}
@@ -137,14 +140,20 @@
 							restarts. Do it between services, not during one.
 						</p>
 					</div>
-					<p class="reassure">Choose <strong>Later</strong> and it installs the next time TallyBot starts.</p>
 				{/if}
 			</div>
 
 			<div class="foot">
 				{#if st.status === "available"}
 					<Button variant="ghost" onclick={() => (open = false)}>Not now</Button>
-					<Button onclick={() => updater.download()}>Download · {mb(update.sizeBytes)} MB</Button>
+					{#if update.installable}
+						<Button onclick={() => updater.download()}
+							>Download{#if update.sizeBytes} · {mb(update.sizeBytes)} MB{/if}</Button
+						>
+					{:else}
+						<!-- this install can't replace itself: the new build comes from the release page -->
+						<Button onclick={() => void openUrl(update.releaseUrl)}>Get it from GitHub</Button>
+					{/if}
 				{:else if st.status === "downloading"}
 					<Button variant="ghost" onclick={() => (open = false)}>Hide</Button>
 				{:else if st.status === "error"}
@@ -217,15 +226,6 @@
 	}
 	.fw :global(svg) {
 		margin-top: 1px;
-	}
-	.reassure {
-		font-size: 0.8rem;
-		line-height: 1.45;
-		color: var(--muted-foreground);
-	}
-	.reassure strong {
-		color: var(--foreground);
-		font-weight: 600;
 	}
 	.dl {
 		display: flex;
