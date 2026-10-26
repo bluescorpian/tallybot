@@ -20,6 +20,7 @@
 	import Usb from "@lucide/svelte/icons/usb";
 	import Check from "@lucide/svelte/icons/check";
 	import Network from "@lucide/svelte/icons/network";
+	import { TRANSPORT_MODES, BRIDGE_LABEL, BRIDGE_DESC } from "./transportModes";
 
 	// Devices reporting this protocol version (HELLO) understand the v1.3 ESP-NOW
 	// affordances (SET_TRANSPORT 2, SET_BRIDGE). Below it, the ESP-NOW row stays
@@ -70,29 +71,13 @@
 	// navigate to their own setup page; others commit inline. ESP-NOW provisions
 	// exactly like No transmit (no credentials), so it commits inline too; it's only
 	// offered once the firmware reports it can speak it (`espnowCapable`).
-	const MODES = $derived([
-		{
-			id: "wifi" as const,
-			label: "Venue Wi-Fi",
-			desc: "Joins a network you choose",
-			page: true,
-			disabled: false,
-		},
-		{
-			id: "notx" as const,
-			label: "Always plugged in",
-			desc: "USB only, dark when unplugged",
-			page: false,
-			disabled: false,
-		},
-		{
-			id: "espnow" as const,
-			label: "No Wi-Fi, or it's unreliable",
-			desc: "ESP-NOW radio, via a bridge board left plugged into this PC",
-			page: false,
-			disabled: !espnowCapable,
-		},
-	]);
+	const MODES = $derived(
+		TRANSPORT_MODES.map((m) => ({
+			...m,
+			page: m.id === "wifi",
+			disabled: m.id === "espnow" && !espnowCapable,
+		})),
+	);
 
 	function pick(m: (typeof MODES)[number]) {
 		if (m.disabled) return;
@@ -172,16 +157,15 @@
 		<div class="flex items-center gap-2.5 rounded-lg px-2 py-1.5">
 			<Network class="text-muted-foreground size-4 shrink-0" />
 			<span class="min-w-0 flex-1">
-				<span class="block text-sm leading-tight {bridge ? 'font-medium' : ''}">Use as bridge</span>
+				<span class="block text-sm leading-tight {bridge ? 'font-medium' : ''}">{BRIDGE_LABEL}</span>
 				<span class="text-muted-foreground block text-[0.68rem] leading-tight">
-					Stays plugged in here and relays tally to no-Wi-Fi lights. Replaces any
-					current bridge.
+					{BRIDGE_DESC}
 				</span>
 			</span>
 			<Switch
 				checked={bridge}
 				onCheckedChange={(v) => onsetbridge?.(v)}
-				aria-label="Use as bridge"
+				aria-label={BRIDGE_LABEL}
 			/>
 		</div>
 	</div>

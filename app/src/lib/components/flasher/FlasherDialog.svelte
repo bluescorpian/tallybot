@@ -20,6 +20,20 @@
 		input: { label: string; live: boolean } | null;
 	}
 
+	/**
+	 * What the light should be set to once it's back. Device-side (sent over USB once it
+	 * connects): transport (+ Wi-Fi credentials) and the bridge role. Server-side (keyed by
+	 * MAC, which the bootloader reports even for a blank board): input and brightness.
+	 */
+	export interface LightSettings {
+		transport: "wifi" | "notx" | "espnow";
+		ssid: string;
+		password: string;
+		bridge: boolean;
+		inputId: string | null;
+		brightness: number;
+	}
+
 	/** A board on USB the flasher can work on, offered when it's opened from the titlebar. */
 	export interface FlashCandidate {
 		kind: "blank" | "light";
@@ -52,6 +66,10 @@
 	import * as Dialog from "$lib/components/ui/dialog";
 	import { Button } from "$lib/components/ui/button";
 	import { Progress } from "$lib/components/ui/progress";
+	import { Input } from "$lib/components/ui/input";
+	import { Label } from "$lib/components/ui/label";
+	import { Switch } from "$lib/components/ui/switch";
+	import { TRANSPORT_MODES, BRIDGE_LABEL, BRIDGE_DESC } from "$lib/components/board/transportModes";
 	import type { Flasher, FlashStage, FlashTarget } from "$lib/mock/flasher.svelte";
 	import { FLASH_STAGES, leavesBlank } from "$lib/mock/flasher.svelte";
 	import type { AppUpdate } from "$lib/mock/updater.svelte";
@@ -85,6 +103,12 @@
 		/** Boards on USB to choose from when there's no job yet (opened from the titlebar). */
 		candidates?: FlashCandidate[];
 		onpick?: (c: FlashCandidate) => void;
+		/** Inputs a light can be assigned to, for the Settings step. */
+		inputs?: { id: string; label: string }[];
+		/** The light's current settings (prefill for an existing light; null for a blank board). */
+		currentSettings?: LightSettings | null;
+		/** Apply settings to the light once it's back; resolves to an error message, or null. */
+		onapply?: (mac: string, s: LightSettings) => Promise<string | null>;
 	}
 	let {
 		open = $bindable(false),
@@ -97,7 +121,54 @@
 		onidentify,
 		candidates = [],
 		onpick,
+		inputs = [],
+		currentSettings = null,
+		onapply,
 	}: Props = $props();
+
+	// ── Settings step (after review, before the install) ──
+	// Installing the full image can wipe the light's saved settings, so an existing light's
+	// current settings are reapplied after it ("keep as is", the default); a blank board gets
+	// the user's choices, or nothing when skipped (set it up later from its menu).
+	const DEFAULTS: LightSettings = {
+		transport: "notx",
+		ssid: "",
+		password: "",
+		bridge: false,
+		inputId: null,
+		brightness: 128,
+	};
+	let step = $state<"review" | "settings">("review");
+	let keep = $state(true);
+	let form = $state<LightSettings>({ ...DEFAULTS });
+	/** Settings waiting to be applied once the install is done (null = skipped). */
+	let pending = $state<LightSettings | null>(null);
+	let apply = $state<"idle" | "running" | "ok" | "failed">("idle");
+	let applyError = $state<string | null>(null);
+	function toSettings() {
+		step = "settings";
+		keep = true;
+		form = { ...(currentSettings ?? DEFAULTS) };
+	}
+	$effect(() => {
+		if (!open) step = "review";
+	});
+	async function runApply() {
+		const mac = st.status === "done" ? st.mac : null;
+		if (!mac || !pending) return;
+		apply = "running";
+		applyError = (await onapply?.(mac, pending)) ?? null;
+		apply = applyError ? "failed" : "ok";
+	}
+	$effect(() => {
+		if (st.status === "done" && pending && apply === "idle") void runApply();
+	});
+	$effect(() => {
+		if (st.status === "idle") {
+			apply = "idle";
+			applyError = null;
+		}
+	});
 
 	const fw = $derived(flasher.firmwareVersion);
 	const st = $derived(flasher.state);
@@ -121,9 +192,23 @@
 		lastPort = port;
 	});
 
-	type View = "waiting" | "choose" | "plug" | "found" | "review" | "running" | "done" | "failed" | "cancelled";
+	type View =
+		| "waiting"
+		| "choose"
+		| "plug"
+		| "found"
+		| "review"
+		| "settings"
+		| "running"
+		| "done"
+		| "failed"
+		| "cancelled";
+	// the install is done but its settings are still being applied
+	const applying = $derived(st.status === "done" && !!pending && (apply === "idle" || apply === "running"));
 	const view = $derived<View>(
-		st.status !== "idle"
+		applying
+			? "running"
+			: st.status !== "idle"
 			? st.status
 			: !job
 				? candidates.length
@@ -133,7 +218,7 @@
 					? "plug"
 					: found
 						? "found"
-						: "review",
+						: step,
 	);
 	$effect(() => {
 		if (!running) confirmStop = false;
@@ -177,10 +262,11 @@
 	// The version the light had when flashing began: the job is live state, so once the light
 	// comes back its reported version is already the new one.
 	let fromAtStart = $state<string | null>(null);
-	const fromVersion = $derived(view === "plug" || view === "found" || view === "review" ? (job?.fromVersion ?? null) : fromAtStart);
-	function start() {
+	const fromVersion = $derived(view === "plug" || view === "found" || view === "review" || view === "settings" ? (job?.fromVersion ?? null) : fromAtStart);
+	function start(settings: LightSettings | null) {
 		const t = target();
 		if (!t) return;
+		pending = settings;
 		fromAtStart = job?.fromVersion ?? null;
 		flasher.start(t);
 	}
@@ -188,7 +274,7 @@
 		flasher.reset();
 		// no port (the cable came out): the drawer goes back to "plug it in", then review
 		if (job?.port == null) replug = true;
-		else start();
+		else start(pending);
 	}
 	const leanUpdateFirst = $derived(!!newerUpdate && job?.kind === "light" && !job.missing && !current);
 	function finish(pick: boolean) {
@@ -201,8 +287,10 @@
 		confirmStop = false;
 	}
 
-	function stageLabel(s: FlashStage): string {
+	function stageLabel(s: FlashStage | "apply"): string {
 		switch (s) {
+			case "apply":
+				return "Apply settings";
 			case "connect":
 				return "Connect to the board";
 			case "erase":
@@ -217,17 +305,27 @@
 				return job?.kind === "light" ? `Wait for ${name} to reconnect` : "Wait for it to show up as a light";
 		}
 	}
+	// "Apply settings" is the stepper's last stage when there are settings to apply
+	const stages = $derived<(FlashStage | "apply")[]>(pending ? [...FLASH_STAGES, "apply"] : [...FLASH_STAGES]);
 	const stageIndex = $derived(
 		st.status === "running" || st.status === "failed" || st.status === "cancelled"
 			? FLASH_STAGES.indexOf(st.stage)
 			: st.status === "done"
-				? FLASH_STAGES.length
+				? applying || apply === "failed"
+					? FLASH_STAGES.length
+					: stages.length
 				: -1,
 	);
 	const pct = $derived(st.status === "running" && st.stage === "write" ? Math.round(st.progress * 100) : 0);
 	const newMac = $derived(st.status === "done" ? st.mac : null);
 	// the board's own label for the light: the last two octets of its MAC
 	const newTail = $derived(st.status === "done" ? st.mac.split(":").slice(-2).join(":") : null);
+	// the input the light ended up on: the applied setting when there was one, else the one it kept
+	const landedOn = $derived(
+		pending && apply === "ok"
+			? (inputs.find((i) => i.id === pending?.inputId)?.label ?? null)
+			: (job?.input?.label ?? null),
+	);
 	const portName = $derived(job?.port ?? "the USB port");
 </script>
 
@@ -343,19 +441,12 @@
 						<h3>Found {name ?? "the board"} on USB</h3>
 					</div>
 				{:else if view === "review"}
+					<!-- the versions are in the target row above; the lead only adds what it doesn't say -->
 					<p class="lead">
-						{#if job.kind === "blank"}
-							This installs TallyBot firmware so the board can work as a tally light. It takes about
-							a minute.
-						{:else if job.missing}
-							{name} has no firmware after an interrupted install, so it's dark. This installs
-							{fw} and brings it back{job.input ? ` on ${job.input.label}` : ""}. It takes about a
-							minute.
-						{:else if current}
-							{name} already runs {fw}. Reinstalling puts a fresh copy on it. It takes about a minute.
+						{#if job.missing}
+							{name} has no firmware after an interrupted install, so it's dark. Takes about a minute.
 						{:else}
-							{name} runs firmware {job.fromVersion ?? "older than this app's"}. Updating installs
-							{fw}. It takes about a minute.
+							Takes about a minute.
 						{/if}
 					</p>
 
@@ -384,40 +475,86 @@
 								<span>A newer TallyBot ({newerUpdate.version}) comes with improved light firmware</span>
 							</div>
 							<!-- Each path's cost, and a lean: an existing light would otherwise go dark twice;
-							     a blank board isn't in use, so setting it up now costs nothing. -->
+							     a blank board isn't in use, so setting it up now costs nothing. The choice
+							     itself is the footer's buttons. -->
 							{#if job.kind === "light"}
 								<p>
-									<strong>Updating TallyBot first is better here.</strong> It restarts TallyBot (every
-									light blinks off for a few seconds), then {name} gets the newer firmware in one go.
-									Install now and {name} will need updating again later, going dark twice.
+									Recommended: update TallyBot first, then {name} gets {newerUpdate.version} in one go. All
+									lights blink off for a few seconds.
 								</p>
 							{:else}
-								<p>
-									<strong>Setting it up now is fine.</strong> It works with this TallyBot, and you can
-									update its firmware later from its menu. Updating TallyBot first restarts it, so
-									every light blinks off for a few seconds.
-								</p>
+								<p>It works with this TallyBot. Update its firmware later from its menu.</p>
 							{/if}
-							<Button
-								variant={job.kind === "light" ? "default" : "outline"}
-								size="sm"
-								onclick={() => onupdateapp?.()}
-							>
-								<CircleArrowUp />
-								{newerReady ? "Restart TallyBot and update first" : "Update TallyBot first"}
-							</Button>
+						</div>
+					{/if}
+				{:else if view === "settings"}
+					{#if job.kind === "light"}
+						<!-- an existing light: its current settings come back after the install unless changed -->
+						<div class="keep" role="radiogroup" aria-label="Settings">
+							<label><input type="radio" bind:group={keep} value={true} /> Keep as is</label>
+							<label><input type="radio" bind:group={keep} value={false} /> Change</label>
+						</div>
+					{/if}
+					{#if job.kind === "blank" || !keep}
+						<fieldset class="cfg">
+							<legend>Where will this light run?</legend>
+							{#each TRANSPORT_MODES as m (m.id)}
+								<label class="mode">
+									<input type="radio" bind:group={form.transport} value={m.id} />
+									<span>
+										<span class="mode-label">{m.label}</span>
+										<span class="mode-desc">{m.desc}</span>
+									</span>
+								</label>
+							{/each}
+							{#if form.transport === "wifi"}
+								<div class="wifi">
+									<Label for="fl-ssid">Network (SSID)</Label>
+									<Input id="fl-ssid" placeholder="Network name" bind:value={form.ssid} autocomplete="off" />
+									<Label for="fl-pass">Password</Label>
+									<Input id="fl-pass" type="password" placeholder="Password" bind:value={form.password} />
+								</div>
+							{/if}
+						</fieldset>
+						<div class="cfg row">
+							<span>
+								<span class="mode-label">{BRIDGE_LABEL}</span>
+								<span class="mode-desc">{BRIDGE_DESC}</span>
+							</span>
+							<Switch bind:checked={form.bridge} aria-label={BRIDGE_LABEL} />
+						</div>
+						<div class="cfg grid2">
+							<Label for="fl-input">Input</Label>
+							<select id="fl-input" class="sel" bind:value={form.inputId}>
+								<option value={null}>Unassigned</option>
+								{#each inputs as i (i.id)}<option value={i.id}>{i.label}</option>{/each}
+							</select>
+							<Label for="fl-bright">Brightness</Label>
+							<span class="bright">
+								<input id="fl-bright" type="range" min="10" max="255" bind:value={form.brightness} />
+								<span class="pct">{Math.round((form.brightness / 255) * 100)}%</span>
+							</span>
 						</div>
 					{/if}
 				{:else if view === "running" || view === "done"}
 					<ol class="steps">
-						{#each FLASH_STAGES as s, i (s)}
-							{@const state = i < stageIndex ? "done" : i === stageIndex ? "now" : "todo"}
-							<li class="step {state}">
+						{#each stages as s, i (s)}
+							{@const state =
+								s === "apply" && apply === "failed"
+									? "failed"
+									: i < stageIndex
+										? "done"
+										: i === stageIndex
+											? "now"
+											: "todo"}
+							<li class="step {state}" aria-current={state === "now" ? "step" : undefined}>
 								<span class="mark">
 									{#if state === "done"}
 										<Check class="size-3" strokeWidth={3} />
 									{:else if state === "now"}
 										<LoaderCircle class="size-4 animate-spin" />
+									{:else if state === "failed"}
+										<CircleX class="text-destructive size-4" />
 									{/if}
 								</span>
 								<span class="step-body">
@@ -435,19 +572,29 @@
 						{/each}
 					</ol>
 
-					{#if view === "done"}
+					{#if view === "done" && apply === "failed"}
+						<div class="outcome bad">
+							<CircleX class="size-5 shrink-0" />
+							<div role="status">
+								<h3>Firmware installed, settings not applied</h3>
+								<p>{applyError}</p>
+							</div>
+						</div>
+					{:else if view === "done"}
 						<div class="outcome ok">
 							<CircleCheck class="size-5 shrink-0" />
-							<div>
+							<div role="status">
 								{#if job.kind === "blank"}
 									<h3>New light <span class="font-mono">{newTail}</span> is ready</h3>
 									<p>
-										It's in the <strong>Unassigned</strong> tray.
+										{#if landedOn}It's on <strong>{landedOn}</strong>.{:else}It's in the <strong
+												>Unassigned</strong
+											> tray.{/if}
 									</p>
 								{:else}
 									<h3>{job.missing || fromVersion === null ? `${name} is working again` : `${name} is up to date`}</h3>
 									<p>
-										Running firmware {fw}{job.input ? `, and back on ${job.input.label}` : ""}.
+										Running firmware {fw}{landedOn ? `, and back on ${landedOn}` : ""}.
 									</p>
 									{#if wasWireless}
 										<p class="mt-1.5">You can unplug it now. It goes back to running wirelessly.</p>
@@ -477,8 +624,7 @@
 							{:else}
 								<h3>The cable came out</h3>
 								<p>
-									The board was unplugged partway through, so it's blank for now. Nothing is damaged:
-									plug it back in and try again.
+									The board was unplugged before the install finished. Plug it back in and try again.
 								</p>
 							{/if}
 						</div>
@@ -516,7 +662,10 @@
 		</div>
 
 		<footer class="footer">
-			{#if view === "running"}
+			{#if applying}
+				<span></span>
+				<Button variant="ghost" onclick={() => (open = false)}>Hide</Button>
+			{:else if view === "running"}
 				{#if confirmStop}
 					<!-- "Keep going" lands where Stop was, so a double-click doesn't stop it -->
 					<span></span>
@@ -540,14 +689,25 @@
 					<Button variant="ghost" onclick={() => (open = false)}>Cancel</Button>
 					<!-- one primary per screen: when the callout recommends updating TallyBot first,
 					     installing this app's firmware becomes the secondary choice -->
-					<Button variant={leanUpdateFirst ? "outline" : "default"} onclick={start}>
-						{job?.kind === "blank"
-							? "Set up light"
-							: job?.missing || current
-								? "Reinstall firmware"
-								: leanUpdateFirst
-									? `Install ${fw} anyway`
-									: `Update to ${fw}`}
+					{#if newerUpdate}
+						<Button variant={leanUpdateFirst ? "default" : "outline"} onclick={() => onupdateapp?.()}>
+							{newerReady ? "Restart and update TallyBot" : "Update TallyBot first"}
+						</Button>
+					{/if}
+					<Button variant={leanUpdateFirst ? "outline" : "default"} onclick={toSettings}>
+						{leanUpdateFirst ? `Install ${fw} anyway` : "Next"}
+					</Button>
+				</div>
+			{:else if view === "settings"}
+				<Button variant="ghost" onclick={() => (step = "review")}>Back</Button>
+				<div class="foot-actions">
+					{#if job?.kind === "blank"}
+						<Button variant="ghost" onclick={() => start(null)}>Skip</Button>
+					{/if}
+					<Button
+						onclick={() => start(job?.kind === "light" && keep ? currentSettings : $state.snapshot(form))}
+					>
+						{job?.kind === "light" && (job.missing || current) ? "Reinstall firmware" : `Install ${fw}`}
 					</Button>
 				</div>
 			{:else if view === "plug" || view === "found" || view === "choose" || view === "waiting"}
@@ -556,7 +716,10 @@
 			{:else if view === "done"}
 				<span></span>
 				<div class="foot-actions">
-					{#if job?.kind === "blank" && newMac}
+					{#if apply === "failed"}
+						<Button variant="ghost" onclick={() => finish(false)}>Done</Button>
+						<Button onclick={runApply}>Try again</Button>
+					{:else if job?.kind === "blank" && newMac && !landedOn}
 						<Button variant="ghost" onclick={() => finish(false)}>Done</Button>
 						<Button onclick={() => finish(true)}>Choose its input</Button>
 					{:else}
@@ -654,6 +817,84 @@
 		background: color-mix(in oklch, var(--primary), transparent 93%);
 	}
 
+	/* Settings step */
+	.keep {
+		display: flex;
+		gap: 18px;
+		font-size: 0.85rem;
+	}
+	.keep label,
+	.mode {
+		display: flex;
+		align-items: flex-start;
+		gap: 8px;
+		cursor: pointer;
+	}
+	.keep input,
+	.mode input {
+		margin-top: 3px;
+		accent-color: var(--primary);
+	}
+	.cfg {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		padding: 12px 14px;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-xl);
+		background: var(--background);
+		min-width: 0;
+	}
+	.cfg legend {
+		float: left;
+		font-size: 0.72rem;
+		color: var(--muted-foreground);
+		margin-bottom: 2px;
+	}
+	.cfg.row {
+		flex-direction: row;
+		align-items: center;
+		gap: 12px;
+	}
+	.cfg.grid2 {
+		display: grid;
+		grid-template-columns: auto 1fr;
+		align-items: center;
+		gap: 10px 14px;
+	}
+	.mode-label {
+		display: block;
+		font-size: 0.85rem;
+		line-height: 1.2;
+	}
+	.mode-desc {
+		display: block;
+		font-size: 0.7rem;
+		line-height: 1.3;
+		color: var(--muted-foreground);
+	}
+	.wifi {
+		display: grid;
+		gap: 6px;
+		padding-left: 22px;
+	}
+	.sel {
+		height: 32px;
+		border: 1px solid var(--input);
+		border-radius: var(--radius-md);
+		background: var(--background);
+		padding: 0 8px;
+		font-size: 0.85rem;
+	}
+	.bright {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+	}
+	.bright input {
+		flex: 1;
+		accent-color: var(--primary);
+	}
 	.lead {
 		font-size: 0.85rem;
 		line-height: 1.5;
@@ -725,10 +966,6 @@
 		align-items: center;
 		gap: 8px;
 		font-size: 0.85rem;
-		font-weight: 600;
-	}
-	.newer strong {
-		color: var(--foreground);
 		font-weight: 600;
 	}
 	.newer p {

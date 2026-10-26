@@ -24,6 +24,7 @@
 	import FlasherDialog, {
 		type FlashCandidate,
 		type FlashJob,
+		type LightSettings,
 	} from "$lib/components/flasher/FlasherDialog.svelte";
 	import UpdateDialog from "$lib/components/updates/UpdateDialog.svelte";
 	import type { InstallPill, UpdatePill } from "$lib/components/chrome/TitleBar.svelte";
@@ -65,6 +66,8 @@
 	//                 TallyBot 1.1.0 ships newer firmware and offers "Update TallyBot first"
 	//   enginedown  — the sidecar crashed and is restarting: the error notice + dimmed board
 	// `?fail=noresponse|busy|unplugged` makes the next flash fail that way (a retry succeeds);
+	// `?fail=bridge` makes the flasher's "Apply settings" stage fail once when the light was set
+	// to be the bridge;
 	// `?fail=download` makes the app-update download fail once; `?fail=wronglight` plugs the
 	// wrong light in first while the flasher waits for a wireless one.
 	// `?wifi=connected|weak|joining|failed` sets the wired A4:F2 light's live join state,
@@ -394,8 +397,9 @@
 			input: input ? { label: input.label, live: input.tally === "live" } : null,
 		};
 	});
+	// While an install runs its target is fixed: every entry point just reopens its progress.
 	function openFlasher(r: FlashRequest) {
-		flashRequest = r;
+		if (flasher.state.status !== "running") flashRequest = r;
 		flashOpen = true;
 	}
 	const newerUpdate = $derived(newerFirmwareUpdate(updater.state, flasher.firmwareVersion));
@@ -498,6 +502,40 @@
 			}
 		});
 	});
+
+	// The Settings step's prefill: the light's settings as they are now (null for a blank board).
+	const flashCurrentSettings = $derived.by<LightSettings | null>(() => {
+		const r = flashRequest;
+		const d = r?.kind === "light" ? devices.find((x) => x.mac === r.mac) : undefined;
+		if (!d) return null;
+		return {
+			transport: d.provisionedMode ?? "notx",
+			ssid: d.ssid ?? "",
+			password: "",
+			bridge: d.bridge ?? false,
+			inputId: d.inputId === null ? null : String(d.inputId),
+			brightness: d.brightness,
+		};
+	});
+	// Mock: apply the Settings step once the light is back, through the same handlers its
+	// Configure pane uses. `?fail=bridge` makes the bridge role not take once (the light
+	// never reports `bridging`); a retry succeeds.
+	let bridgeFailOnce = fail === "bridge";
+	async function applySettings(mac: string, s: LightSettings): Promise<string | null> {
+		await new Promise((r) => setTimeout(r, 1600));
+		if (s.inputId === null) unassign(mac);
+		else assign(mac, s.inputId);
+		setBrightness(mac, s.brightness);
+		if (s.transport === "wifi" && s.ssid) provisionWifi(mac, s.ssid, s.password);
+		else setTransport(mac, s.transport);
+		if (s.bridge && bridgeFailOnce) {
+			bridgeFailOnce = false;
+			const tail = mac.split(":").slice(-2).join(":").toUpperCase();
+			return `${tail} didn't start bridging, so no-Wi-Fi lights have no bridge. Its other settings are applied.`;
+		}
+		if (s.bridge) setBridge(mac);
+		return null;
+	}
 
 	// "Update TallyBot first" parks the job; the "updated" notice offers to pick it back up.
 	let resumeFlash = $state<FlashRequest | null>(null);
@@ -638,7 +676,9 @@
 		for (const port of health.unflashedPorts) {
 			if (mockOnly) {
 				// the drawer already says everything while it's working on this board
-				if ((flashOpen || installRunning) && flashRequest?.kind === "blank" && flashRequest.port === port) continue;
+				// one install at a time: no other board is offered while one runs
+				if (installRunning) continue;
+				if (flashOpen && flashRequest?.kind === "blank" && flashRequest.port === port) continue;
 				// Dismissible: the titlebar's firmware button is always a way back in. A dismissal
 				// lasts while the board stays plugged in (cleared when its port goes away).
 				list.push({
@@ -757,6 +797,9 @@
 		{newerUpdate}
 		newerReady={updater.state.status === "ready"}
 		onupdateapp={updateAppFirst}
+		inputs={inputs.map((i) => ({ id: String(i.id), label: i.label }))}
+		currentSettings={flashCurrentSettings}
+		onapply={applySettings}
 		onreveal={revealLight}
 		onidentify={(mac) => {
 			flash(mac);
