@@ -7,6 +7,12 @@
 		| { kind: "available"; version: string }
 		| { kind: "downloading"; progress: number }
 		| { kind: "ready" };
+
+	/** A firmware install running with its drawer hidden: progress 0–1 for one light/board. */
+	export interface InstallPill {
+		label: string;
+		progress: number;
+	}
 </script>
 
 <script lang="ts">
@@ -33,7 +39,15 @@
 		onsettings,
 		update = null,
 		onupdate,
-	}: { onsettings: () => void; update?: UpdatePill | null; onupdate?: () => void } = $props();
+		install = null,
+		oninstall,
+	}: {
+		onsettings: () => void;
+		update?: UpdatePill | null;
+		onupdate?: () => void;
+		install?: InstallPill | null;
+		oninstall?: () => void;
+	} = $props();
 
 	// Window controls only work inside the Tauri webview. Under `pnpm dev` in a
 	// plain browser (e.g. screenshot verification) the bar still renders fully, but
@@ -65,6 +79,17 @@
 	<Wordmark />
 
 	<div class="controls">
+		{#if install}
+			<!-- An install running with its drawer hidden: same calm pill as a download, so
+			     you can keep using the board and come back to it. Click reopens the drawer. -->
+			<button class="update-pill" onclick={oninstall} title="Show the firmware install">
+				<svg class="dl-ring" viewBox="0 0 16 16" aria-hidden="true">
+					<circle cx="8" cy="8" r="6" class="ring-track" />
+					<circle cx="8" cy="8" r="6" class="ring-fill" stroke-dasharray={`${install.progress * 37.7} 37.7`} />
+				</svg>
+				{install.label} {Math.round(install.progress * 100)}%
+			</button>
+		{/if}
 		{#if update}
 			<button
 				class="update-pill"

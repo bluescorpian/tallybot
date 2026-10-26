@@ -21,7 +21,16 @@
 	import Cpu from "@lucide/svelte/icons/cpu";
 	import RotateCw from "@lucide/svelte/icons/rotate-cw";
 
-	let { open = $bindable(false), updater }: { open?: boolean; updater: Updater } = $props();
+	let {
+		open = $bindable(false),
+		updater,
+		blocked = null,
+	}: {
+		open?: boolean;
+		updater: Updater;
+		/** Why restarting is refused right now (e.g. a firmware install is running), or null. */
+		blocked?: string | null;
+	} = $props();
 
 	const st = $derived(updater.state);
 	const update = $derived("update" in st ? st.update : null);
@@ -137,8 +146,9 @@
 					<Button variant="ghost" onclick={() => (open = false)}>Close</Button>
 					<Button onclick={() => updater.download()}>Try again</Button>
 				{:else if st.status === "ready"}
+					{#if blocked}<span class="foot-note">{blocked}</span>{/if}
 					<Button variant="ghost" onclick={() => (open = false)}>Later</Button>
-					<Button onclick={restart}><RotateCw /> Restart now</Button>
+					<Button onclick={restart} disabled={!!blocked}><RotateCw /> Restart now</Button>
 				{/if}
 			</div>
 		{/if}

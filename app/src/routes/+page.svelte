@@ -23,7 +23,7 @@
 	import Credit from "$lib/components/chrome/Credit.svelte";
 	import FlasherSheet, { type FlashJob } from "$lib/components/flasher/FlasherSheet.svelte";
 	import UpdateDialog from "$lib/components/updates/UpdateDialog.svelte";
-	import type { UpdatePill } from "$lib/components/chrome/TitleBar.svelte";
+	import type { InstallPill, UpdatePill } from "$lib/components/chrome/TitleBar.svelte";
 	import { MockFlasher, leavesBlank, type FlashFailure } from "$lib/mock/flasher.svelte";
 	import { MockUpdater, isNewer, newerFirmwareUpdate } from "$lib/mock/updater.svelte";
 	import LoaderCircle from "@lucide/svelte/icons/loader-circle";
@@ -62,7 +62,8 @@
 	//                 TallyBot 1.1.0 ships newer firmware and offers "Update TallyBot first"
 	//   enginedown  — the sidecar crashed and is restarting: the error notice + dimmed board
 	// `?fail=noresponse|busy|unplugged` makes the next flash fail that way (a retry succeeds);
-	// `?fail=download` makes the app-update download fail once.
+	// `?fail=download` makes the app-update download fail once; `?fail=wronglight` plugs the
+	// wrong light in first while the flasher waits for a wireless one.
 	// `?wifi=connected|weak|joining|failed` sets the wired A4:F2 light's live join state,
 	// shown on its Configure → Wi-Fi page.
 	const params = new URLSearchParams(location.search);
@@ -350,6 +351,9 @@
 	let mockUnflashed = $state<string[]>(demo === "unflashed" || demo === "newerfw" ? ["COM5"] : []);
 	// The cable came out mid-install: the board is off USB until the mock "replugs" it.
 	let mockUnplugged = $state(false);
+	// `?fail=wronglight`: the label of a different light plugged in while waiting for another.
+	let mockWrong = $state<string | null>(null);
+	let wrongOnce = fail === "wronglight";
 
 	// What the flasher drawer is working on. Resolved from live state each time, so a wireless
 	// light gains its port the moment it's plugged in.
@@ -367,6 +371,7 @@
 				label: null,
 				fromVersion: null,
 				missing: false,
+				wrongLight: null,
 				input: null,
 			};
 		const d = devices.find((x) => x.mac === r.mac);
@@ -381,6 +386,7 @@
 			label: d.mac.split(":").slice(-2).join(":"),
 			fromVersion: mockFirmware[d.mac] ?? null,
 			missing: mockFirmware[d.mac] === null,
+			wrongLight: mockWrong,
 			input: input ? { label: input.label, live: input.tally === "live" } : null,
 		};
 	});
@@ -397,11 +403,20 @@
 		// only while the drawer is asking for it, not on the failure screen
 		if (!mockOnly || !flashOpen || !job || job.port !== null || flasher.state.status !== "idle") return;
 		const mac = job.mac;
-		const t = setTimeout(() => {
+		const plugIn = () => {
 			mockUnplugged = false;
+			mockWrong = null;
 			const d = devices.find((x) => x.mac === mac);
 			if (d) d.transport = "usb";
-		}, 3500);
+		};
+		if (wrongOnce && job.kind === "light") {
+			// `?fail=wronglight`: someone grabs the wrong unit first, then the right one
+			wrongOnce = false;
+			const t1 = setTimeout(() => (mockWrong = "77:88"), 2500);
+			const t2 = setTimeout(plugIn, 6500);
+			return () => (clearTimeout(t1), clearTimeout(t2));
+		}
+		const t = setTimeout(plugIn, 3500);
 		return () => clearTimeout(t);
 	});
 
@@ -460,6 +475,44 @@
 		return null;
 	});
 	const restarting = $derived(updater.state.status === "restarting");
+
+	// An install keeps going with its drawer hidden: a titlebar pill shows its progress and
+	// reopens the drawer. While one runs, anything that restarts the engine is refused, since
+	// that would cut the install off mid-write.
+	const STAGE_WEIGHT = { connect: 0.05, erase: 0.1, write: 0.65, verify: 0.07, restart: 0.05, rejoin: 0.08 };
+	const installRunning = $derived(flasher.state.status === "running");
+	const installPill = $derived.by<InstallPill | null>(() => {
+		const s = flasher.state;
+		if (s.status !== "running" || flashOpen) return null;
+		let progress = 0;
+		for (const [stage, w] of Object.entries(STAGE_WEIGHT)) {
+			if (stage === s.stage) {
+				progress += stage === "write" ? w * s.progress : 0;
+				break;
+			}
+			progress += w;
+		}
+		const label = s.target.kind === "blank" ? "Setting up light" : `Updating ${s.target.label}`;
+		return { label, progress };
+	});
+	const installBlocked = $derived(
+		installRunning ? "A light's firmware is being installed. Restart once it's finished." : null,
+	);
+
+	// Bring a light into view on the board with a one-off highlight; `pick` opens its picker.
+	// (Mock-level DOM reach-in; the real build would give Board a prop for this.)
+	function revealLight(mac: string, pick: boolean) {
+		setTimeout(() => {
+			const el = document.querySelector<HTMLElement>(`[aria-label="Light ${mac} — assign or flash"]`);
+			if (!el) return;
+			el.scrollIntoView({ block: "center", behavior: "smooth" });
+			el.classList.remove("reveal");
+			void el.offsetWidth;
+			el.classList.add("reveal");
+			setTimeout(() => el.classList.remove("reveal"), 2400);
+			if (pick) setTimeout(() => el.click(), 450);
+		}, 250);
+	}
 
 	// ── Notices — compact cards floating in the board's bottom-right corner ─────
 	// The board is left-aligned, so that corner is empty dot-grid at any width; a card there
@@ -542,7 +595,7 @@
 		for (const port of health.unflashedPorts) {
 			if (mockOnly) {
 				// the drawer already says everything while it's working on this board
-				if (flashOpen && flashRequest?.kind === "blank" && flashRequest.port === port) continue;
+				if ((flashOpen || installRunning) && flashRequest?.kind === "blank" && flashRequest.port === port) continue;
 				// Not dismissible: it's the only way into setting the board up, and it goes away by
 				// itself once the board is set up or unplugged.
 				list.push({
@@ -566,7 +619,7 @@
 		// reports it even with no firmware), so it keeps its name and assignment.
 		for (const d of devices) {
 			if (!mockOnly || mockFirmware[d.mac] !== null) continue;
-			if (flashOpen && flashRequest?.kind === "light" && flashRequest.mac === d.mac) continue;
+			if ((flashOpen || installRunning) && flashRequest?.kind === "light" && flashRequest.mac === d.mac) continue;
 			const label = d.mac.split(":").slice(-2).join(":");
 			const input = inputs.find((i) => i.id === d.inputId);
 			list.push({
@@ -619,6 +672,8 @@
 		onsettings={() => (settingsOpen = true)}
 		update={updatePill}
 		onupdate={() => (updateOpen = true)}
+		install={installPill}
+		oninstall={() => (flashOpen = true)}
 	/>
 
 	<SettingsSheet
@@ -630,6 +685,7 @@
 		onscan={isTauri ? () => sidecar.scanSources() : undefined}
 		scanResult={isTauri ? sidecar.scan : null}
 		updater={mockOnly ? updater : undefined}
+		restartBlocked={installBlocked}
 		onviewupdate={() => {
 			settingsOpen = false;
 			updateOpen = true;
@@ -643,9 +699,14 @@
 		{newerUpdate}
 		newerReady={updater.state.status === "ready"}
 		onupdateapp={updateAppFirst}
+		onreveal={revealLight}
+		onidentify={(mac) => {
+			flash(mac);
+			revealLight(mac, false);
+		}}
 	/>
 
-	<UpdateDialog bind:open={updateOpen} {updater} />
+	<UpdateDialog bind:open={updateOpen} {updater} blocked={installBlocked} />
 
 	<div class="stage">
 		<Board
@@ -821,6 +882,19 @@
 		border: none;
 		border-radius: 6px;
 		cursor: pointer;
+	}
+	/* one-off "here it is" ring on a light the flasher just brought back (or is asking for) */
+	:global(.light-trigger.reveal) {
+		animation: reveal 2.4s ease-out;
+	}
+	@keyframes reveal {
+		0%,
+		60% {
+			box-shadow: 0 0 0 4px color-mix(in oklab, var(--primary), transparent 35%);
+		}
+		100% {
+			box-shadow: 0 0 0 4px transparent;
+		}
 	}
 	.restarting {
 		position: absolute;

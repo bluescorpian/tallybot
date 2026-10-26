@@ -67,6 +67,7 @@
 		scanResult = null,
 		updater,
 		onviewupdate,
+		restartBlocked = null,
 		dirty = $bindable(false),
 	}: {
 		source?: Source | null;
@@ -84,6 +85,8 @@
 		scanResult?: SourceScanEvent | null;
 		updater?: Updater;
 		onviewupdate?: () => void;
+		/** Why the engine can't be restarted right now (a firmware install is running), or null. */
+		restartBlocked?: string | null;
 		dirty?: boolean;
 	} = $props();
 
@@ -409,14 +412,14 @@
 						<div class="label-col">
 							<span class="lbl">Restart TallyBot Engine</span>
 							<span class="hint">
-								Reconnect the switcher and all devices if
-								something gets stuck.
+								{restartBlocked ??
+									"Reconnect the switcher and all devices if something gets stuck."}
 							</span>
 						</div>
 						<Button
 							variant="outline"
 							onclick={restartEngine}
-							disabled={restarting}
+							disabled={restarting || !!restartBlocked}
 						>
 							{#if restarting}
 								<RotateCw class="animate-spin" />

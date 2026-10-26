@@ -14,6 +14,8 @@
 		fromVersion: string | null;
 		/** A known light with no firmware (an install was interrupted): this is a reinstall. */
 		missing: boolean;
+		/** A different light turned up on USB while waiting for this one (its label). */
+		wrongLight: string | null;
 		/** The input the light is assigned to, if any — flashing takes it dark. */
 		input: { label: string; live: boolean } | null;
 	}
@@ -49,6 +51,7 @@
 	import ArrowRight from "@lucide/svelte/icons/arrow-right";
 	import CircleArrowUp from "@lucide/svelte/icons/circle-arrow-up";
 	import Radio from "@lucide/svelte/icons/radio";
+	import Zap from "@lucide/svelte/icons/zap";
 	import Lightbulb from "@lucide/svelte/icons/lightbulb";
 
 	interface Props {
@@ -61,24 +64,54 @@
 		newerReady?: boolean;
 		/** "Update TallyBot first" — the host closes this and opens the app updater. */
 		onupdateapp?: () => void;
+		/** Show the light on the board (scroll + one-off highlight); `pick` also opens its picker. */
+		onreveal?: (mac: string, pick: boolean) => void;
+		/** Flash-to-identify a light (to find which physical unit to plug in). */
+		onidentify?: (mac: string) => void;
 	}
-	let { open = $bindable(false), job, flasher, newerUpdate = null, newerReady = false, onupdateapp }: Props =
-		$props();
+	let {
+		open = $bindable(false),
+		job,
+		flasher,
+		newerUpdate = null,
+		newerReady = false,
+		onupdateapp,
+		onreveal,
+		onidentify,
+	}: Props = $props();
 
 	const fw = $derived(flasher.firmwareVersion);
 	const st = $derived(flasher.state);
 	const running = $derived(st.status === "running");
 	let confirmStop = $state(false);
 
-	type View = "plug" | "review" | "running" | "done" | "failed" | "cancelled";
+	// "Found it" beat: when the awaited board shows up on USB, confirm it for a moment before
+	// moving on to review, so the jump doesn't feel like the drawer changed on its own.
+	let found = $state(false);
+	let lastPort: string | null | undefined;
+	$effect(() => {
+		if (!job) {
+			lastPort = undefined; // a fresh job, not an arrival
+			return;
+		}
+		const port = job.port;
+		if (lastPort === null && port !== null) {
+			found = true;
+			setTimeout(() => (found = false), 1400);
+		}
+		lastPort = port;
+	});
+
+	type View = "plug" | "found" | "review" | "running" | "done" | "failed" | "cancelled";
 	const view = $derived<View>(
-		st.status === "idle" ? (job && job.port === null ? "plug" : "review") : st.status,
+		st.status === "idle" ? (job && job.port === null ? "plug" : found ? "found" : "review") : st.status,
 	);
 	$effect(() => {
 		if (!running) confirmStop = false;
 	});
 
-	// Closing (not possible mid-flash) clears the outcome so the next open starts fresh.
+	// Closing mid-install leaves it running (the titlebar pill reopens the drawer); closing
+	// after it clears the outcome so the next open starts fresh.
 	$effect(() => {
 		if (!open && !running && st.status !== "idle") flasher.reset();
 	});
@@ -107,7 +140,7 @@
 	// The version the light had when flashing began: the job is live state, so once the light
 	// comes back its reported version is already the new one.
 	let fromAtStart = $state<string | null>(null);
-	const fromVersion = $derived(view === "plug" || view === "review" ? (job?.fromVersion ?? null) : fromAtStart);
+	const fromVersion = $derived(view === "plug" || view === "found" || view === "review" ? (job?.fromVersion ?? null) : fromAtStart);
 	function start() {
 		const t = target();
 		if (!t) return;
@@ -119,6 +152,12 @@
 		// no port (the cable came out): the drawer goes back to "plug it in", then review
 		if (job?.port == null) replug = true;
 		else start();
+	}
+	const leanUpdateFirst = $derived(!!newerUpdate && job?.kind === "light" && !job.missing);
+	function finish(pick: boolean) {
+		const mac = newMac;
+		open = false;
+		if (mac) onreveal?.(mac, pick);
 	}
 	function stop() {
 		flasher.cancel();
@@ -149,6 +188,7 @@
 				: -1,
 	);
 	const pct = $derived(st.status === "running" && st.stage === "write" ? Math.round(st.progress * 100) : 0);
+	const newMac = $derived(st.status === "done" ? st.mac : null);
 	// the board's own label for the light: the last two octets of its MAC
 	const newTail = $derived(st.status === "done" ? st.mac.split(":").slice(-2).join(":") : null);
 	const portName = $derived(job?.port ?? "the USB port");
@@ -159,12 +199,6 @@
 		side="right"
 		showCloseButton={false}
 		overlayClass="bg-black/10 supports-backdrop-filter:backdrop-blur-none"
-		onInteractOutside={(e) => {
-			if (running) e.preventDefault();
-		}}
-		onEscapeKeydown={(e) => {
-			if (running) e.preventDefault();
-		}}
 		class="w-full gap-0 p-0 sm:max-w-[400px]"
 	>
 		<Sheet.Header class="flex-row items-center gap-2.5 border-b px-5 py-3.5">
@@ -217,9 +251,27 @@
 								data (some charge-only cables don't).
 							</p>
 						{/if}
-						<p class="waiting">
-							<LoaderCircle class="size-3.5 animate-spin" /> Waiting for {name ?? "the board"}…
-						</p>
+						{#if job.wrongLight}
+							<p class="wrong">
+								<TriangleAlert class="size-3.5 shrink-0" /> That's {job.wrongLight}, not {name}. Unplug it
+								and plug in {name}.
+							</p>
+						{:else}
+							<p class="waiting">
+								<LoaderCircle class="size-3.5 animate-spin" /> Waiting for {name ?? "the board"}…
+							</p>
+						{/if}
+						{#if job.kind === "light" && job.mac && !replug}
+							<!-- lights have no names: blink it so you know which unit to pick up -->
+							<Button variant="outline" size="sm" class="mt-2" onclick={() => job.mac && onidentify?.(job.mac)}>
+								<Zap /> Flash it to find it
+							</Button>
+						{/if}
+					</div>
+				{:else if view === "found"}
+					<div class="plug">
+						<span class="plug-icon found"><Check class="size-7" /></span>
+						<h3>Found {name ?? "the board"} on USB</h3>
 					</div>
 				{:else if view === "review"}
 					<p class="lead">
@@ -414,6 +466,8 @@
 				{:else}
 					<span class="foot-msg"><Usb class="size-3.5" /> Don't unplug the board</span>
 					<div class="foot-actions">
+						<!-- Hide keeps it installing; the titlebar pill shows progress and reopens this -->
+						<Button variant="ghost" onclick={() => (open = false)}>Hide</Button>
 						<Button variant="ghost" onclick={() => (confirmStop = true)}>Stop</Button>
 					</div>
 				{/if}
@@ -421,17 +475,30 @@
 				<span></span>
 				<div class="foot-actions">
 					<Button variant="ghost" onclick={() => (open = false)}>Cancel</Button>
-					<Button onclick={start}>
-						{job?.kind === "blank" ? "Set up light" : job?.missing ? "Reinstall firmware" : `Update to ${fw}`}
+					<!-- one primary per screen: when the callout recommends updating TallyBot first,
+					     installing this app's firmware becomes the secondary choice -->
+					<Button variant={leanUpdateFirst ? "outline" : "default"} onclick={start}>
+						{job?.kind === "blank"
+							? "Set up light"
+							: job?.missing
+								? "Reinstall firmware"
+								: leanUpdateFirst
+									? `Install ${fw} anyway`
+									: `Update to ${fw}`}
 					</Button>
 				</div>
-			{:else if view === "plug"}
+			{:else if view === "plug" || view === "found"}
 				<span></span>
 				<Button variant="ghost" onclick={() => (open = false)}>Cancel</Button>
 			{:else if view === "done"}
 				<span></span>
 				<div class="foot-actions">
-					<Button onclick={() => (open = false)}>Done</Button>
+					{#if job?.kind === "blank" && newMac}
+						<Button variant="ghost" onclick={() => finish(false)}>Done</Button>
+						<Button onclick={() => finish(true)}>Choose its input</Button>
+					{:else}
+						<Button onclick={() => finish(false)}>Done</Button>
+					{/if}
 				</div>
 			{:else}
 				<span></span>
@@ -633,6 +700,20 @@
 		line-height: 1.5;
 		color: var(--muted-foreground);
 		max-width: 32ch;
+	}
+	.plug-icon.found {
+		color: oklch(0.6 0.15 150);
+		background: color-mix(in oklab, oklch(0.6 0.15 150), var(--background) 88%);
+		animation: none;
+	}
+	.plug .wrong {
+		display: flex;
+		align-items: center;
+		gap: 7px;
+		margin-top: 8px;
+		max-width: 34ch;
+		color: var(--destructive);
+		font-size: 0.8rem;
 	}
 	.plug .waiting {
 		display: flex;

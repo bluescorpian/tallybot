@@ -29,6 +29,7 @@
 		scanResult = null,
 		updater,
 		onviewupdate,
+		restartBlocked = null,
 	}: {
 		open?: boolean;
 		source?: Source | null;
@@ -41,6 +42,7 @@
 		scanResult?: SourceScanEvent | null;
 		updater?: ComponentProps<typeof SettingsPanel>["updater"];
 		onviewupdate?: () => void;
+		restartBlocked?: string | null;
 	} = $props();
 
 	// mirrors the panel's unsaved-changes state; guards accidental dismissal
@@ -79,6 +81,7 @@
 				{scanResult}
 				{updater}
 				{onviewupdate}
+				{restartBlocked}
 				bind:dirty
 				onclose={() => (open = false)}
 			/>
