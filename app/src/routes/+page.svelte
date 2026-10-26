@@ -30,7 +30,13 @@
 	import type { InstallPill, UpdatePill } from "$lib/components/chrome/TitleBar.svelte";
 	import { MockFlasher } from "$lib/mock/flasher.svelte";
 	import { TauriFlasher } from "$lib/flasher/tauri.svelte";
-	import { leavesBlank, type FlashFailure, type Flasher } from "$lib/flasher/flasher";
+	import {
+		firmwareOutdated,
+		leavesBlank,
+		type FlashFailure,
+		type Flasher,
+		type LightFirmware,
+	} from "$lib/flasher/flasher";
 	import { MockUpdater } from "$lib/mock/updater.svelte";
 	import { TauriUpdater } from "$lib/updater/tauri.svelte";
 	import { downloadProgress, isNewer, newerFirmwareUpdate, type Updater } from "$lib/updater/updater";
@@ -362,7 +368,7 @@
 	 * not heard from. The mock also models a light left blank by an interrupted install, which
 	 * under Tauri shows up as a blank board instead.
 	 */
-	function lightFirmware(d: Device): { version: string | null; missing: boolean; known: boolean } {
+	function lightFirmware(d: Device): LightFirmware & { missing: boolean } {
 		if (isTauri) {
 			const version = d.firmwareVersion ?? null;
 			return { version, missing: false, known: version !== null || d.protocolVersion !== null };
@@ -370,10 +376,7 @@
 		const version = d.mac in mockFirmware ? mockFirmware[d.mac] : flasher.firmwareVersion;
 		return { version, missing: version === null, known: true };
 	}
-	function isOutdated(f: ReturnType<typeof lightFirmware>): boolean {
-		const bundled = flasher.firmwareVersion;
-		return bundled !== null && f.known && (f.version === null || isNewer(bundled, f.version));
-	}
+	const isOutdated = (f: LightFirmware) => firmwareOutdated(flasher.firmwareVersion, f);
 	/** The USB port a light is on, or null when it isn't plugged in. */
 	function portOf(d: Device): string | null {
 		if (isTauri) return health.lightPorts.find((l) => l.mac === d.mac)?.port ?? null;

@@ -5,7 +5,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
-import type { AppUpdate, Updater, UpdaterState } from "./updater";
+import { releaseNotes, type AppUpdate, type Updater, type UpdaterState } from "./updater";
 
 /** `updater.rs` `UpdateInfo`. */
 interface UpdateInfo {
@@ -98,19 +98,6 @@ function toAppUpdate(info: UpdateInfo): AppUpdate {
 		installable: info.installable,
 		releaseUrl: info.releaseUrl,
 	};
-}
-
-/**
- * The release body as a short list: its bullet lines, without GitHub's generated "by @user in
- * <PR link>" suffix. Headings and the "Full Changelog" line are dropped.
- */
-export function releaseNotes(body: string): string[] {
-	return body
-		.split("\n")
-		.map((l) => l.trim())
-		.filter((l) => /^[-*] /.test(l))
-		.map((l) => l.slice(2).replace(/ by @\S+ in \S+$/, "").trim())
-		.filter(Boolean);
 }
 
 function readLastRun(): string | null {

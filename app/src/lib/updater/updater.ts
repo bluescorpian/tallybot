@@ -24,6 +24,19 @@ export interface AppUpdate {
 	releaseUrl: string;
 }
 
+/**
+ * A release body as a short list: its bullet lines, without GitHub's generated "by @user in
+ * <PR link>" suffix. Headings and the "Full Changelog" line are dropped.
+ */
+export function releaseNotes(body: string): string[] {
+	return body
+		.split("\n")
+		.map((l) => l.trim())
+		.filter((l) => /^[-*] /.test(l))
+		.map((l) => l.slice(2).replace(/ by @\S+ in \S+$/, "").trim())
+		.filter(Boolean);
+}
+
 /** Download progress 0–1, or 0 while the size isn't known yet. */
 export function downloadProgress(received: number, update: AppUpdate): number {
 	return update.sizeBytes ? Math.min(1, received / update.sizeBytes) : 0;
