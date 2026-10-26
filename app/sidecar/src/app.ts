@@ -37,6 +37,8 @@ export interface DeviceServerPort {
   on(event: "deviceConnected", listener: (info: { mac: string; version: number }) => void): unknown;
   on(event: "deviceDisconnected", listener: (info: { mac: string }) => void): unknown;
   on(event: "deviceUnsupported", listener: (info: { mac: string; version: number }) => void): unknown;
+  /** Device-keyed diagnostic lines: a USB device's own LOG frames, or a transport's notes on a device. */
+  on(event: "log", listener: (entry: { mac: string; level: "info" | "warn" | "error"; text: string }) => void): unknown;
   on(event: "error", listener: (err: Error) => void): unknown;
 }
 

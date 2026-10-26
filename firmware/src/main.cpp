@@ -177,7 +177,7 @@ void loop() {
   // host↔light), so the per-mode client below stays suppressed. The host vanishing (port closed)
   // tears it down, the same session-end cue that reverts a USB-owned WiFi device.
   if (espnow::bridgeActive()) {
-    espnow::loopBridge();
+    espnow::loopBridge(now);
     if (usb::sessionLost()) {
       TLOG(LOG_LEVEL_INFO, "USB host lost; leaving bridge mode\n");
       usb::resetSession();

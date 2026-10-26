@@ -35,7 +35,7 @@ void loopLight(unsigned long now);
 void enterBridge(uint8_t channel);  // SET_BRIDGE 1: radio up on `channel`, suppress association, start relaying
 void exitBridge();              // SET_BRIDGE 0 / USB session end: deinit + restore radio per NVS mode
 bool bridgeActive();
-void loopBridge();              // no clock — the bridge is stateless in time (liveness is the sidecar's)
+void loopBridge(unsigned long now);  // `now` paces only the 1 s diagnostics line (liveness is the sidecar's)
 void relay(const ServerMessage& msg);  // RELAY from USB → esp_now_send(targetMAC, inner)
 
 }  // namespace espnow

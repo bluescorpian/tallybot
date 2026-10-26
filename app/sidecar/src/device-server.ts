@@ -66,6 +66,8 @@ export interface DeviceServer {
   on(event: "deviceConnected", listener: (info: { mac: string; version: number }) => void): this;
   on(event: "deviceDisconnected", listener: (info: { mac: string }) => void): this;
   on(event: "deviceUnsupported", listener: (info: { mac: string; version: number }) => void): this;
+  /** Part of the {@link DeviceServerPort} contract; never emitted — a TCP device has no log channel. */
+  on(event: "log", listener: (entry: { mac: string; level: "info" | "warn" | "error"; text: string }) => void): this;
   on(event: "error", listener: (err: Error) => void): this;
   emit(event: "listening"): boolean;
   emit(event: "deviceConnected", info: { mac: string; version: number }): boolean;

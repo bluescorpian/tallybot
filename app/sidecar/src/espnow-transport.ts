@@ -16,6 +16,10 @@
  * Liveness mirrors the TCP server: a relayed HEARTBEAT refreshes the per-device timer; silence
  * past the timeout drops the light. When the **bridge itself** disconnects from USB, every
  * relayed light it carried drops at once (its only path home is gone).
+ *
+ * Diagnostics ride a `log` event shaped like the {@link UsbTransport}'s device-log stream (keyed by
+ * the light's MAC), so they reach the same places a bridge's own LOG lines do: an expired light,
+ * the edges of an outbound outage, and a HEARTBEAT from a light we never saw HELLO from.
  */
 
 import { EventEmitter } from "node:events";
@@ -36,6 +40,11 @@ export interface EspNowTransportOptions {
   now?: () => number;
 }
 
+type LogLevel = "info" | "warn" | "error";
+
+/** Why `sendColor` can't reach the bridge — the two cases a live outage splits into. */
+type SendFailure = "no bridge designated" | "bridge not on USB";
+
 /** One relayed light's live facts. */
 interface RelayedLight {
   version: number;
@@ -48,6 +57,7 @@ export interface EspNowTransport {
   on(event: "deviceConnected", listener: (info: { mac: string; version: number }) => void): this;
   on(event: "deviceDisconnected", listener: (info: { mac: string }) => void): this;
   on(event: "deviceUnsupported", listener: (info: { mac: string; version: number }) => void): this;
+  on(event: "log", listener: (entry: { mac: string; level: LogLevel; text: string }) => void): this;
   on(event: "error", listener: (err: Error) => void): this;
 }
 
@@ -66,6 +76,14 @@ export class EspNowTransport extends EventEmitter {
   #bridgeMac: string | null = null;
 
   #sweepTimer: ReturnType<typeof setInterval> | null = null;
+
+  /**
+   * The outbound outage in progress, or null while sends succeed. `sendColor` runs every keyframe
+   * per light, so failures are logged on the edges only: once when they start, once when they stop.
+   */
+  #sendOutage: { reason: SendFailure; since: number; failed: number } | null = null;
+  /** MACs that sent a HEARTBEAT with no HELLO first — each is logged once, not every 10 s. */
+  readonly #unknownHeartbeats = new Set<string>();
 
   constructor(usb: UsbTransport, options: EspNowTransportOptions = {}) {
     super();
@@ -114,8 +132,30 @@ export class EspNowTransport extends EventEmitter {
    * online (the keyframe re-send will reach the light once a bridge is designated again).
    */
   sendColor(mac: string, color: Color, brightness: number): boolean {
-    if (this.#bridgeMac === null) return false;
-    return this.#usb.sendBridgeRelay(this.#bridgeMac, relayPayload(mac, setColorPayload(color, brightness)));
+    if (this.#bridgeMac === null) return this.#sendFailed(mac, "no bridge designated");
+    const sent = this.#usb.sendBridgeRelay(this.#bridgeMac, relayPayload(mac, setColorPayload(color, brightness)));
+    if (!sent) return this.#sendFailed(mac, "bridge not on USB");
+    if (this.#sendOutage) {
+      const { reason, since, failed } = this.#sendOutage;
+      this.#sendOutage = null;
+      const outage = seconds(this.#now() - since);
+      this.#log(mac, "info", `ESP-NOW sends to bridge ${this.#bridgeMac} recovered after ${outage} (${failed} failed, ${reason})`);
+    }
+    return true;
+  }
+
+  #sendFailed(mac: string, reason: SendFailure): false {
+    if (this.#sendOutage?.reason === reason) {
+      this.#sendOutage.failed++;
+    } else {
+      this.#sendOutage = { reason, since: this.#now(), failed: 1 };
+      this.#log(mac, "warn", `ESP-NOW sends failing: ${reason} (bridge ${this.#bridgeMac ?? "none"})`);
+    }
+    return false;
+  }
+
+  #log(mac: string, level: LogLevel, text: string): void {
+    this.emit("log", { mac, level, text });
   }
 
   // ── Inbound (light → host, via the bridge) ────────────────────────────────────────
@@ -131,6 +171,7 @@ export class EspNowTransport extends EventEmitter {
     // The srcMac from the bridge's receive callback is the device identity (HEARTBEAT carries no
     // MAC), so we key off it rather than the inner payload — exactly the envelope's reason to exist.
     if (message.kind === "hello") {
+      this.#unknownHeartbeats.delete(srcMac); // known now; a later orphan HEARTBEAT is news again
       this.#lights.set(srcMac, { version: message.version, lastSeen: this.#now() });
       if (!isSupportedVersion(message.version)) {
         this.emit("deviceUnsupported", { mac: srcMac, version: message.version });
@@ -143,6 +184,10 @@ export class EspNowTransport extends EventEmitter {
       // identify a version, so we wait for the HELLO that the firmware always sends first.
       const light = this.#lights.get(srcMac);
       if (light) light.lastSeen = this.#now();
+      else if (!this.#unknownHeartbeats.has(srcMac)) {
+        this.#unknownHeartbeats.add(srcMac);
+        this.#log(srcMac, "warn", `ESP-NOW HEARTBEAT from unknown light ${srcMac} (no HELLO seen); ignoring it`);
+      }
     }
     // STATUS/LOG never ride ESP-NOW (USB-only frames); anything else is ignored.
   }
@@ -157,12 +202,19 @@ export class EspNowTransport extends EventEmitter {
 
   /** Expire lights that have gone silent past the timeout (mirrors the TCP per-device timer). */
   #sweep(): void {
-    const cutoff = this.#now() - this.#heartbeatTimeoutMs;
+    const now = this.#now();
+    const cutoff = now - this.#heartbeatTimeoutMs;
     for (const [mac, light] of [...this.#lights]) {
       if (light.lastSeen <= cutoff) {
         this.#lights.delete(mac);
+        const silent = seconds(now - light.lastSeen);
+        this.#log(mac, "warn", `ESP-NOW light ${mac} expired: silent for ${silent} (timeout ${seconds(this.#heartbeatTimeoutMs)})`);
         this.emit("deviceDisconnected", { mac });
       }
     }
   }
+}
+
+function seconds(ms: number): string {
+  return `${(ms / 1000).toFixed(1)} s`;
 }

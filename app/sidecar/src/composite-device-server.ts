@@ -14,8 +14,9 @@
  *     `deviceConnected` for the new owner (the device "reverts", e.g. USB unplugged → WiFi);
  *   • the last transport dropping ⇒ emit `deviceDisconnected`.
  *
- * Outgoing `sendColor` routes to the current owner. Provisioning + diagnostics
- * (USB-only) are delegated to the supplied `UsbTransport`.
+ * Outgoing `sendColor` routes to the current owner. Every member's `log` lines (a USB
+ * device's LOG frames, the ESP-NOW transport's notes on a light) are re-emitted as-is.
+ * Provisioning + STATUS (USB-only) are delegated to the supplied `UsbTransport`.
  */
 
 import { EventEmitter } from "node:events";
@@ -49,7 +50,7 @@ export class CompositeDeviceServer extends EventEmitter implements DeviceServerP
 
   /**
    * @param members transports in **priority order** — the first one holding a MAC owns it.
-   * @param usb the provisioning/diagnostics-capable transport (its events are re-emitted here).
+   * @param usb the provisioning-capable transport (its `status` events are re-emitted here).
    */
   constructor(members: CompositeMember[], usb: UsbTransport | null = null) {
     super();
@@ -60,13 +61,11 @@ export class CompositeDeviceServer extends EventEmitter implements DeviceServerP
       member.port.on("deviceConnected", ({ mac, version }) => this.#onConnect(index, mac, version));
       member.port.on("deviceDisconnected", ({ mac }) => this.#onDisconnect(index, mac));
       member.port.on("deviceUnsupported", (info) => this.emit("deviceUnsupported", info));
+      member.port.on("log", (entry) => this.emit("log", entry));
       member.port.on("error", (err) => this.emit("error", err as Error));
     });
 
-    if (usb) {
-      usb.on("status", (status) => this.emit("status", status));
-      usb.on("log", (entry) => this.emit("log", entry));
-    }
+    if (usb) usb.on("status", (status) => this.emit("status", status));
   }
 
   async start(): Promise<void> {

@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <atomic>
 #include <esp_now.h>
 #include <esp_wifi.h>
 #include <string.h>
@@ -89,6 +90,77 @@ bool addPeer(const uint8_t* mac) {
 
 void recvCb(const uint8_t* mac, const uint8_t* data, int len) { enqueue(mac, data, len); }
 
+// ── Bridge diagnostics ────────────────────────────────────────────────────────────
+// Per-window counters the bridge summarises once a second, to tell apart why a light drops to
+// "lost the bridge": the host stopped sending (relayIn 0), the target wasn't a peer (noPeer), the
+// send queue filled (noMem), or the radio lost frames (ackFail). The send callback runs in the
+// WiFi task, so the counters it bumps are atomics and it never logs; the loop swaps them to 0.
+constexpr unsigned long kBridgeStatsMs = 1000;
+std::atomic<uint32_t> g_relayIn{0};    // RELAYs received from the host
+std::atomic<uint32_t> g_noPeer{0};     // RELAYs dropped: target isn't a registered peer
+std::atomic<uint32_t> g_txOk{0};       // esp_now_send accepted the frame
+std::atomic<uint32_t> g_txNoMem{0};    // ESP_ERR_ESPNOW_NO_MEM: the send queue is full
+std::atomic<uint32_t> g_txNotFound{0}; // ESP_ERR_ESPNOW_NOT_FOUND
+std::atomic<uint32_t> g_txIfErr{0};    // ESP_ERR_ESPNOW_IF
+std::atomic<uint32_t> g_txOther{0};    // any other error; the last one's code is in g_txOtherCode
+std::atomic<int32_t> g_txOtherCode{0};
+std::atomic<uint32_t> g_ackOk{0};      // send callback: the peer MAC-ACKed
+std::atomic<uint32_t> g_ackFail{0};    // send callback: no MAC ACK after retries (radio loss)
+volatile uint8_t g_ackFailMac[6];      // the last target that missed an ACK (best effort)
+unsigned long g_lastBridgeStats = 0;
+
+void sendCb(const uint8_t* mac, esp_now_send_status_t status) {
+  if (status == ESP_NOW_SEND_SUCCESS) {
+    g_ackOk.fetch_add(1, std::memory_order_relaxed);
+    return;
+  }
+  g_ackFail.fetch_add(1, std::memory_order_relaxed);
+  if (mac)
+    for (int i = 0; i < 6; i++) g_ackFailMac[i] = mac[i];
+}
+
+void countSendResult(esp_err_t err) {
+  switch (err) {
+    case ESP_OK: g_txOk.fetch_add(1, std::memory_order_relaxed); break;
+    case ESP_ERR_ESPNOW_NO_MEM: g_txNoMem.fetch_add(1, std::memory_order_relaxed); break;
+    case ESP_ERR_ESPNOW_NOT_FOUND: g_txNotFound.fetch_add(1, std::memory_order_relaxed); break;
+    case ESP_ERR_ESPNOW_IF: g_txIfErr.fetch_add(1, std::memory_order_relaxed); break;
+    default:
+      g_txOther.fetch_add(1, std::memory_order_relaxed);
+      g_txOtherCode.store(err, std::memory_order_relaxed);
+      break;
+  }
+}
+
+uint32_t take(std::atomic<uint32_t>& counter) { return counter.exchange(0, std::memory_order_relaxed); }
+
+// One line per window, zeros included: a window with no RELAYs in is itself the signal.
+void logBridgeStats() {
+  uint32_t in = take(g_relayIn), noPeer = take(g_noPeer), ok = take(g_txOk), noMem = take(g_txNoMem),
+           notFound = take(g_txNotFound), ifErr = take(g_txIfErr), other = take(g_txOther),
+           ackOk = take(g_ackOk), ackFail = take(g_ackFail);
+  bool trouble = noPeer || noMem || notFound || ifErr || other || ackFail;
+  char lastFail[40] = "";
+  if (ackFail)
+    snprintf(lastFail, sizeof(lastFail), " last_ack_fail=%02x:%02x:%02x:%02x:%02x:%02x", g_ackFailMac[0],
+             g_ackFailMac[1], g_ackFailMac[2], g_ackFailMac[3], g_ackFailMac[4], g_ackFailMac[5]);
+  char otherCode[24] = "";
+  if (other) snprintf(otherCode, sizeof(otherCode), " (last 0x%lx)", (long)g_txOtherCode.load());
+  TLOG(trouble ? LOG_LEVEL_WARN : LOG_LEVEL_INFO,
+       "bridge 1s: relay_in=%lu no_peer=%lu tx_ok=%lu no_mem=%lu not_found=%lu if_err=%lu other=%lu%s "
+       "ack_ok=%lu ack_fail=%lu%s\n",
+       (unsigned long)in, (unsigned long)noPeer, (unsigned long)ok, (unsigned long)noMem,
+       (unsigned long)notFound, (unsigned long)ifErr, (unsigned long)other, otherCode,
+       (unsigned long)ackOk, (unsigned long)ackFail, lastFail);
+}
+
+void resetBridgeStats(unsigned long now) {
+  for (auto* c : {&g_relayIn, &g_noPeer, &g_txOk, &g_txNoMem, &g_txNotFound, &g_txIfErr, &g_txOther,
+                  &g_ackOk, &g_ackFail})
+    c->store(0, std::memory_order_relaxed);
+  g_lastBridgeStats = now;
+}
+
 // ── Light role state ───────────────────────────────────────────────────────────
 uint8_t g_bridge[6];          // the bridge we linked to (valid while g_linked)
 bool g_linked = false;        // registered the bridge as a peer + handed off discovery
@@ -100,7 +172,8 @@ unsigned long g_lastHeartbeat = 0;
 unsigned long g_lastRx = 0;
 
 void sendRaw(const uint8_t* peer, const uint8_t* payload, size_t len) {
-  esp_now_send(peer, payload, len);  // fire-and-forget; the keyframe covers loss
+  // Fire-and-forget; the keyframe covers loss. The result only feeds the bridge's diagnostics.
+  countSendResult(esp_now_send(peer, payload, len));
 }
 
 void radioUp() {
@@ -110,6 +183,7 @@ void radioUp() {
     return;
   }
   esp_now_register_recv_cb(recvCb);
+  esp_now_register_send_cb(sendCb);
 }
 
 void radioDown() {
@@ -222,6 +296,7 @@ void espnow::enterBridge(uint8_t channel) {
   g_channel = channel;      // pin to the SET_BRIDGE channel (runtime-only — not persisted)
   wifi::dropAssociation();  // a warm STA association would drag the radio off the pinned channel
   radioUp();
+  resetBridgeStats(millis());  // the light role's sends also bumped the counters
   g_role = Role::BRIDGE;
   TLOG(LOG_LEVEL_INFO, "Bridge mode on (channel %u)\n", channel);
 }
@@ -249,9 +324,15 @@ void espnow::exitBridge() {
 
 bool espnow::bridgeActive() { return g_role == Role::BRIDGE; }
 
-// No clock: the bridge is stateless in time — it drains the ring and answers discovery; liveness
-// is the sidecar's job (the spec's "the bridge tracks nothing about liveness").
-void espnow::loopBridge() {
+// The bridge is stateless in time — it drains the ring and answers discovery; liveness is the
+// sidecar's job (the spec's "the bridge tracks nothing about liveness"). `now` only paces the
+// once-a-second diagnostics summary.
+void espnow::loopBridge(unsigned long now) {
+  if (now - g_lastBridgeStats >= kBridgeStatsMs) {
+    g_lastBridgeStats = now;
+    logBridgeStats();
+  }
+
   Frame f;
   while (dequeue(&f)) {
     if (isDiscovery(f.data, f.len, DISCOVERY_REQUEST)) {  // a light is hunting — adopt + answer
@@ -278,8 +359,12 @@ void espnow::loopBridge() {
 
 void espnow::relay(const ServerMessage& msg) {
   if (g_role != Role::BRIDGE || msg.kind != ServerMessage::RELAY) return;
-  // Drop silently if the target isn't a registered peer — the light's re-discovery + keyframe
-  // recover. We never register the target here (the peer table is owned by discovery).
-  if (!esp_now_is_peer_exist(msg.targetMac)) return;
+  g_relayIn.fetch_add(1, std::memory_order_relaxed);
+  // Drop if the target isn't a registered peer (counted, not logged) — the light's re-discovery +
+  // keyframe recover. We never register the target here (the peer table is owned by discovery).
+  if (!esp_now_is_peer_exist(msg.targetMac)) {
+    g_noPeer.fetch_add(1, std::memory_order_relaxed);
+    return;
+  }
   sendRaw(msg.targetMac, msg.inner, msg.innerLen);
 }
