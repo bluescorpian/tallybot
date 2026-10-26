@@ -364,3 +364,82 @@ fn nvs_ranges(image: &[u8]) -> Vec<(usize, usize)> {
     ranges
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One ESP-IDF partition table entry.
+    fn entry(kind: u8, subtype: u8, offset: u32, size: u32) -> [u8; 32] {
+        let mut e = [0u8; 32];
+        e[..4].copy_from_slice(&[0xAA, 0x50, kind, subtype]);
+        e[4..8].copy_from_slice(&offset.to_le_bytes());
+        e[8..12].copy_from_slice(&size.to_le_bytes());
+        e
+    }
+
+    /// A merged image of `len` bytes (every byte its index, so slices are distinguishable) with
+    /// `entries` written as the partition table at 0x8000, followed by erased flash.
+    fn image(len: usize, entries: &[[u8; 32]]) -> Vec<u8> {
+        let mut img: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
+        let mut at = 0x8000;
+        for e in entries {
+            img[at..at + 32].copy_from_slice(e);
+            at += 32;
+        }
+        img[at..at + 32].fill(0xFF);
+        img
+    }
+
+    /// (address, length) of each segment, checking each carries the image's bytes at its address.
+    fn layout(img: &[u8]) -> Vec<(usize, usize)> {
+        segments_around_nvs(img)
+            .iter()
+            .map(|s| {
+                let (addr, len) = (s.addr as usize, s.data.len());
+                assert_eq!(&s.data[..], &img[addr..addr + len], "segment at {addr:#x} has the wrong bytes");
+                (addr, len)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn every_nvs_partition_in_the_table_is_skipped_and_everything_else_written() {
+        let img = image(
+            0x40000,
+            &[
+                entry(0x01, 0x02, 0x9000, 0x5000),   // nvs
+                entry(0x01, 0x01, 0xE000, 0x1000),   // phy_init (data, not NVS)
+                entry(0x00, 0x00, 0x10000, 0x20000), // factory app
+                entry(0x01, 0x02, 0x30000, 0x4000),  // a second nvs
+            ],
+        );
+        assert_eq!(layout(&img), vec![(0x0, 0x9000), (0xE000, 0x22000), (0x34000, 0xC000)]);
+    }
+
+    #[test]
+    fn the_table_ends_at_the_first_entry_without_the_magic() {
+        let mut end = [0xEBu8; 32]; // the MD5 entry
+        end[..2].copy_from_slice(&[0xEB, 0xEB]);
+        let img = image(0x20000, &[entry(0x00, 0x00, 0x10000, 0x10000), end, entry(0x01, 0x02, 0x9000, 0x6000)]);
+        assert_eq!(layout(&img), vec![(0x0, 0x20000)]);
+    }
+
+    #[test]
+    fn an_image_without_a_readable_table_is_written_whole() {
+        let erased = image(0x20000, &[]);
+        assert_eq!(layout(&erased), vec![(0x0, 0x20000)]);
+        let short: Vec<u8> = vec![0x5A; 0x4000]; // ends before 0x8000
+        assert_eq!(layout(&short), vec![(0x0, 0x4000)]);
+    }
+
+    #[test]
+    fn nvs_partitions_past_the_image_end_are_clipped() {
+        // NVS straddles the end: only the bytes before it are written.
+        let straddling = image(0xC000, &[entry(0x01, 0x02, 0x9000, 0x6000)]);
+        assert_eq!(layout(&straddling), vec![(0x0, 0x9000)]);
+        // NVS wholly past the end: nothing to skip.
+        let beyond = image(0xC000, &[entry(0x01, 0x02, 0x3F0000, 0x6000)]);
+        assert_eq!(layout(&beyond), vec![(0x0, 0xC000)]);
+    }
+}
