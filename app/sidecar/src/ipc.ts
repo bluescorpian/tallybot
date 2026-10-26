@@ -76,6 +76,12 @@ export interface Device {
   brightness: number;
   /** Protocol version from the device's HELLO, or null if it has never connected. */
   protocolVersion: number | null;
+  /**
+   * Firmware version the device reported (its FIRMWARE message), or null when it never has —
+   * firmware older than 1.1 doesn't report one. The UI compares it with the firmware the app
+   * bundles to decide whether a light needs an update.
+   */
+  firmwareVersion?: string | null;
   /** True when the device's protocol version is below the server's minimum. */
   firmwareOutdated: boolean;
   /** Transport currently serving the device (drives the wired indicator). */

@@ -48,8 +48,9 @@ void usb::begin(const uint8_t mac[6], MessageHandler onMessage) {
 void usb::send(const uint8_t* payload, size_t len) { g_packet.send(payload, len); }
 
 void usb::sendHello() {
-  uint8_t payload[8];
+  uint8_t payload[32];
   send(payload, encodeHelloPayload(payload, g_mac));
+  send(payload, encodeFirmwarePayload(payload, sizeof(payload), FIRMWARE_VERSION));
 }
 
 bool usb::loop(unsigned long now) {

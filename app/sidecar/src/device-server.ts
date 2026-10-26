@@ -66,6 +66,7 @@ export interface DeviceServer {
   on(event: "deviceConnected", listener: (info: { mac: string; version: number }) => void): this;
   on(event: "deviceDisconnected", listener: (info: { mac: string }) => void): this;
   on(event: "deviceUnsupported", listener: (info: { mac: string; version: number }) => void): this;
+  on(event: "firmware", listener: (info: { mac: string; version: string }) => void): this;
   /** Part of the {@link DeviceServerPort} contract; never emitted — a TCP device has no log channel. */
   on(event: "log", listener: (entry: { mac: string; level: "info" | "warn" | "error"; text: string }) => void): this;
   on(event: "error", listener: (err: Error) => void): this;
@@ -73,6 +74,7 @@ export interface DeviceServer {
   emit(event: "deviceConnected", info: { mac: string; version: number }): boolean;
   emit(event: "deviceDisconnected", info: { mac: string }): boolean;
   emit(event: "deviceUnsupported", info: { mac: string; version: number }): boolean;
+  emit(event: "firmware", info: { mac: string; version: string }): boolean;
   emit(event: "error", err: Error): boolean;
 }
 
@@ -203,6 +205,9 @@ export class DeviceServer extends EventEmitter {
       }
       this.#armTimer(connection); // any valid message proves the device is alive
       if (message.kind === "hello") this.#onHello(connection, message.mac, message.version);
+      else if (message.kind === "firmware" && connection.mac) {
+        this.emit("firmware", { mac: connection.mac, version: message.version });
+      }
       // HEARTBEAT needs no handling beyond the timer reset above.
     }
   }

@@ -17,6 +17,7 @@
 // Wire reference (exact TCP bytes; over USB the same payloads ride inside a COBS frame):
 //   HELLO      08 01 03 <mac0..mac5>      (device → server)   [version is now 3]
 //   HEARTBEAT  01 02                      (device → server)
+//   FIRMWARE   <n> 07 <utf8 version…>     (device → server)   [sent after every HELLO]
 //   SET_COLOR  05 01 <R> <G> <B> <bri>    (server → device)
 //   STATUS/LOG and SET_WIFI/SET_TRANSPORT/GET_STATUS are USB-only — see below.
 
@@ -55,6 +56,13 @@
                             // a bridge received from a light, wrapped + forwarded up the USB pipe.
                             // The two directions' type spaces are independent, so 0x06 here and
                             // 0x07 below are both "RELAY"; the suffix only disambiguates the macro.
+#define MSG_FIRMWARE 0x07   // device → server (every transport): [type][utf8 version…] — the firmware's
+                            // own semver (FIRMWARE_VERSION), sent right after every HELLO. A new type
+                            // rather than a longer HELLO: hosts that predate it skip an unknown type
+                            // but reject a HELLO that isn't exactly 8 bytes.
+#ifndef FIRMWARE_VERSION      // stamped from firmware/VERSION by inject_build_info.py; this
+#define FIRMWARE_VERSION "0.0.0"  // fallback only covers builds without that script (native tests)
+#endif
 
 #define MSG_SET_COLOR 0x01     // server → device (both transports)
 // 0x02 retired (was IDENTIFY): flashing is now driven server-side over SET_COLOR.
@@ -233,6 +241,17 @@ inline size_t encodeStatusPayload(uint8_t* out, uint8_t transport, uint8_t wifiS
   return 7 + ssidLen;
 }
 
+// FIRMWARE payload: [type][utf8 version…]. Copies up to `maxOut-1` version bytes; returns the
+// payload length written. `out` must hold ≥ 1 byte.
+inline size_t encodeFirmwarePayload(uint8_t* out, size_t maxOut, const char* version) {
+  out[0] = MSG_FIRMWARE;
+  size_t len = strlen(version);
+  size_t room = maxOut >= 1 ? maxOut - 1 : 0;
+  if (len > room) len = room;
+  memcpy(&out[1], version, len);
+  return 1 + len;
+}
+
 // LOG payload: [type][level][utf8…]. Copies up to `maxOut-2` message bytes. Returns the
 // payload length written. `out` must hold ≥ 2 bytes.
 inline size_t encodeLogPayload(uint8_t* out, size_t maxOut, uint8_t level, const char* msg,
@@ -253,6 +272,14 @@ inline size_t encodeHello(uint8_t* out, const uint8_t mac[6]) {
   out[0] = 8;  // payload length: type + version + 6 MAC bytes
   encodeHelloPayload(&out[1], mac);
   return 9;
+}
+
+// FIRMWARE — sent right after HELLO: [len][type][utf8 version…]. Returns the frame length.
+// `out` must hold at least 2 bytes.
+inline size_t encodeFirmware(uint8_t* out, size_t maxOut, const char* version) {
+  size_t len = encodeFirmwarePayload(&out[1], maxOut >= 1 ? maxOut - 1 : 0, version);
+  out[0] = (uint8_t)len;
+  return 1 + len;
 }
 
 // HEARTBEAT — the periodic keep-alive. Carries no MAC; the socket is the identity.

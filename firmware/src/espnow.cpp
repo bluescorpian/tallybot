@@ -240,8 +240,9 @@ bool adoptBridge(const uint8_t* mac) {
 }
 
 void sendHello() {
-  uint8_t hello[8];
+  uint8_t hello[32];
   sendRaw(g_bridge, hello, encodeHelloPayload(hello, g_mac));
+  sendRaw(g_bridge, hello, encodeFirmwarePayload(hello, sizeof(hello), FIRMWARE_VERSION));
 }
 }  // namespace
 

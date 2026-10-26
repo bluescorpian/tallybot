@@ -55,6 +55,13 @@ export const DeviceMessageType = {
    * directions, distinct values.
    */
   RELAY: 0x06,
+  /**
+   * `[type][utf8 version…]` — the firmware's own semver (firmware/VERSION), sent right after
+   * every HELLO on every transport. A separate type rather than a longer HELLO because hosts
+   * that predate it skip an unknown type but reject a HELLO that isn't exactly 8 bytes.
+   * Firmware that predates it never sends one.
+   */
+  FIRMWARE: 0x07,
 } as const;
 
 /** Server → device (a.k.a. host → device) message types. */
@@ -374,6 +381,13 @@ export interface StatusMessage {
   bridge: boolean;
 }
 
+/** The firmware version a device reports right after its HELLO. */
+export interface FirmwareMessage {
+  kind: "firmware";
+  /** The firmware's semver, e.g. "1.1.0". */
+  version: string;
+}
+
 /** A framed log line from the device (USB release builds emit these instead of raw text). */
 export interface LogMessage {
   kind: "log";
@@ -397,6 +411,7 @@ export interface RelayedMessage {
 export type DeviceMessage =
   | HelloMessage
   | HeartbeatMessage
+  | FirmwareMessage
   | StatusMessage
   | LogMessage
   | RelayedMessage;
@@ -470,6 +485,13 @@ export function decodeDeviceMessage(payload: Uint8Array): DeviceMessage {
         srcMac: formatMac(payload.subarray(1, 7)),
         inner: payload.slice(7),
       };
+    }
+    case DeviceMessageType.FIRMWARE: {
+      // [type][utf8 version…]
+      if (payload.length < 2) {
+        throw new RangeError(`FIRMWARE payload must be at least 2 bytes, got ${payload.length}`);
+      }
+      return { kind: "firmware", version: new TextDecoder().decode(payload.subarray(1)) };
     }
     default:
       throw new RangeError(`unknown device message type 0x${type.toString(16).padStart(2, "0")}`);

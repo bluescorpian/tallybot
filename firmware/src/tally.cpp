@@ -95,8 +95,9 @@ void tally::loop(unsigned long now) {
     case CONNECTING: {
       g_decoder.reset();
       if (g_tcp.connect(g_serverIp, g_serverPort, kConnectTimeoutMs)) {
-        uint8_t hello[9];
+        uint8_t hello[32];
         g_tcp.write(hello, encodeHello(hello, g_mac));
+        g_tcp.write(hello, encodeFirmware(hello, sizeof(hello), FIRMWARE_VERSION));
         g_lastHeartbeat = now;
         g_everHadServer = true;  // from now a "no server" signal means we LOST one
         g_state = CONNECTED;

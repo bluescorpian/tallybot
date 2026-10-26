@@ -57,6 +57,8 @@ export interface DeviceRecord {
   online: boolean;
   /** Protocol version from the device's most recent HELLO, or null if never seen. */
   protocolVersion: number | null;
+  /** Firmware version the device last reported, or null if it never has (pre-1.1 firmware). */
+  firmwareVersion?: string | null;
   /** The input this device is assigned to, or null when unassigned. */
   inputId: number | null;
   /** Per-device LED brightness, 0–255. */
@@ -187,6 +189,7 @@ export function computeEngine(
       inputId: device.inputId,
       brightness: device.brightness,
       protocolVersion: device.protocolVersion,
+      firmwareVersion: device.firmwareVersion ?? null,
       firmwareOutdated:
         device.protocolVersion !== null && device.protocolVersion < PROTOCOL_VERSION.MIN_SUPPORTED,
       transport: device.transport,

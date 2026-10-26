@@ -74,6 +74,7 @@ export interface UsbTransport {
   on(event: "deviceConnected", listener: (info: { mac: string; version: number }) => void): this;
   on(event: "deviceDisconnected", listener: (info: { mac: string }) => void): this;
   on(event: "deviceUnsupported", listener: (info: { mac: string; version: number }) => void): this;
+  on(event: "firmware", listener: (info: { mac: string; version: string }) => void): this;
   on(event: "status", listener: (status: UsbStatus) => void): this;
   on(event: "log", listener: (entry: { mac: string; level: "info" | "warn" | "error"; text: string }) => void): this;
   /**
@@ -200,6 +201,8 @@ export class UsbTransport extends EventEmitter {
         channel: decoded.channel,
         bridge: decoded.bridge,
       });
+    } else if (decoded.kind === "firmware") {
+      this.emit("firmware", { mac: frame.mac, version: decoded.version });
     } else if (decoded.kind === "log") {
       this.emit("log", { mac: frame.mac, level: logLevelName(decoded.level), text: decoded.text });
     } else if (decoded.kind === "relayed") {

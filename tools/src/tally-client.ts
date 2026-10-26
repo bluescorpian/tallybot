@@ -15,6 +15,7 @@
 import { EventEmitter } from "node:events";
 import { type Socket, createConnection } from "node:net";
 import { createSocket } from "node:dgram";
+import { readFileSync } from "node:fs";
 
 import {
   type Color,
@@ -26,9 +27,16 @@ import {
 import {
   FrameDecoder,
   decodeServerMessage,
+  encodeFirmware,
   encodeHeartbeat,
   encodeHello,
 } from "./device-protocol.ts";
+
+/** The firmware version real firmware built from this checkout reports (firmware/VERSION). */
+export const CURRENT_FIRMWARE_VERSION = readFileSync(
+  new URL("../../firmware/VERSION", import.meta.url),
+  "utf8",
+).trim();
 
 /** How often a device heartbeats once connected (docs/architecture.md: every 10s). */
 export const HEARTBEAT_INTERVAL_MS = 10_000;
@@ -42,6 +50,11 @@ export interface TallyClientOptions {
   mac: string;
   /** Protocol version this device claims to speak (default: the current version). */
   version?: number;
+  /**
+   * Firmware version to report after HELLO (default: this checkout's firmware/VERSION).
+   * Null sends none, like firmware older than 1.1.
+   */
+  firmwareVersion?: string | null;
   /** Heartbeat cadence; lower values are useful in tests. */
   heartbeatIntervalMs?: number;
 }
@@ -67,6 +80,7 @@ export interface TallyClient {
 export class TallyClient extends EventEmitter {
   readonly mac: string;
   readonly version: number;
+  readonly firmwareVersion: string | null;
   readonly #heartbeatIntervalMs: number;
   #socket: Socket | null = null;
   #decoder = new FrameDecoder();
@@ -77,6 +91,8 @@ export class TallyClient extends EventEmitter {
     super();
     this.mac = options.mac;
     this.version = options.version ?? PROTOCOL_VERSION.CURRENT;
+    this.firmwareVersion =
+      options.firmwareVersion === undefined ? CURRENT_FIRMWARE_VERSION : options.firmwareVersion;
     this.#heartbeatIntervalMs = options.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS;
   }
 
@@ -93,6 +109,7 @@ export class TallyClient extends EventEmitter {
 
     socket.on("connect", () => {
       socket.write(encodeHello(this.mac, this.version));
+      if (this.firmwareVersion !== null) socket.write(encodeFirmware(this.firmwareVersion));
       this.#startHeartbeat();
       this.emit("connected");
     });

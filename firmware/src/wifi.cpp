@@ -105,7 +105,7 @@ void buildDiagHtml() {
   g_diagHtml += "<br><b>Stored password length:</b> ";
   g_diagHtml += g_wm.getWiFiPass(true).length();
   g_diagHtml += " chars — if shorter than you typed, a special char was truncated.";
-  g_diagHtml += "<br><b>Firmware:</b> " BUILD_TIMESTAMP;
+  g_diagHtml += "<br><b>Firmware:</b> " FIRMWARE_VERSION " (built " BUILD_TIMESTAMP ")";
   g_diagHtml += "<br><b>MAC:</b> ";
   g_diagHtml += mac;
   g_diagHtml += "</div>";

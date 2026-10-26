@@ -64,6 +64,7 @@ export interface EspNowTransport {
   on(event: "deviceConnected", listener: (info: { mac: string; version: number }) => void): this;
   on(event: "deviceDisconnected", listener: (info: { mac: string }) => void): this;
   on(event: "deviceUnsupported", listener: (info: { mac: string; version: number }) => void): this;
+  on(event: "firmware", listener: (info: { mac: string; version: string }) => void): this;
   on(event: "log", listener: (entry: { mac: string; level: LogLevelName; text: string }) => void): this;
   on(event: "error", listener: (err: Error) => void): this;
 }
@@ -194,6 +195,12 @@ export class EspNowTransport extends EventEmitter {
       else if (!this.#unknownHeartbeats.has(srcMac)) {
         this.#unknownHeartbeats.add(srcMac);
         this.#log(srcMac, "warn", `ESP-NOW HEARTBEAT from unknown light ${srcMac} (no HELLO seen); ignoring it`);
+      }
+    } else if (message.kind === "firmware") {
+      const light = this.#lights.get(srcMac);
+      if (light) {
+        light.lastSeen = this.#now();
+        this.emit("firmware", { mac: srcMac, version: message.version });
       }
     } else if (message.kind === "log") {
       // A light's own LOG line (its relink gap report), relayed up by the bridge. Like any valid

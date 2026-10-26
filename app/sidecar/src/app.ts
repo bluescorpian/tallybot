@@ -37,6 +37,8 @@ export interface DeviceServerPort {
   on(event: "deviceConnected", listener: (info: { mac: string; version: number }) => void): unknown;
   on(event: "deviceDisconnected", listener: (info: { mac: string }) => void): unknown;
   on(event: "deviceUnsupported", listener: (info: { mac: string; version: number }) => void): unknown;
+  /** The firmware version a device reports right after its HELLO (firmware that predates this never does). */
+  on(event: "firmware", listener: (info: { mac: string; version: string }) => void): unknown;
   /** Device-keyed diagnostic lines: a USB device's own LOG frames, or a transport's notes on a device. */
   on(event: "log", listener: (entry: { mac: string; level: "info" | "warn" | "error"; text: string }) => void): unknown;
   on(event: "error", listener: (err: Error) => void): unknown;
@@ -253,6 +255,11 @@ export class SidecarApp {
 
   /** Connected devices → their reported protocol version (present only while online). */
   readonly #online = new Map<string, number>();
+  /**
+   * Firmware version each device last reported. Kept across a disconnect, so a reconnect doesn't
+   * flash the "outdated" badge in the moment between its HELLO and its FIRMWARE message.
+   */
+  readonly #firmware = new Map<string, string>();
   /** The last colour pushed to each device, to suppress redundant SET_COLORs. */
   readonly #lastColor = new Map<string, { color: Color; brightness: number }>();
   /** Devices mid locate-strobe → elapsed ms into the burst; cleared when it ends (see {@link IDENTIFY_DURATION_MS}). */
@@ -319,6 +326,12 @@ export class SidecarApp {
     });
     this.#server.on("deviceUnsupported", ({ mac, version }) => {
       this.#ipc.notice("warn", `Tally ${macTail(mac)} runs old firmware (protocol v${version}); update it.`);
+    });
+    this.#server.on("firmware", ({ mac, version }) => {
+      if (this.#firmware.get(mac) === version) return;
+      this.#firmware.set(mac, version);
+      this.#log(`device ${mac} runs firmware ${version}`);
+      this.#sync();
     });
     this.#server.on("error", (err) => this.#log(`device server error: ${err.message}`));
 
@@ -512,6 +525,7 @@ export class SidecarApp {
         macTail: macTail(mac),
         online,
         protocolVersion: this.#online.get(mac) ?? null,
+        firmwareVersion: this.#firmware.get(mac) ?? null,
         inputId: config?.inputId ?? null,
         brightness: config?.brightness ?? DEFAULT_BRIGHTNESS,
         // Offline/unknown devices default to WiFi; the indicator only flips to "usb" while cabled.

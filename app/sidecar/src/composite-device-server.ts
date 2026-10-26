@@ -37,6 +37,7 @@ export interface CompositeDeviceServer {
   on(event: "deviceConnected", listener: (info: { mac: string; version: number }) => void): this;
   on(event: "deviceDisconnected", listener: (info: { mac: string }) => void): this;
   on(event: "deviceUnsupported", listener: (info: { mac: string; version: number }) => void): this;
+  on(event: "firmware", listener: (info: { mac: string; version: string }) => void): this;
   on(event: "status", listener: (status: UsbStatus) => void): this;
   on(event: "log", listener: (entry: { mac: string; level: "info" | "warn" | "error"; text: string }) => void): this;
   on(event: "error", listener: (err: Error) => void): this;
@@ -61,6 +62,8 @@ export class CompositeDeviceServer extends EventEmitter implements DeviceServerP
       member.port.on("deviceConnected", ({ mac, version }) => this.#onConnect(index, mac, version));
       member.port.on("deviceDisconnected", ({ mac }) => this.#onDisconnect(index, mac));
       member.port.on("deviceUnsupported", (info) => this.emit("deviceUnsupported", info));
+      // A device fact, not a transport one: forwarded from whichever transport reported it.
+      member.port.on("firmware", (info) => this.emit("firmware", info));
       member.port.on("log", (entry) => this.emit("log", entry));
       member.port.on("error", (err) => this.emit("error", err as Error));
     });

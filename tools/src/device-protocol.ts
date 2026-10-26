@@ -73,6 +73,14 @@ export function encodeHello(mac: string, version: number = PROTOCOL_VERSION.CURR
   return frame(Uint8Array.of(DeviceMessageType.HELLO, version, ...parseMac(mac)));
 }
 
+/**
+ * FIRMWARE — sent right after HELLO: `[type][utf8 version…]`, the firmware's own semver.
+ * Returns a complete frame.
+ */
+export function encodeFirmware(version: string): Uint8Array {
+  return frame(Uint8Array.of(DeviceMessageType.FIRMWARE, ...new TextEncoder().encode(version)));
+}
+
 /** HEARTBEAT — the periodic keep-alive. Carries no MAC; the socket is the identity. */
 export function encodeHeartbeat(): Uint8Array {
   return frame(Uint8Array.of(DeviceMessageType.HEARTBEAT));
