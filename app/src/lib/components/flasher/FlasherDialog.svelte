@@ -73,9 +73,9 @@
 	import * as RadioGroup from "$lib/components/ui/radio-group";
 	import BrightnessBar, { toLevel, LEVELS } from "$lib/components/board/BrightnessBar.svelte";
 	import { TRANSPORT_MODES, BRIDGE_LABEL, BRIDGE_DESC, type TransportMode } from "$lib/components/board/transportModes";
-	import type { Flasher, FlashStage, FlashTarget } from "$lib/mock/flasher.svelte";
-	import { FLASH_STAGES, leavesBlank } from "$lib/mock/flasher.svelte";
-	import type { AppUpdate } from "$lib/mock/updater.svelte";
+	import type { Flasher, FlashStage, FlashTarget } from "$lib/flasher/flasher";
+	import { FLASH_STAGES, leavesBlank } from "$lib/flasher/flasher";
+	import type { AppUpdate } from "$lib/updater/updater";
 	import Cpu from "@lucide/svelte/icons/cpu";
 	import Usb from "@lucide/svelte/icons/usb";
 	import Check from "@lucide/svelte/icons/check";

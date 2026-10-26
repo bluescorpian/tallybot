@@ -12,7 +12,7 @@
 	import * as Dialog from "$lib/components/ui/dialog";
 	import { Button } from "$lib/components/ui/button";
 	import { Progress } from "$lib/components/ui/progress";
-	import type { Updater } from "$lib/mock/updater.svelte";
+	import type { Updater } from "$lib/updater/updater";
 	import CircleArrowUp from "@lucide/svelte/icons/circle-arrow-up";
 	import CircleCheck from "@lucide/svelte/icons/circle-check";
 	import CircleX from "@lucide/svelte/icons/circle-x";

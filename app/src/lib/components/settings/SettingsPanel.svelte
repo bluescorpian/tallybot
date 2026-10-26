@@ -40,7 +40,7 @@
 	import { Input } from "$lib/components/ui/input";
 	import { Switch } from "$lib/components/ui/switch";
 	import { Badge } from "$lib/components/ui/badge";
-	import type { Updater } from "$lib/mock/updater.svelte";
+	import type { Updater } from "$lib/updater/updater";
 
 	// Host hooks:
 	//  • onsave  — fired after Save commits a *changed* IP, so a host can mirror the

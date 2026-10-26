@@ -28,8 +28,10 @@
 	} from "$lib/components/flasher/FlasherDialog.svelte";
 	import UpdateDialog from "$lib/components/updates/UpdateDialog.svelte";
 	import type { InstallPill, UpdatePill } from "$lib/components/chrome/TitleBar.svelte";
-	import { MockFlasher, leavesBlank, type FlashFailure } from "$lib/mock/flasher.svelte";
-	import { MockUpdater, isNewer, newerFirmwareUpdate } from "$lib/mock/updater.svelte";
+	import { MockFlasher } from "$lib/mock/flasher.svelte";
+	import { leavesBlank, type FlashFailure } from "$lib/flasher/flasher";
+	import { MockUpdater } from "$lib/mock/updater.svelte";
+	import { isNewer, newerFirmwareUpdate } from "$lib/updater/updater";
 	import LoaderCircle from "@lucide/svelte/icons/loader-circle";
 
 	// ── Live wiring (Tauri) ────────────────────────────────────────────────────

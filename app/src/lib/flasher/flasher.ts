@@ -1,0 +1,55 @@
+// The firmware flasher's contract: what the flasher UI reads and calls. Two drivers implement
+// it — `TauriFlasher` (./tauri.svelte.ts: espflash in the Rust shell, `src-tauri/src/flash.rs`)
+// and `MockFlasher` ($lib/mock: fake operations, for the browser preview and `?demo=` states).
+//
+// Rule: the flasher only ever writes the firmware bundled with THIS app (`firmwareVersion`),
+// never "latest" — an app and a firmware from different releases can disagree on the protocol.
+// A newer firmware is reached by updating the app.
+
+/** What is being flashed: a board with no TallyBot firmware, or a known light. */
+export type FlashTarget =
+	| { kind: "blank"; port: string }
+	| { kind: "light"; mac: string; label: string; port: string };
+
+/**
+ * The stages of one flash, in order. `rejoin` is the native-USB tail: the ESP32-C3 resets,
+ * its USB port disappears and re-enumerates, and the light reconnects to the engine.
+ */
+export const FLASH_STAGES = ["connect", "erase", "write", "verify", "restart", "rejoin"] as const;
+export type FlashStage = (typeof FLASH_STAGES)[number];
+
+/**
+ * The failures worth a tailored fix:
+ *   no-response — the chip didn't enter download mode (fix: hold BOOT while plugging in)
+ *   port-busy   — another program holds the serial port
+ *   unplugged   — the cable came out mid-write (board left blank, recoverable)
+ */
+export type FlashFailure = "no-response" | "port-busy" | "unplugged";
+
+export type FlashState =
+	| { status: "idle" }
+	/** `progress` is 0–1 within the `write` stage, and 0 elsewhere. */
+	| { status: "running"; target: FlashTarget; stage: FlashStage; progress: number }
+	/** `mac` is the light the board came back as (new for a blank board). */
+	| { status: "done"; target: FlashTarget; mac: string }
+	| { status: "failed"; target: FlashTarget; stage: FlashStage; failure: FlashFailure; detail: string }
+	| { status: "cancelled"; target: FlashTarget; stage: FlashStage };
+
+export interface Flasher {
+	/** The firmware bundled with this app — the only version it flashes. */
+	readonly firmwareVersion: string;
+	readonly state: FlashState;
+	start(target: FlashTarget): void;
+	/** Abort a running flash. Leaves the board blank (recoverable by flashing again). */
+	cancel(): void;
+	/** Back to idle once the UI has shown the outcome. */
+	reset(): void;
+}
+
+/**
+ * Whether stopping or failing at `stage` leaves the board without firmware. Before erase nothing
+ * was touched; once the write is done the new firmware is in place and comes back on its own.
+ */
+export function leavesBlank(stage: FlashStage): boolean {
+	return stage === "erase" || stage === "write";
+}
