@@ -30,8 +30,9 @@ function shortMac(mac: string): string {
 }
 
 /**
- * Provisioning fields a light carries straight through from the device snapshot
- * (the wired indicator + the Configure pane read these). `provisionedMode`/`ssid`
+ * Provisioning and firmware fields a light carries straight through from the device
+ * snapshot (the wired indicator, the Configure pane and the firmware-update row read
+ * these). `provisionedMode`/`ssid`
  * are optional on the wire (older sidecar builds omit them) → default to null.
  */
 function provisioning(d: Device) {
@@ -43,6 +44,9 @@ function provisioning(d: Device) {
 		rssi: d.rssi,
 		protocolVersion: d.protocolVersion,
 		bridge: d.bridge ?? false,
+		firmwareOutdated: d.firmwareOutdated,
+		// not on the wire yet: devices report a protocol version, not a firmware version
+		firmwareVersion: null,
 	};
 }
 

@@ -1,11 +1,23 @@
+<script lang="ts" module>
+	/**
+	 * An app update worth surfacing, if any. It shows as a small, static pill beside the gear:
+	 * there when you look for it, never a popup or an animation mid-show.
+	 */
+	export type UpdatePill =
+		| { kind: "available"; version: string }
+		| { kind: "downloading"; progress: number }
+		| { kind: "ready" };
+</script>
+
 <script lang="ts">
 	// Custom frameless titlebar (DESIGN.md → "App chrome"). The native OS titlebar
 	// is off (`decorations: false` in tauri.conf.json); this bar replaces it.
 	// Flat UI language (zinc / Inter), not the neumorphic board surface.
 	//
-	// Left: the TallyBot wordmark. Right: settings gear, then the window controls
-	// (minimize / maximize-restore / close). The bar itself is the drag region;
-	// the interactive cluster is excluded so its buttons stay clickable.
+	// Left: the TallyBot wordmark. Right: the app-update pill (only when there's an update),
+	// settings gear, then the window controls (minimize / maximize-restore / close). The bar
+	// itself is the drag region; the interactive cluster is excluded so its buttons stay
+	// clickable.
 	import { getCurrentWindow } from "@tauri-apps/api/window";
 	import { onMount, onDestroy } from "svelte";
 	import Wordmark from "./Wordmark.svelte";
@@ -14,8 +26,14 @@
 	import SquareIcon from "@lucide/svelte/icons/square";
 	import CopyIcon from "@lucide/svelte/icons/copy";
 	import XIcon from "@lucide/svelte/icons/x";
+	import CircleArrowUp from "@lucide/svelte/icons/circle-arrow-up";
+	import RotateCw from "@lucide/svelte/icons/rotate-cw";
 
-	let { onsettings }: { onsettings: () => void } = $props();
+	let {
+		onsettings,
+		update = null,
+		onupdate,
+	}: { onsettings: () => void; update?: UpdatePill | null; onupdate?: () => void } = $props();
 
 	// Window controls only work inside the Tauri webview. Under `pnpm dev` in a
 	// plain browser (e.g. screenshot verification) the bar still renders fully, but
@@ -47,6 +65,36 @@
 	<Wordmark />
 
 	<div class="controls">
+		{#if update}
+			<button
+				class="update-pill"
+				onclick={onupdate}
+				title={update.kind === "available"
+					? `TallyBot ${update.version} is available`
+					: update.kind === "downloading"
+						? "Downloading the update"
+						: "Restart TallyBot to install the update"}
+			>
+				{#if update.kind === "downloading"}
+					<!-- a determinate ring, so progress reads without opening anything -->
+					<svg class="ring" viewBox="0 0 16 16" aria-hidden="true">
+						<circle cx="8" cy="8" r="6" class="ring-track" />
+						<circle
+							cx="8"
+							cy="8"
+							r="6"
+							class="ring-fill"
+							stroke-dasharray={`${update.progress * 37.7} 37.7`}
+						/>
+					</svg>
+					Downloading {Math.round(update.progress * 100)}%
+				{:else if update.kind === "ready"}
+					<RotateCw class="size-[14px]" /> Restart to update
+				{:else}
+					<CircleArrowUp class="size-[14px]" /> Update available
+				{/if}
+			</button>
+		{/if}
 		<button
 			class="tb-btn"
 			onclick={onsettings}
@@ -136,6 +184,49 @@
 	.tb-btn:focus-visible {
 		outline: 2px solid var(--primary);
 		outline-offset: 2px;
+	}
+
+	/* App-update pill: the UI accent, tinted rather than filled, so it never competes with
+	   the board's tally colours. */
+	.update-pill {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		height: 26px;
+		margin-right: 6px;
+		padding: 0 10px 0 8px;
+		border-radius: 999px;
+		border: 1px solid color-mix(in oklch, var(--primary), transparent 70%);
+		background: color-mix(in oklab, var(--primary), var(--background) 92%);
+		color: var(--primary);
+		font-size: 0.75rem;
+		font-weight: 500;
+		white-space: nowrap;
+		cursor: pointer;
+		transition: background 0.14s ease;
+	}
+	.update-pill:hover {
+		background: color-mix(in oklab, var(--primary), var(--background) 84%);
+	}
+	.update-pill:focus-visible {
+		outline: 2px solid var(--primary);
+		outline-offset: 2px;
+	}
+	.ring {
+		width: 14px;
+		height: 14px;
+		transform: rotate(-90deg);
+	}
+	.ring circle {
+		fill: none;
+		stroke-width: 2.5;
+	}
+	.ring-track {
+		stroke: color-mix(in oklch, var(--primary), transparent 75%);
+	}
+	.ring-fill {
+		stroke: var(--primary);
+		stroke-linecap: round;
 	}
 
 	.tb-close:hover {

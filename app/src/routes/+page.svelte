@@ -7,7 +7,7 @@
 	// $lib/ipc.svelte); in a plain browser (pnpm dev, the /preview design workflow)
 	// there's no sidecar, so the page falls back to the Phase-4 MOCK below — same
 	// shape, local data — so the board still renders and design iteration works.
-	import { onMount, onDestroy } from "svelte";
+	import { onMount, onDestroy, untrack } from "svelte";
 	import type { AppState, Device, Input, Tally } from "$ipc";
 	import Board from "$lib/components/board/Board.svelte";
 	import { sidecarLost, toBoardProps } from "$lib/boardState";
@@ -21,6 +21,12 @@
 	import SettingsSheet from "$lib/components/settings/SettingsSheet.svelte";
 	import TitleBar from "$lib/components/chrome/TitleBar.svelte";
 	import Credit from "$lib/components/chrome/Credit.svelte";
+	import FlasherSheet, { type FlashJob } from "$lib/components/flasher/FlasherSheet.svelte";
+	import UpdateDialog from "$lib/components/updates/UpdateDialog.svelte";
+	import type { UpdatePill } from "$lib/components/chrome/TitleBar.svelte";
+	import { MockFlasher, type FlashFailure } from "$lib/mock/flasher.svelte";
+	import { MockUpdater, newerFirmwareUpdate } from "$lib/mock/updater.svelte";
+	import LoaderCircle from "@lucide/svelte/icons/loader-circle";
 
 	// ── Live wiring (Tauri) ────────────────────────────────────────────────────
 	onMount(() => void sidecar.start());
@@ -45,8 +51,18 @@
 	//   hero        — the README screenshot (see HERO_DEVICES below)
 	//   firstrun    — no ATEM saved, no lights: the scaffold + the "No lights yet" hint
 	//   unreachable — a saved ATEM that never answers: the banner lands after the real delay
-	//   unflashed   — a board with no TallyBot firmware on USB: the flasher notice
+	//   unflashed   — a blank board (no TallyBot firmware) on USB: the notice whose
+	//                 "Set up as a light" opens the in-app flasher drawer
+	//   outdated    — two lights on older firmware (1.0.1): A4:F2 (11:22) wired + live on Cam 1 (the
+	//                 "goes dark while live" warning), B2:5A (ee:ff) wireless on Cam 4 (plug-in step);
+	//                 each shows the update badge, and an "Update firmware" row in its menu
+	//   update      — a newer TallyBot (1.1.0) is out: the titlebar pill, the update dialog
+	//                 (download → restart now / later), and Settings → About → Updates
+	//   newerfw     — unflashed + outdated + update together: the flasher's review step says
+	//                 TallyBot 1.1.0 ships newer firmware and offers "Update TallyBot first"
 	//   enginedown  — the sidecar crashed and is restarting: the error notice + dimmed board
+	// `?fail=noresponse|busy|unplugged` makes the next flash fail that way (a retry succeeds);
+	// `?fail=download` makes the app-update download fail once.
 	// `?wifi=connected|weak|joining|failed` sets the wired A4:F2 light's live join state,
 	// shown on its Configure → Wi-Fi page.
 	const params = new URLSearchParams(location.search);
@@ -56,6 +72,8 @@
 	); // ATEM source lifecycle
 	let override = $state(false); // OBS override active? (hidden source in v1)
 	let settingsOpen = $state(false); // settings drawer (Sheet) open?
+	const showOutdated = demo === "outdated" || demo === "newerfw";
+	const fail = params.get("fail");
 
 	// Only a fully connected source can be trusted; everything else greys the
 	// board (keys idle, gate inert, assigned lights flash fault).
@@ -82,6 +100,7 @@
 	let devices = $state<Device[]>(demo === "hero" ? HERO_DEVICES : demo === "firstrun" ? [] : [
 		mock("a4:f2:01:00:11:22", "A4:F2", "assigned", 1, {
 			transport: "usb",
+			firmwareOutdated: showOutdated,
 			provisionedMode: "wifi",
 			ssid: "GreenRoom-5G",
 			wifiState:
@@ -93,6 +112,7 @@
 		mock("c1:08:01:00:77:88", "C1:08", "offline", 3),
 		mock("b2:5a:01:00:ee:ff", "B2:5A", "assigned", 4, {
 			transport: "espnow",
+			firmwareOutdated: showOutdated,
 			provisionedMode: "espnow",
 			protocolVersion: 3,
 		}),
@@ -124,6 +144,7 @@
 				| "rssi"
 				| "protocolVersion"
 				| "bridge"
+				| "firmwareOutdated"
 			>
 		> = {},
 	): Device {
@@ -134,7 +155,7 @@
 			inputId,
 			brightness: 128,
 			protocolVersion: opts.protocolVersion ?? (opts.transport === "usb" ? 2 : 1),
-			firmwareOutdated: false,
+			firmwareOutdated: opts.firmwareOutdated ?? false,
 			transport: opts.transport ?? "wifi",
 			provisionedMode: opts.provisionedMode ?? null,
 			ssid: opts.ssid ?? null,
@@ -199,6 +220,13 @@
 	// the rig with every light offline and the source reconnecting — never old tally.
 	const engineDown = $derived(isTauri ? sidecar.stale : demo === "enginedown");
 	const props = $derived(toBoardProps(engineDown ? sidecarLost(appState) : appState));
+	// Devices don't report a firmware version yet (only a protocol version); the mock knows
+	// one per light so the flasher can show "1.0.1 → 1.0.3".
+	const lights = $derived(
+		isTauri
+			? props.lights
+			: props.lights.map((l) => ({ ...l, firmwareVersion: mockFirmware[l.mac] ?? null })),
+	);
 
 	// Command handlers: under Tauri they send the real UiCommand; otherwise they
 	// mutate the mock device list the engine would normally own.
@@ -281,6 +309,111 @@
 		connectTimer = setTimeout(() => (sourceMode = "connected"), 1600);
 	}
 
+	// ── Firmware flasher + app updater (mock drivers) ─────────────────────────
+	// Both run on fake drivers until the real ones land (espflash in the shell; the Tauri
+	// updater plugin). Under Tauri they stay out of the way: a blank board keeps pointing at
+	// the web flasher and no update is offered, so a hardware session never fakes a flash.
+	const mockOnly = !isTauri;
+	const flasher = new MockFlasher({
+		failOnce: ({ noresponse: "no-response", busy: "port-busy", unplugged: "unplugged" } as const)[
+			fail as "noresponse" | "busy" | "unplugged"
+		] as FlashFailure | undefined,
+	});
+	const updater = new MockUpdater({
+		available: demo === "update" || demo === "newerfw",
+		failDownload: fail === "download",
+	});
+	let updateOpen = $state(false);
+
+	/** Firmware each mock light runs (MAC → version); everything not outdated is current. */
+	let mockFirmware = $state<Record<string, string>>(
+		Object.fromEntries(
+			devices.map((d) => [d.mac, d.firmwareOutdated ? "1.0.1" : flasher.firmwareVersion]),
+		),
+	);
+	let mockUnflashed = $state<string[]>(demo === "unflashed" || demo === "newerfw" ? ["COM5"] : []);
+
+	// What the flasher drawer is working on. Resolved from live state each time, so a wireless
+	// light gains its port the moment it's plugged in.
+	type FlashRequest = { kind: "blank"; port: string } | { kind: "light"; mac: string };
+	let flashRequest = $state<FlashRequest | null>(null);
+	let flashOpen = $state(false);
+	const flashJob = $derived.by<FlashJob | null>(() => {
+		const r = flashRequest;
+		if (!r) return null;
+		if (r.kind === "blank")
+			return { kind: "blank", port: r.port, mac: null, label: null, fromVersion: null, input: null };
+		const d = devices.find((x) => x.mac === r.mac);
+		if (!d) return null;
+		const input = inputs.find((i) => i.id === d.inputId);
+		return {
+			kind: "light",
+			// the shell would know the real port; the mock pretends
+			port: d.transport === "usb" ? "COM7" : null,
+			mac: d.mac,
+			// the board labels a light by the last two octets of its MAC
+			label: d.mac.split(":").slice(-2).join(":"),
+			fromVersion: mockFirmware[d.mac] ?? null,
+			input: input ? { label: input.label, live: input.tally === "live" } : null,
+		};
+	});
+	function openFlasher(r: FlashRequest) {
+		flashRequest = r;
+		flashOpen = true;
+	}
+	const newerUpdate = $derived(newerFirmwareUpdate(updater.state, flasher.firmwareVersion));
+
+	// Mock: a wireless light the user was asked to plug in "arrives" over USB after a moment.
+	$effect(() => {
+		const job = flashJob;
+		if (!mockOnly || !flashOpen || job?.kind !== "light" || job.port !== null) return;
+		const mac = job.mac;
+		const t = setTimeout(() => {
+			const d = devices.find((x) => x.mac === mac);
+			if (d) d.transport = "usb";
+		}, 3500);
+		return () => clearTimeout(t);
+	});
+
+	// Mock: mirror what the engine would report while a light is flashed — it drops offline
+	// once the board starts erasing, and comes back (current firmware) when it rejoins. A blank
+	// board leaves the unflashed list and lands in the dock as a new, unassigned light.
+	let preFlashState: Device["state"] | null = null;
+	$effect(() => {
+		const s = flasher.state;
+		if (!mockOnly) return;
+		untrack(() => {
+			if (s.status === "idle") return;
+			const t = s.target;
+			const d = t.kind === "light" ? devices.find((x) => x.mac === t.mac) : undefined;
+			if (s.status === "running" && d && s.stage !== "connect" && d.state !== "offline") {
+				preFlashState = d.state;
+				d.state = "offline";
+			} else if (s.status === "done") {
+				if (d) {
+					d.state = preFlashState ?? d.state;
+					d.firmwareOutdated = false;
+				} else if (t.kind === "blank" && !devices.some((x) => x.mac === s.mac)) {
+					mockUnflashed = mockUnflashed.filter((p) => p !== t.port);
+					devices.push(mock(s.mac, "E7:5B", "unassigned", null, { transport: "usb", protocolVersion: 3 }));
+				}
+				mockFirmware[s.mac] = flasher.firmwareVersion;
+				preFlashState = null;
+			}
+		});
+	});
+
+	// Titlebar pill: only once there's something to act on, and never as a popup.
+	const updatePill = $derived.by<UpdatePill | null>(() => {
+		const s = updater.state;
+		if (!mockOnly) return null;
+		if (s.status === "available" || s.status === "error") return { kind: "available", version: s.update?.version ?? "" };
+		if (s.status === "downloading") return { kind: "downloading", progress: s.received / s.update.sizeBytes };
+		if (s.status === "ready") return { kind: "ready" };
+		return null;
+	});
+	const restarting = $derived(updater.state.status === "restarting");
+
 	// ── Notices — compact cards floating in the board's bottom-right corner ─────
 	// The board is left-aligned, so that corner is empty dot-grid at any width; a card there
 	// keeps its action and × next to the text and never pushes the board down.
@@ -327,10 +460,10 @@
 			: {
 					sidecarDown: demo === "enginedown" ? "exit code 1" : null,
 					usbPortErrors: [],
-					unflashedPorts: demo === "unflashed" ? ["COM5"] : [],
+					unflashedPorts: mockUnflashed,
 				},
 	);
-	const openFlasher = () =>
+	const openWebFlasher = () =>
 		isTauri ? void openUrl(FLASHER_URL) : void window.open(FLASHER_URL, "_blank");
 	let dismissed = $state<Record<string, string>>({});
 	let dismissedNotice = $state<unknown>(null);
@@ -360,12 +493,33 @@
 			list.push({ key: `usb:${e.port}`, level: "warn", message: e.message, dismissible: true });
 		}
 		for (const port of health.unflashedPorts) {
+			if (mockOnly) {
+				// the drawer already says everything while it's working on this board
+				if (flashOpen && flashRequest?.kind === "blank" && flashRequest.port === port) continue;
+				list.push({
+					key: `unflashed:${port}`,
+					level: "info",
+					message: `A new board on ${port} has no TallyBot firmware yet. Set it up as a light in about a minute; your other lights stay live.`,
+					dismissible: true,
+					action: { label: "Set up as a light", run: () => openFlasher({ kind: "blank", port }) },
+				});
+				continue;
+			}
 			list.push({
 				key: `unflashed:${port}`,
 				level: "info",
 				message: `The board on ${port} doesn't have TallyBot firmware yet. Flash it with the web flasher (TallyBot can stay open), then unplug it and plug it back in.`,
 				dismissible: true,
-				action: { label: "Open flasher", run: openFlasher },
+				action: { label: "Open flasher", run: openWebFlasher },
+			});
+		}
+		const justUpdated = updater.state.status === "current" ? updater.state.justUpdated : undefined;
+		if (justUpdated) {
+			list.push({
+				key: "updated",
+				level: "info",
+				message: `TallyBot is updated to ${justUpdated}.`,
+				dismissible: true,
 			});
 		}
 		const n = sidecar.notice;
@@ -382,7 +536,11 @@
 
 <div class="page">
 	<!-- custom frameless titlebar — the gear opens the settings drawer (DESIGN.md) -->
-	<TitleBar onsettings={() => (settingsOpen = true)} />
+	<TitleBar
+		onsettings={() => (settingsOpen = true)}
+		update={updatePill}
+		onupdate={() => (updateOpen = true)}
+	/>
 
 	<SettingsSheet
 		bind:open={settingsOpen}
@@ -392,12 +550,30 @@
 		autostart={isTauri ? autostart : undefined}
 		onscan={isTauri ? () => sidecar.scanSources() : undefined}
 		scanResult={isTauri ? sidecar.scan : null}
+		updater={mockOnly ? updater : undefined}
+		onviewupdate={() => {
+			settingsOpen = false;
+			updateOpen = true;
+		}}
 	/>
+
+	<FlasherSheet
+		bind:open={flashOpen}
+		job={flashJob}
+		{flasher}
+		{newerUpdate}
+		onupdateapp={() => {
+			flashOpen = false;
+			updateOpen = true;
+		}}
+	/>
+
+	<UpdateDialog bind:open={updateOpen} {updater} />
 
 	<div class="stage">
 		<Board
 			inputs={props.inputs}
-			lights={props.lights}
+			{lights}
 			sourceStatus={props.sourceStatus}
 			sourceConnected={props.sourceConnected}
 			sourceIp={props.sourceIp}
@@ -411,6 +587,7 @@
 			onprovisionwifi={provisionWifi}
 			onsettransport={setTransport}
 			onsetbridge={setBridge}
+			onupdatefirmware={mockOnly ? (mac) => openFlasher({ kind: "light", mac }) : undefined}
 			onsetup={setup}
 			oninputclick={devMode ? onInputClick : undefined}
 		/>
@@ -456,6 +633,16 @@
 	{/if}
 
 	<Credit />
+
+	{#if restarting}
+		<!-- Installing an update: the app (and engine) restart. Over everything but the titlebar,
+		     so it's unmistakable why the board went quiet. -->
+		<div class="restarting" role="status" transition:fly={{ y: 8, duration: 160 }}>
+			<LoaderCircle class="size-6 animate-spin" />
+			<p class="restarting-title">Restarting TallyBot to finish the update…</p>
+			<p class="restarting-sub">Lights reconnect by themselves in a few seconds.</p>
+		</div>
+	{/if}
 </div>
 
 <style>
@@ -557,6 +744,28 @@
 		border: none;
 		border-radius: 6px;
 		cursor: pointer;
+	}
+	.restarting {
+		position: absolute;
+		inset: var(--titlebar-h) 0 0 0;
+		z-index: 55;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 6px;
+		color: var(--foreground);
+		background: color-mix(in oklch, var(--board), transparent 12%);
+		backdrop-filter: blur(4px);
+	}
+	.restarting-title {
+		margin-top: 8px;
+		font-size: 0.95rem;
+		font-weight: 600;
+	}
+	.restarting-sub {
+		font-size: 0.8rem;
+		color: var(--muted-foreground);
 	}
 	.close:hover {
 		color: var(--foreground);

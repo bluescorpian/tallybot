@@ -17,6 +17,7 @@
 		class: className,
 		side = "right",
 		showCloseButton = true,
+		overlayClass,
 		portalProps,
 		children,
 		...restProps
@@ -24,12 +25,14 @@
 		portalProps?: WithoutChildrenOrChild<ComponentProps<typeof SheetPortal>>;
 		side?: Side;
 		showCloseButton?: boolean;
+		/** Extra classes for the backdrop (e.g. a lighter, unblurred one that keeps the board readable). */
+		overlayClass?: string;
 		children: Snippet;
 	} = $props();
 </script>
 
 <SheetPortal {...portalProps}>
-	<SheetOverlay />
+	<SheetOverlay class={overlayClass} />
 	<SheetPrimitive.Content
 		bind:ref
 		data-slot="sheet-content"

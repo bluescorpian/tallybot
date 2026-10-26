@@ -27,6 +27,8 @@
 		autostart,
 		onscan,
 		scanResult = null,
+		updater,
+		onviewupdate,
 	}: {
 		open?: boolean;
 		source?: Source | null;
@@ -37,6 +39,8 @@
 		// scan to the real subnet sweep, driven by `scanResult` (the latest event).
 		onscan?: () => void;
 		scanResult?: SourceScanEvent | null;
+		updater?: ComponentProps<typeof SettingsPanel>["updater"];
+		onviewupdate?: () => void;
 	} = $props();
 
 	// mirrors the panel's unsaved-changes state; guards accidental dismissal
@@ -73,6 +77,8 @@
 				{autostart}
 				{onscan}
 				{scanResult}
+				{updater}
+				{onviewupdate}
 				bind:dirty
 				onclose={() => (open = false)}
 			/>

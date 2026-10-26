@@ -58,6 +58,8 @@
 		onsettransport?: (mac: string, mode: "wifi" | "notx" | "espnow") => void;
 		/** Designate (mac) / un-designate (null) the ESP-NOW bridge device. */
 		onsetbridge?: (mac: string | null) => void;
+		/** Open the firmware updater for this light (the flasher drawer). */
+		onupdatefirmware?: (mac: string) => void;
 		/**
 		 * Dev mode only: clicking an input key takes it to program on the fake ATEM.
 		 * When omitted (production / real ATEM) the keys stay non-interactive.
@@ -80,6 +82,7 @@
 		onprovisionwifi,
 		onsettransport,
 		onsetbridge,
+		onupdatefirmware,
 		onsetup,
 		oninputclick,
 	}: Props = $props();
@@ -413,6 +416,9 @@
 							rssi={light.rssi}
 							protocolVersion={light.protocolVersion}
 							bridge={light.bridge}
+							firmwareVersion={light.firmwareVersion}
+							firmwareOutdated={light.firmwareOutdated}
+							onupdatefirmware={() => onupdatefirmware?.(light.mac)}
 							onassign={(id) => onassign?.(light.mac, id)}
 							onunassign={() => onunassign?.(light.mac)}
 							onflash={() => flash(light.mac)}
@@ -450,6 +456,7 @@
 					onprovisionwifi={(mac, s, p) => onprovisionwifi?.(mac, s, p)}
 					onsettransport={(mac, m) => onsettransport?.(mac, m)}
 					onsetbridge={(mac) => onsetbridge?.(mac)}
+					onupdatefirmware={(mac) => onupdatefirmware?.(mac)}
 				/>
 			</div>
 		{:else if noLights}

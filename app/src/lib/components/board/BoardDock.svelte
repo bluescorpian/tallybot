@@ -25,6 +25,8 @@
 		onsettransport?: (mac: string, mode: "wifi" | "notx" | "espnow") => void;
 		/** Designate (mac) / un-designate (null) the ESP-NOW bridge device. */
 		onsetbridge?: (mac: string | null) => void;
+		/** Open the firmware updater for this light (the flasher drawer). */
+		onupdatefirmware?: (mac: string) => void;
 	}
 	let {
 		lights,
@@ -36,6 +38,7 @@
 		onprovisionwifi,
 		onsettransport,
 		onsetbridge,
+		onupdatefirmware,
 	}: Props = $props();
 </script>
 
@@ -61,6 +64,9 @@
 					rssi={light.rssi}
 					protocolVersion={light.protocolVersion}
 					bridge={light.bridge}
+					firmwareVersion={light.firmwareVersion}
+					firmwareOutdated={light.firmwareOutdated}
+					onupdatefirmware={() => onupdatefirmware?.(light.mac)}
 					onassign={(id) => onassign?.(light.mac, id)}
 					onflash={() => onflash?.(light.mac)}
 					onbrightness={(v) => onbrightness?.(light.mac, v)}

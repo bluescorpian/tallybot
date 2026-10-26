@@ -41,6 +41,9 @@
 	import Usb from "@lucide/svelte/icons/usb";
 	import Settings2 from "@lucide/svelte/icons/settings-2";
 	import Network from "@lucide/svelte/icons/network";
+	import CircleArrowUp from "@lucide/svelte/icons/circle-arrow-up";
+	import ArrowUp from "@lucide/svelte/icons/arrow-up";
+	import ChevronRight from "@lucide/svelte/icons/chevron-right";
 
 	interface Props {
 		mac: string;
@@ -78,6 +81,12 @@
 		onsettransport?: (mode: "wifi" | "notx" | "espnow") => void;
 		/** Designate (true) / un-designate (false) this device as the ESP-NOW bridge. */
 		onsetbridge?: (enabled: boolean) => void;
+		/** Firmware older than this app ships: badge the light and offer an update row. */
+		firmwareOutdated?: boolean;
+		/** The light's firmware version, when known (null today outside the mock). */
+		firmwareVersion?: string | null;
+		/** Start the firmware update (the host opens the flasher drawer). */
+		onupdatefirmware?: () => void;
 		open?: boolean;
 	}
 	let {
@@ -101,6 +110,9 @@
 		onprovisionwifi,
 		onsettransport,
 		onsetbridge,
+		firmwareOutdated = false,
+		firmwareVersion = null,
+		onupdatefirmware,
 		open = $bindable(false),
 	}: Props = $props();
 
@@ -129,6 +141,10 @@
 		if (id !== currentInputId) onassign?.(id);
 		open = false;
 	}
+	function updateFirmware() {
+		open = false;
+		onupdatefirmware?.();
+	}
 	function unassign() {
 		onunassign?.();
 		open = false;
@@ -140,6 +156,12 @@
 		{#snippet child({ props })}
 			<button {...props} class="light-trigger" aria-label={`Light ${mac} — assign or flash`}>
 				<TallyLightPcb {mac} {label} state={lightState} {wired} />
+				{#if firmwareOutdated}
+					<!-- Static badge on the corner, like an app-icon badge: findable at a glance,
+					     never animated, so it doesn't pull focus mid-show. Drawn on the trigger so
+					     the locked PCB primitive stays untouched. -->
+					<span class="fw-badge" title="Firmware update available"><ArrowUp class="size-2.5" strokeWidth={3} /></span>
+				{/if}
 			</button>
 		{/snippet}
 	</PopoverTrigger>
@@ -223,6 +245,33 @@
 
 		<div class="bg-border h-px"></div>
 
+		{#if firmwareOutdated}
+			<!-- Firmware update: first under the header, since it's the one thing on this light
+			     that wants attention. Opens the flasher drawer; a wireless light is walked
+			     through plugging in there, so the row is always clickable. -->
+			<button
+				type="button"
+				class="bg-primary/5 hover:bg-primary/10 focus-visible:bg-primary/10 flex w-full cursor-pointer items-center gap-2.5 px-3 py-2.5 text-left outline-none transition-colors"
+				onclick={updateFirmware}
+			>
+				<CircleArrowUp class="text-primary size-4 shrink-0" />
+				<span class="min-w-0 flex-1">
+					<span class="block text-sm leading-tight font-medium">Update firmware</span>
+					<span class="text-muted-foreground block text-[0.68rem] leading-tight">
+						{#if !wired}
+							Needs a USB cable
+						{:else if firmwareVersion}
+							<span class="font-mono">{firmwareVersion}</span> installed
+						{:else}
+							About a minute, over USB
+						{/if}
+					</span>
+				</span>
+				<ChevronRight class="text-muted-foreground size-4 shrink-0" />
+			</button>
+			<div class="bg-border h-px"></div>
+		{/if}
+
 		<!-- Brightness: per-device LED level (0–10, 0 = off). Always shown — applies
 		     whether the light is assigned or sitting in the dock. -->
 		<div class="px-3 py-2.5">
@@ -287,6 +336,7 @@
 	/* Trigger wraps the locked PCB primitive; keep it a clean reset that
 	   preserves the light's press + focus affordance. */
 	.light-trigger {
+		position: relative;
 		display: block;
 		width: 100%;
 		padding: 0;
@@ -298,6 +348,22 @@
 	}
 	.light-trigger:active {
 		transform: translateY(1px);
+	}
+	/* firmware-update badge: the UI accent (never a tally colour), ringed in the board
+	   colour so it reads as sitting on top of the light */
+	.fw-badge {
+		position: absolute;
+		top: -5px;
+		right: -5px;
+		display: grid;
+		place-items: center;
+		width: 16px;
+		height: 16px;
+		border-radius: 50%;
+		background: var(--primary);
+		color: var(--primary-foreground);
+		box-shadow: 0 0 0 2px var(--board);
+		pointer-events: none;
 	}
 	.light-trigger:focus-visible {
 		outline: 2px solid var(--ring);

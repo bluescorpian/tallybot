@@ -1,0 +1,246 @@
+<script lang="ts">
+	// The app-update dialog. Opened from the titlebar's update pill or Settings → About —
+	// never by itself: an operator mid-service shouldn't have a modal appear on them.
+	//
+	// Two deliberate steps, because they cost different things:
+	//   Download   — harmless mid-show (the board and lights carry on); the dialog can be
+	//                closed and the download continues, with the titlebar pill showing progress.
+	//   Restart    — installs the update, which restarts TallyBot and its engine, so every
+	//                light drops for a few seconds. "Later" installs it on the next launch.
+	// A centred dialog rather than a drawer: this is a short decision, not a task you watch
+	// play out on the board.
+	import * as Dialog from "$lib/components/ui/dialog";
+	import { Button } from "$lib/components/ui/button";
+	import { Progress } from "$lib/components/ui/progress";
+	import type { Updater } from "$lib/mock/updater.svelte";
+	import CircleArrowUp from "@lucide/svelte/icons/circle-arrow-up";
+	import CircleCheck from "@lucide/svelte/icons/circle-check";
+	import CircleX from "@lucide/svelte/icons/circle-x";
+	import LoaderCircle from "@lucide/svelte/icons/loader-circle";
+	import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
+	import Cpu from "@lucide/svelte/icons/cpu";
+	import RotateCw from "@lucide/svelte/icons/rotate-cw";
+
+	let { open = $bindable(false), updater }: { open?: boolean; updater: Updater } = $props();
+
+	const st = $derived(updater.state);
+	const update = $derived("update" in st ? st.update : null);
+	const mb = (bytes: number) => (bytes / 1_000_000).toFixed(1);
+	const pct = $derived(
+		st.status === "downloading" ? Math.round((st.received / st.update.sizeBytes) * 100) : 0,
+	);
+	const date = $derived(
+		update
+			? new Date(update.date).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" })
+			: "",
+	);
+
+	function restart() {
+		updater.restart();
+		open = false;
+	}
+</script>
+
+<Dialog.Root bind:open>
+	<Dialog.Content showCloseButton={false} class="gap-0 overflow-hidden rounded-3xl p-0 sm:max-w-[420px]">
+		{#if st.status === "checking"}
+			<div class="center">
+				<LoaderCircle class="text-muted-foreground size-6 animate-spin" />
+				<Dialog.Title class="text-base font-semibold">Checking for updates…</Dialog.Title>
+			</div>
+		{:else if st.status === "current" || st.status === "idle"}
+			<div class="center">
+				<CircleCheck class="size-7 text-[oklch(0.6_0.15_150)]" />
+				<Dialog.Title class="text-base font-semibold">TallyBot is up to date</Dialog.Title>
+				<Dialog.Description>You have the latest version, {updater.currentVersion}.</Dialog.Description>
+			</div>
+			<div class="foot">
+				<Button onclick={() => (open = false)}>OK</Button>
+			</div>
+		{:else if update}
+			<div class="head">
+				<span class="badge"><CircleArrowUp class="size-5" /></span>
+				<div>
+					<Dialog.Title class="text-base leading-tight font-semibold">
+						{st.status === "ready" ? `TallyBot ${update.version} is ready to install` : `TallyBot ${update.version} is available`}
+					</Dialog.Title>
+					<Dialog.Description class="text-[0.8rem]">
+						You have {updater.currentVersion} · released {date}
+					</Dialog.Description>
+				</div>
+			</div>
+
+			<div class="content">
+				{#if st.status === "available" || st.status === "downloading" || st.status === "error"}
+					<div>
+						<p class="label">What's new</p>
+						<ul class="notes">
+							{#each update.notes as note (note)}<li>{note}</li>{/each}
+						</ul>
+					</div>
+					<p class="fw">
+						<Cpu class="size-4 shrink-0" />
+						<span>Comes with light firmware <span class="font-mono">{update.firmwareVersion}</span>. Update each light from its menu afterwards.</span>
+					</p>
+				{/if}
+
+				{#if st.status === "available"}
+					<p class="reassure">Downloading won't interrupt the show. Nothing installs until you choose to restart.</p>
+				{:else if st.status === "downloading"}
+					<div class="dl">
+						<Progress value={pct} class="bg-foreground/10 h-1.5" />
+						<span class="dl-meta">
+							<span>Downloading…</span>
+							<span class="font-mono">{mb(st.received)} / {mb(update.sizeBytes)} MB</span>
+						</span>
+					</div>
+				{:else if st.status === "error"}
+					<p class="err"><CircleX class="size-4 shrink-0" /> <span class="select-text">{st.message}</span></p>
+				{:else if st.status === "ready"}
+					<div class="warn">
+						<TriangleAlert class="size-4 shrink-0" />
+						<p>
+							<strong>Restarting takes every light offline for a few seconds</strong> while TallyBot
+							restarts. Do it between services, not during one.
+						</p>
+					</div>
+					<p class="reassure">Choose <strong>Later</strong> and it installs the next time TallyBot starts.</p>
+				{/if}
+			</div>
+
+			<div class="foot">
+				{#if st.status === "available"}
+					<Button variant="ghost" onclick={() => (open = false)}>Not now</Button>
+					<Button onclick={() => updater.download()}>Download · {mb(update.sizeBytes)} MB</Button>
+				{:else if st.status === "downloading"}
+					<span class="foot-note">You can close this — it keeps downloading.</span>
+					<Button variant="ghost" onclick={() => (open = false)}>Hide</Button>
+				{:else if st.status === "error"}
+					<Button variant="ghost" onclick={() => (open = false)}>Close</Button>
+					<Button onclick={() => updater.download()}>Try again</Button>
+				{:else if st.status === "ready"}
+					<Button variant="ghost" onclick={() => (open = false)}>Later</Button>
+					<Button onclick={restart}><RotateCw /> Restart now</Button>
+				{/if}
+			</div>
+		{/if}
+	</Dialog.Content>
+</Dialog.Root>
+
+<style>
+	.center {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 8px;
+		padding: 32px 24px 22px;
+		text-align: center;
+	}
+	.head {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 20px 22px 16px;
+		border-bottom: 1px solid var(--border);
+	}
+	.badge {
+		display: grid;
+		place-items: center;
+		width: 40px;
+		height: 40px;
+		flex: none;
+		border-radius: 12px;
+		color: var(--primary);
+		background: color-mix(in oklab, var(--primary), var(--background) 90%);
+	}
+	.content {
+		display: flex;
+		flex-direction: column;
+		gap: 14px;
+		padding: 16px 22px 18px;
+		background: var(--muted);
+	}
+	.label {
+		font-size: 0.72rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--muted-foreground);
+		margin-bottom: 6px;
+	}
+	.notes {
+		list-style: disc;
+		margin: 0;
+		padding-left: 18px;
+		font-size: 0.84rem;
+		line-height: 1.6;
+	}
+	.fw {
+		display: flex;
+		gap: 9px;
+		font-size: 0.8rem;
+		line-height: 1.45;
+		color: var(--muted-foreground);
+	}
+	.fw :global(svg) {
+		margin-top: 1px;
+	}
+	.reassure {
+		font-size: 0.8rem;
+		line-height: 1.45;
+		color: var(--muted-foreground);
+	}
+	.reassure strong {
+		color: var(--foreground);
+		font-weight: 600;
+	}
+	.dl {
+		display: flex;
+		flex-direction: column;
+		gap: 7px;
+	}
+	.dl-meta {
+		display: flex;
+		justify-content: space-between;
+		font-size: 0.75rem;
+		color: var(--muted-foreground);
+	}
+	.err {
+		display: flex;
+		gap: 8px;
+		font-size: 0.8rem;
+		color: var(--destructive);
+	}
+	.warn {
+		display: flex;
+		gap: 10px;
+		padding: 11px 13px;
+		border-radius: var(--radius-lg);
+		border: 1px solid var(--border);
+		background: var(--background);
+		font-size: 0.8rem;
+		line-height: 1.45;
+	}
+	.warn :global(svg) {
+		margin-top: 1px;
+	}
+	.warn p {
+		margin: 0;
+	}
+	.warn strong {
+		font-weight: 600;
+	}
+	.foot {
+		display: flex;
+		align-items: center;
+		justify-content: flex-end;
+		gap: 8px;
+		padding: 12px 18px;
+		border-top: 1px solid var(--border);
+	}
+	.foot-note {
+		margin-right: auto;
+		font-size: 0.75rem;
+		color: var(--muted-foreground);
+	}
+</style>

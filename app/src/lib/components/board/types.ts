@@ -55,4 +55,14 @@ export interface BoardLight {
 	protocolVersion: number | null;
 	/** True while this device is the designated, device-confirmed ESP-NOW bridge. */
 	bridge: boolean;
+	/**
+	 * The light's firmware is older than the firmware this app ships, so its menu offers an
+	 * update. From the sidecar's `firmwareOutdated` (today: protocol below MIN_SUPPORTED).
+	 */
+	firmwareOutdated: boolean;
+	/**
+	 * The light's firmware version, when known. Devices report only a protocol version today,
+	 * so this is null outside the mock; the UI copes with it missing.
+	 */
+	firmwareVersion: string | null;
 }

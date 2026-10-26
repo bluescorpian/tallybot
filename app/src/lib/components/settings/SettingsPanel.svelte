@@ -40,6 +40,7 @@
 	import { Input } from "$lib/components/ui/input";
 	import { Switch } from "$lib/components/ui/switch";
 	import { Badge } from "$lib/components/ui/badge";
+	import type { Updater } from "$lib/mock/updater.svelte";
 
 	// Host hooks:
 	//  • onsave  — fired after Save commits a *changed* IP, so a host can mirror the
@@ -54,6 +55,8 @@
 	//    connection feedback.
 	//  • onrestart — restart the engine; resolves once it's back.
 	//  • autostart — read / set the OS login item behind "Launch on system startup".
+	//  • updater   — the app updater, for the About card's Updates row (check inline;
+	//    anything past "available" opens the update dialog via `onviewupdate`).
 	let {
 		source = null,
 		onsave,
@@ -62,6 +65,8 @@
 		autostart,
 		onscan,
 		scanResult = null,
+		updater,
+		onviewupdate,
 		dirty = $bindable(false),
 	}: {
 		source?: Source | null;
@@ -77,6 +82,8 @@
 		// absent (the /preview design workflow) the mock sweep below runs instead.
 		onscan?: () => void;
 		scanResult?: SourceScanEvent | null;
+		updater?: Updater;
+		onviewupdate?: () => void;
 		dirty?: boolean;
 	} = $props();
 
@@ -437,9 +444,49 @@
 						<span
 							class="mono-val select-text"
 							title="Device protocol v{PROTOCOL_VERSION.CURRENT} (supports v{PROTOCOL_VERSION.MIN_SUPPORTED} and up)"
-							>{APP_VERSION}</span
+							>{updater?.currentVersion ?? APP_VERSION}</span
 						>
 					</div>
+
+					{#if updater}
+						{@const us = updater.state}
+						<!-- Updates: checking happens inline (a quiet result, no popup); once there's
+						     something to act on, the button opens the update dialog. -->
+						<div class="row">
+							<div class="label-col">
+								<span class="lbl">Updates</span>
+								<span class="hint">
+									{#if us.status === "checking"}
+										Checking for a newer TallyBot…
+									{:else if us.status === "current"}
+										You're on the latest version.
+									{:else if us.status === "available"}
+										<span class="text-primary font-medium">TallyBot {us.update.version} is available.</span>
+									{:else if us.status === "downloading"}
+										Downloading {us.update.version}… {Math.round((us.received / us.update.sizeBytes) * 100)}%
+									{:else if us.status === "ready"}
+										{us.update.version} is downloaded. It installs when TallyBot next starts.
+									{:else if us.status === "error"}
+										<span class="text-destructive">The update didn't download.</span>
+									{:else}
+										TallyBot checks when it starts. Nothing installs without asking.
+									{/if}
+								</span>
+							</div>
+							{#if us.status === "idle" || us.status === "current" || us.status === "checking"}
+								<Button variant="outline" onclick={() => updater.check()} disabled={us.status === "checking"}>
+									{#if us.status === "checking"}<LoaderCircle class="animate-spin" />{/if}
+									Check now
+								</Button>
+							{:else if us.status === "ready"}
+								<Button variant="outline" onclick={onviewupdate}><RotateCw /> Restart…</Button>
+							{:else if us.status === "available"}
+								<Button onclick={onviewupdate}>View update</Button>
+							{:else}
+								<Button variant="outline" onclick={onviewupdate}>View</Button>
+							{/if}
+						</div>
+					{/if}
 
 					<!-- same-subnet limitation explainer -->
 					<div class="note">
