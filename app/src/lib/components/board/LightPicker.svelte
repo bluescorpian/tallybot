@@ -92,6 +92,11 @@
 		/** Start the firmware update (the host opens the flasher drawer). */
 		onupdatefirmware?: () => void;
 		open?: boolean;
+		/**
+		 * Bring this light into view with a one-off highlight (`pick` also opens its menu). A new
+		 * `seq` replays it, e.g. the flasher pointing at the same light twice.
+		 */
+		reveal?: { pick: boolean; seq: number } | null;
 	}
 	let {
 		mac,
@@ -120,7 +125,24 @@
 		firmwareAvailable = null,
 		onupdatefirmware,
 		open = $bindable(false),
+		reveal = null,
 	}: Props = $props();
+
+	let trigger = $state<HTMLButtonElement | null>(null);
+	let revealing = $state(false);
+	$effect(() => {
+		if (!reveal || !trigger) return;
+		const { pick } = reveal;
+		trigger.scrollIntoView({ block: "center", behavior: "smooth" });
+		revealing = true;
+		const done = setTimeout(() => (revealing = false), 2400);
+		const opener = pick ? setTimeout(() => (open = true), 450) : undefined;
+		return () => {
+			clearTimeout(done);
+			clearTimeout(opener);
+			revealing = false;
+		};
+	});
 
 	// Multi-page popover: the compact menu (assign / flash / brightness), the
 	// Configure pane (transport mode list), and the Wi-Fi credentials page. Only a
@@ -161,7 +183,13 @@
 <Popover bind:open onOpenChangeComplete={onclosed}>
 	<PopoverTrigger>
 		{#snippet child({ props })}
-			<button {...props} class="light-trigger" aria-label={`Light ${mac} — assign or flash`}>
+			<button
+				{...props}
+				bind:this={trigger}
+				class="light-trigger"
+				class:reveal={revealing}
+				aria-label={`Light ${mac} — assign or flash`}
+			>
 				<TallyLightPcb {mac} {label} state={lightState} {wired} />
 				{#if firmwareOutdated}
 					<!-- Static badge on the corner, like an app-icon badge: findable at a glance,
@@ -349,6 +377,19 @@
 </Popover>
 
 <style>
+	/* one-off "here it is" ring on a light the flasher just brought back (or is asking for) */
+	.light-trigger.reveal {
+		animation: reveal 2.4s ease-out;
+	}
+	@keyframes reveal {
+		0%,
+		60% {
+			box-shadow: 0 0 0 4px color-mix(in oklab, var(--primary), transparent 35%);
+		}
+		100% {
+			box-shadow: 0 0 0 4px transparent;
+		}
+	}
 	/* Trigger wraps the locked PCB primitive; keep it a clean reset that
 	   preserves the light's press + focus affordance. */
 	.light-trigger {

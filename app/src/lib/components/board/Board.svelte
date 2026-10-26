@@ -60,6 +60,8 @@
 		onsetbridge?: (mac: string | null) => void;
 		/** Open the firmware updater for this light (the flasher drawer). */
 		onupdatefirmware?: (mac: string) => void;
+		/** Bring a light into view with a highlight; `pick` also opens its menu. Bump `seq` to replay. */
+		reveal?: { mac: string; pick: boolean; seq: number } | null;
 		/**
 		 * Dev mode only: clicking an input key takes it to program on the fake ATEM.
 		 * When omitted (production / real ATEM) the keys stay non-interactive.
@@ -85,6 +87,7 @@
 		onupdatefirmware,
 		onsetup,
 		oninputclick,
+		reveal = null,
 	}: Props = $props();
 
 	// Partition lights so the union of columns + dock covers EVERY light — none can
@@ -421,6 +424,7 @@
 							firmwareMissing={light.firmwareMissing}
 							firmwareAvailable={light.firmwareAvailable}
 							onupdatefirmware={() => onupdatefirmware?.(light.mac)}
+							reveal={reveal?.mac === light.mac ? reveal : null}
 							onassign={(id) => onassign?.(light.mac, id)}
 							onunassign={() => onunassign?.(light.mac)}
 							onflash={() => flash(light.mac)}
@@ -459,6 +463,7 @@
 					onsettransport={(mac, m) => onsettransport?.(mac, m)}
 					onsetbridge={(mac) => onsetbridge?.(mac)}
 					onupdatefirmware={(mac) => onupdatefirmware?.(mac)}
+					{reveal}
 				/>
 			</div>
 		{:else if noLights}

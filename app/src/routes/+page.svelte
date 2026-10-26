@@ -634,18 +634,11 @@
 	);
 
 	// Bring a light into view on the board with a one-off highlight; `pick` opens its picker.
-	// (Mock-level DOM reach-in; the real build would give Board a prop for this.)
+	// After a beat, so the flasher dialog that asked for it is out of the way first.
+	let reveal = $state<{ mac: string; pick: boolean; seq: number } | null>(null);
+	let revealSeq = 0;
 	function revealLight(mac: string, pick: boolean) {
-		setTimeout(() => {
-			const el = document.querySelector<HTMLElement>(`[aria-label="Light ${mac} — assign or flash"]`);
-			if (!el) return;
-			el.scrollIntoView({ block: "center", behavior: "smooth" });
-			el.classList.remove("reveal");
-			void el.offsetWidth;
-			el.classList.add("reveal");
-			setTimeout(() => el.classList.remove("reveal"), 2400);
-			if (pick) setTimeout(() => el.click(), 450);
-		}, 250);
+		setTimeout(() => (reveal = { mac, pick, seq: ++revealSeq }), 250);
 	}
 
 	// ── Notices — compact cards floating in the board's bottom-right corner ─────
@@ -870,6 +863,7 @@
 			onsettransport={setTransport}
 			onsetbridge={setBridge}
 			onupdatefirmware={flasherReady ? (mac) => openFlasher({ kind: "light", mac }) : undefined}
+			{reveal}
 			onsetup={setup}
 			oninputclick={devMode ? onInputClick : undefined}
 		/>
@@ -1026,19 +1020,6 @@
 		border: none;
 		border-radius: 6px;
 		cursor: pointer;
-	}
-	/* one-off "here it is" ring on a light the flasher just brought back (or is asking for) */
-	:global(.light-trigger.reveal) {
-		animation: reveal 2.4s ease-out;
-	}
-	@keyframes reveal {
-		0%,
-		60% {
-			box-shadow: 0 0 0 4px color-mix(in oklab, var(--primary), transparent 35%);
-		}
-		100% {
-			box-shadow: 0 0 0 4px transparent;
-		}
 	}
 	.restarting {
 		position: absolute;

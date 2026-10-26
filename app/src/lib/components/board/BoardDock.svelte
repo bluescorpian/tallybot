@@ -27,6 +27,8 @@
 		onsetbridge?: (mac: string | null) => void;
 		/** Open the firmware updater for this light (the flasher drawer). */
 		onupdatefirmware?: (mac: string) => void;
+		/** The light to bring into view (see LightPicker's `reveal`). */
+		reveal?: { mac: string; pick: boolean; seq: number } | null;
 	}
 	let {
 		lights,
@@ -39,6 +41,7 @@
 		onsettransport,
 		onsetbridge,
 		onupdatefirmware,
+		reveal = null,
 	}: Props = $props();
 </script>
 
@@ -69,6 +72,7 @@
 					firmwareMissing={light.firmwareMissing}
 					firmwareAvailable={light.firmwareAvailable}
 					onupdatefirmware={() => onupdatefirmware?.(light.mac)}
+					reveal={reveal?.mac === light.mac ? reveal : null}
 					onassign={(id) => onassign?.(light.mac, id)}
 					onflash={() => onflash?.(light.mac)}
 					onbrightness={(v) => onbrightness?.(light.mac, v)}
