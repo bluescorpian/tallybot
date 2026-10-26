@@ -1,7 +1,8 @@
 name: Release
 
-# Pushing a `vX.Y.Z` tag builds the Windows and Linux installers and the firmware image,
-# then opens a DRAFT GitHub Release with them attached. Publishing that draft (by hand,
+# Pushing a `vX.Y.Z` tag builds the firmware image, then the Windows and Linux installers
+# with that image bundled (the in-app flasher installs only the firmware released with the
+# app), then opens a DRAFT GitHub Release with them attached. Publishing that draft (by hand,
 # after a look) triggers pages.yml, which ships the firmware to the web flasher.
 #
 # A manual run (Actions → Release → Run workflow) builds everything as workflow artifacts
@@ -41,10 +42,15 @@ jobs:
           echo "version=$app" >> "$GITHUB_OUTPUT"
 
   windows:
-    needs: version
+    needs: [version, firmware]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      # The firmware this release ships, bundled so the in-app flasher installs exactly it.
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware
+          path: app/src-tauri/resources/firmware
       - uses: pnpm/action-setup@v4
         with:
           version: 11
@@ -88,12 +94,17 @@ jobs:
           if-no-files-found: error
 
   linux:
-    needs: version
+    needs: [version, firmware]
     # The oldest supported runner, so the AppImage and .deb link against an old glibc
     # and run on more distros.
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+      # The firmware this release ships, bundled so the in-app flasher installs exactly it.
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware
+          path: app/src-tauri/resources/firmware
       - name: System libraries (Tauri + libudev for serialport)
         run: |
           sudo apt-get update
@@ -146,14 +157,13 @@ jobs:
           path: ~/.platformio
           key: pio-${{ hashFiles('firmware/platformio.ini') }}
       - run: pip install platformio
-      # One image at offset 0x0 (merge_bin.py): what the web flasher and a manual
-      # `esptool write_flash 0x0` both take. The name is stable so pages.yml can find it.
+      # One image at offset 0x0 (merge_bin.py): what the web flasher, the in-app flasher and
+      # a manual `esptool write_flash 0x0` all take. The name is stable so pages.yml can find
+      # it. The staging script adds the manifest (firmware version + sha256) the app reads.
       - name: Build merged image
-        working-directory: firmware
         run: |
-          pio run -e esp32-c3-release -t mergebin
-          mkdir ../dist
-          cp .pio/build/esp32-c3-release/tallybot-merged.bin ../dist/tallybot-firmware-esp32c3.bin
+          pio run -d firmware -e esp32-c3-release -t mergebin
+          node app/scripts/stage-firmware.mjs firmware/.pio/build/esp32-c3-release/tallybot-merged.bin dist
       - uses: actions/upload-artifact@v4
         with:
           name: firmware

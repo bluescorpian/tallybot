@@ -11,3 +11,6 @@
 # by `beforeBuildCommand`. Never commit it; keep the dir via .gitkeep.
 /binaries/*
 !/binaries/.gitkeep
+
+# Firmware the app bundles, staged by scripts/stage-firmware.mjs (build output)
+/resources/firmware/tallybot-firmware-*

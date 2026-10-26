@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "firmware:stage": "pio run -d ../firmware -e esp32-c3-release -t mergebin && node scripts/stage-firmware.mjs"
   },
   "license": "PolyForm-Noncommercial-1.0.0",
   "dependencies": {
