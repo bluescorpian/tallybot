@@ -111,3 +111,15 @@ test("deviceUnsupported is forwarded from any member", () => {
   tcp.emit("deviceUnsupported", { mac: MAC, version: 0 });
   assert.deepEqual(unsupported, [{ mac: MAC, version: 0 }]);
 });
+
+test("log lines are forwarded from every member, not only USB", () => {
+  const { usb, tcp, composite } = setup();
+  const logs: Array<{ mac: string; level: string; text: string }> = [];
+  composite.on("log", (e) => logs.push(e));
+
+  const fromTcp = { mac: MAC, level: "warn", text: "from the wifi member" };
+  const fromUsb = { mac: MAC, level: "info", text: "from the usb member" };
+  tcp.emit("log", fromTcp);
+  usb.emit("log", fromUsb);
+  assert.deepEqual(logs, [fromTcp, fromUsb]);
+});
