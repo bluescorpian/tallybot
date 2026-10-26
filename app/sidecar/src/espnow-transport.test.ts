@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 
 import { EspNowTransport } from "./espnow-transport.ts";
-import { COLORS, DeviceMessageType, ServerMessageType } from "./protocol.ts";
+import { COLORS, DeviceMessageType, LogLevel, ServerMessageType } from "./protocol.ts";
 import type { UsbTransport } from "./usb-transport.ts";
 import { fromHex, toHex } from "./usb-bridge.ts";
 
@@ -239,6 +239,57 @@ test("sendColor failures log one warning per outage and one info line on recover
   assert.equal(espnow.sendColor(LIGHT2, COLORS.live, 64), true);
   assert.deepEqual(levels(), ["warn", "info", "warn", "info"]);
   assert.match(logs[3]!.text, /recovered/);
+});
+
+function logInner(level: number, text: string): Uint8Array {
+  // [type][level][utf8…]
+  return Uint8Array.of(DeviceMessageType.LOG, level, ...new TextEncoder().encode(text));
+}
+
+test("a light's relayed LOG line surfaces as a log event keyed by the light's MAC", () => {
+  const usb = new FakeUsb();
+  const espnow = new EspNowTransport(usb.asUsb());
+  espnow.setBridgeMac(BRIDGE);
+  const logs: LogEntry[] = [];
+  espnow.on("log", (e) => logs.push(e));
+
+  usb.relay(BRIDGE, LIGHT, helloInner(3));
+  usb.relay(BRIDGE, LIGHT, logInner(LogLevel.WARN, "relink gap 5210ms timeout#2"));
+  usb.relay(BRIDGE, LIGHT2, logInner(LogLevel.INFO, "hi"));
+  usb.relay(BRIDGE, LIGHT2, logInner(LogLevel.ERROR, "bad"));
+
+  assert.deepEqual(logs, [
+    { mac: LIGHT, level: "warn", text: "relink gap 5210ms timeout#2" },
+    { mac: LIGHT2, level: "info", text: "hi" },
+    { mac: LIGHT2, level: "error", text: "bad" },
+  ]);
+});
+
+test("a LOG from a known light keeps it alive past the timeout, like a HEARTBEAT", async () => {
+  const clock = makeClock();
+  const usb = new FakeUsb();
+  const espnow = new EspNowTransport(usb.asUsb(), {
+    heartbeatTimeoutMs: 1000,
+    sweepIntervalMs: 10,
+    now: clock.now,
+  });
+  const disconnected: Array<{ mac: string }> = [];
+  espnow.on("deviceDisconnected", (i) => disconnected.push(i));
+  espnow.on("log", () => {});
+  await espnow.start();
+  try {
+    usb.relay(BRIDGE, LIGHT, helloInner(3));
+
+    // A LOG at t=800 is the light's only frame; a sweep at t=1500 (1.5 s after HELLO) keeps it.
+    clock.advance(800);
+    usb.relay(BRIDGE, LIGHT, logInner(LogLevel.WARN, "relink gap 5000ms timeout#1"));
+    clock.advance(700);
+    await sweepOnce(espnow);
+    assert.deepEqual(disconnected, [], "the LOG refreshed liveness");
+    assert.deepEqual(espnow.connectedMacs(), [LIGHT]);
+  } finally {
+    await espnow.stop();
+  }
 });
 
 test("a corrupt relayed inner payload is surfaced as an error, not a crash", () => {

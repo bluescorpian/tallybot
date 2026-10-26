@@ -275,7 +275,7 @@ function setup(
     ipc,
     animClock: anim,
     animTickMs: FLASH_HALF_MS, // one step == one flash half-cycle, so flash tests read as toggles
-    refreshClock: refresh, // steppable so the keyframe re-send is deterministic (no real 1 s timer)
+    refreshClock: refresh, // steppable so the keyframe re-send is deterministic (no real timer)
     log: () => {},
     ...overrides,
   });
