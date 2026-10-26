@@ -4,7 +4,7 @@
  * An ESP-NOW light never touches the network: it talks ESP-NOW to a designated *bridge* (a
  * normal USB tally device put into bridge mode), which wraps every peer frame in a `RELAY`
  * envelope up the USB pipe and forwards `RELAY`-wrapped frames back down (see
- * `docs/spec/esp-now-transport.md`). This class rides the existing {@link UsbTransport}:
+ * `docs/architecture.md`, "ESP-NOW transport"). This class rides the existing {@link UsbTransport}:
  *
  *   • inbound  — the UsbTransport re-emits each `RELAY` frame as a `relayed` event; we decode
  *     `inner` with the shared codec and maintain a `mac → {version, lastSeen}` table with the

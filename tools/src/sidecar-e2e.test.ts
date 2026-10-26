@@ -1,9 +1,8 @@
 /**
- * End-to-end integration: the real Phase 2 sidecar driven against the Phase 1
- * simulators, no hardware in sight.
+ * End-to-end integration: the real sidecar driven against the simulators, no hardware
+ * in sight.
  *
- * This is the test the phases were arranged to make possible (PHASES.md): the actual
- * orchestrator, tally engine, device server, ATEM adapter, store and IPC bridge are
+ * The actual orchestrator, tally engine, device server, ATEM adapter, store and IPC bridge are
  * wired together exactly as `main.ts` wires them — only the real `Atem` is swapped
  * for the `FakeAtem`, and real `TallyClient`s stand in for ESP32 devices over genuine
  * TCP/UDP. We drive program/preview on the fake switcher and assign devices through

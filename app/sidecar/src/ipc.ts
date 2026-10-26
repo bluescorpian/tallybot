@@ -8,7 +8,7 @@
  * is the single shared *type* contract; the UI imports it type-only via the
  * `$ipc` alias (`../svelte.config.js`), so none of it reaches the browser bundle.
  *
- * The nouns mirror `GOALS.md` ("Core concepts") on purpose — source, input,
+ * The nouns mirror docs/goals.md ("Core concepts") on purpose — source, input,
  * device, program-gate — so the schema, persisted state, and UI all line up.
  */
 
@@ -19,7 +19,7 @@
  * the sidecar can't trust the source (the ATEM is disconnected/reconnecting, or it's
  * connected but hasn't reported a program input), so it must NOT claim a confident
  * `idle` ("you're clear"). A device on an `unknown` input is shown a flashing-blue
- * fault, never green — see `ARCHITECTURE.md` "Failure signalling".
+ * fault, never green — see `docs/architecture.md` "Failure signalling".
  */
 export type Tally = "live" | "preview" | "idle" | "unknown";
 
@@ -27,7 +27,7 @@ export type SourceConnection = "connected" | "connecting" | "disconnected";
 
 /**
  * What produces inputs and reports which are live/preview. v1 hardcodes the ATEM
- * Mini — the schema is ATEM-shaped, not a generic source collection (GOALS.md).
+ * Mini — the schema is ATEM-shaped, not a generic source collection (docs/goals.md).
  */
 export interface Source {
   kind: "atem";
@@ -63,7 +63,7 @@ export type DeviceTransport = "wifi" | "usb" | "espnow";
 /** WiFi join progress, surfaced while provisioning a device over USB. */
 export type DeviceWifiState = "idle" | "joining" | "connected" | "failed";
 
-/** A physical tally light, identified by MAC with no user-given name (GOALS.md). */
+/** A physical tally light, identified by MAC with no user-given name (docs/goals.md). */
 export interface Device {
   /** Full MAC, lower-case colon form — the device's identity. */
   mac: string;
@@ -110,7 +110,7 @@ export interface Device {
 /**
  * The override layer that can block program output, forcing every input to idle.
  * Present from v1 but inactive until an override source (e.g. OBS off the ATEM
- * scene) is configured (GOALS.md).
+ * scene) is configured (docs/goals.md).
  */
 export interface ProgramGate {
   active: boolean;
@@ -186,7 +186,7 @@ export type SidecarEvent =
 
 // ── UI → sidecar commands ───────────────────────────────────────────────────────
 // Assignment & identify happen on the canvas; setSource is the settings window
-// (DESIGN.md). Devices are addressed by MAC.
+// (docs/design.md). Devices are addressed by MAC.
 
 /** Bind a device to an input. */
 export interface AssignDeviceCommand {

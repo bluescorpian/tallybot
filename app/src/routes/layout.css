@@ -26,7 +26,7 @@
 	--signal: oklch(
 		0.7 0.165 209
 	); /* B4 (Cyan) — energised-signal accent; trace rendering is still TBD */
-	/* Tally state — approximates the device LED states in ARCHITECTURE.md, but tuned for
+	/* Tally state — approximates the device LED states in docs/architecture.md, but tuned for
 	   skeuomorphic realism over LED-exact match: the UI mimics a real ATEM switch face.
 	   Live 255,0,0 · Preview 0,255,0 · Idle = light grey (the switch's unlit-but-present
 	   key; device LED is a dim white 30,30,30). Disconnected is a *light* state, not an

@@ -1,5 +1,5 @@
 <script lang="ts">
-	// The TallyBot wordmark for the titlebar (DESIGN.md → "App chrome"). A two-segment
+	// The TallyBot wordmark for the titlebar (docs/design.md → "App chrome"). A two-segment
 	// lockup: "Tally" in an opinionated italic serif rendered as an *outline* (no fill,
 	// drawn-on-the-glass), and "BOT" in heavy blue Inter — the flat UI language, not the
 	// board surface. Non-interactive so the titlebar drag region still works over it.

@@ -1,7 +1,7 @@
 /**
  * Binary device↔server wire protocol — the server (sidecar) side.
  *
- * Source of truth: `ARCHITECTURE.md` ("Binary Message Protocol"). These values
+ * Source of truth: `docs/architecture.md` ("Binary Message Protocol"). These values
  * are mirrored in TWO other places — keep all three in sync:
  *   • `firmware/src/protocol.h`        (C++, the device)
  *   • `app/src-tauri/src/usb/protocol.rs` (Rust, the USB-serial shell — a *minimal*
@@ -61,7 +61,7 @@ export const DeviceMessageType = {
 export const ServerMessageType = {
   SET_COLOR: 0x01,
   // 0x02 retired (was IDENTIFY): flashing is now driven server-side over SET_COLOR.
-  /** Persist WiFi creds + trigger a validating join attempt (USB). */
+  /** Persist WiFi creds and start a background join; never gates on it (USB). */
   SET_WIFI: 0x03,
   /** Persist the transport mode (No-TX / WiFi) (USB). */
   SET_TRANSPORT: 0x04,
@@ -126,7 +126,7 @@ export function logLevelName(level: number): LogLevelName {
 
 // ── Protocol versioning ─────────────────────────────────────────────────────
 // HELLO carries the version a device speaks. Backward-compat lives in the server
-// (easy to update), not the firmware (flashed onto devices). See ARCHITECTURE.md.
+// (easy to update), not the firmware (flashed onto devices). See docs/architecture.md.
 
 export const PROTOCOL_VERSION = {
   /**
@@ -159,7 +159,7 @@ export interface Color {
   b: number;
 }
 
-/** The standard tally state colours (ARCHITECTURE.md "Standard Colours"). */
+/** The standard tally state colours (docs/architecture.md "Standard Colours"). */
 export const COLORS = {
   live: { r: 255, g: 0, b: 0 },
   preview: { r: 0, g: 255, b: 0 },
@@ -169,9 +169,9 @@ export const COLORS = {
 
 /**
  * Colour shown on a connected-but-unassigned device so it's visibly alive and clearly
- * needs configuring (GOALS.md, decision 5). Full white: the firmware renders it as a slow
- * "breathe" locally (the wire SET_COLOR is static — see `docs/led.md` state 5), which keeps
- * it distinct from steady dim-white idle and the white locate strobe (a server-streamed flash).
+ * needs configuring (docs/goals.md, decision 5). Full white, which the sidecar streams as a
+ * slow "breathe" brightness envelope (`app.ts`; `docs/led.md` state 5), keeping it distinct
+ * from steady dim-white idle and the white locate strobe.
  *
  * NB: this is the *unassigned* colour. It is unrelated to the firmware's `COLOR_SETUP`
  * (magenta), which is the device-local *provisioning* hint — keeping the two apart is the
@@ -265,7 +265,8 @@ export function encodeSetColor(color: Color, brightness: number = DEFAULT_BRIGHT
 
 /**
  * SET_WIFI payload: `[type][ssidLen][ssid…][passLen][pass…]` (USB only). The device
- * persists these creds where WiFiManager reads them and attempts a validating join.
+ * persists these creds where WiFiManager reads them and confirms at once (save-only); the
+ * join runs in the background and streams as STATUS `wifiState`, never gating the save.
  * SSID/password are UTF-8; each length is a single byte (the lengths the firmware and
  * NVS accept comfortably bound this — SSID ≤ 32, WPA pass ≤ 63).
  */
@@ -495,7 +496,7 @@ export function parseMac(mac: string): Uint8Array {
 }
 
 /**
- * The short MAC tail shown in the UI to tell devices apart (GOALS.md). Defaults
+ * The short MAC tail shown in the UI to tell devices apart (docs/goals.md). Defaults
  * to the last 3 octets, e.g. "aa:bb:cc:dd:ee:ff" → "dd:ee:ff".
  */
 export function macTail(mac: string, octets = 3): string {

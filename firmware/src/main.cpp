@@ -1,6 +1,6 @@
 // TallyBot firmware — the tally-light client for the ESP32-C3 SuperMini.
 //
-// A TCP client (see ARCHITECTURE.md): it provisions WiFi via a captive portal, discovers the
+// A TCP client (see docs/architecture.md): it provisions WiFi via a captive portal, discovers the
 // sidecar over UDP, opens a TCP connection, sends HELLO then HEARTBEATs, and drives the onboard
 // WS2812 from the server's SET_COLOR. A USB-CDC control channel (v1.2) carries the same payloads
 // while cabled, plus provisioning (SET_WIFI / SET_TRANSPORT) and STATUS.

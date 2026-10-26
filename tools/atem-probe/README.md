@@ -4,9 +4,11 @@ A small, standalone field-test tool: connect to a real ATEM (e.g. a Mini Pro) an
 watch its **program / preview** state update live in your browser. Use it to confirm,
 on real hardware, that TallyBot can talk to a switcher before the full app is ready.
 
-It uses the sidecar's **real `AtemSource` adapter** (vendored into `src/atem-source.ts`)
-— the same code production runs — so if the lights here track the switcher, the
-production read-path works against that hardware too.
+It uses a **vendored copy of the sidecar's `AtemSource` adapter** (`src/atem-source.ts`),
+so if the lights here track the switcher, the production read-path very likely works
+against that hardware too. The copy is not kept in sync automatically and has drifted from
+`app/sidecar/src/atem.ts`; diff the two before trusting a result that depends on a recent
+adapter change.
 
 This folder is **fully self-contained**: copy it (or a zip of it) anywhere and run — it
 needs nothing else from the repo.
@@ -34,7 +36,7 @@ On macOS/Linux, run `./run.sh` instead (it expects Node already installed).
 ## Using it
 
 1. Put this computer on the **same network/subnet** as the ATEM (the same-subnet limit
-   is intentional — see `ARCHITECTURE.md`).
+   is intentional — see `docs/architecture.md`).
 2. Enter the ATEM's IP address (find it in *ATEM Software Control → Preferences*, or
    click **Scan network** to sweep the local subnet for switchers) and hit **Connect**.
    The last IP is remembered for next time.

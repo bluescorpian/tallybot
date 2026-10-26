@@ -208,7 +208,7 @@ void unlink() {
   g_linked = false;
   g_gotFrame = false;
   if (g_everHadBridge)
-    ind::lostServer();  // steady blue — we lost the bridge (LED.md state 10)
+    ind::lostServer();  // steady blue — we lost the bridge (docs/led.md state 10)
   else
     ind::searching();   // cyan pulse — never linked yet (state 4)
 }

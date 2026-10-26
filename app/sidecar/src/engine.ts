@@ -13,7 +13,7 @@
  * disk — the orchestrator (`src/app.ts`) feeds it state and acts on the result —
  * which is what makes it exhaustively unit-testable (`engine.test.ts`).
  *
- * The pipeline mirrors `GOALS.md` ("source → per-input program/preview →
+ * The pipeline mirrors docs/goals.md ("source → per-input program/preview →
  * override(s) → per-device colour").
  */
 
@@ -122,7 +122,7 @@ export interface EngineResult {
  *    idea what's actually live, so we must NOT report a confident idle (green reads as
  *    "you're clear"). `unknown` becomes a flashing-blue fault on the device, distinct
  *    from both a real idle and the device-local steady-blue "I lost the server"
- *    (ARCHITECTURE.md "Failure signalling"). We rely on `atem-connection`'s own
+ *    (docs/architecture.md "Failure signalling"). We rely on `atem-connection`'s own
  *    keepalive to turn a silently-dead link into a disconnect, rather than guessing
  *    staleness from the gap between state changes — a quiet but healthy switcher can
  *    legitimately send nothing for minutes.
@@ -145,7 +145,7 @@ function deviceStateOf(device: DeviceRecord): Device["state"] {
 /**
  * The colour an online device should show, and how it animates. An unassigned device
  * gets the white setup colour and *breathes* it (visibly alive, clearly needs configuring
- * — GOALS.md decision 5; docs/led.md state 5). An assigned device shows its input's tally;
+ * — docs/goals.md decision 5; docs/led.md state 5). An assigned device shows its input's tally;
  * the fault (`unknown`) state flashes blue rather than ever resting on green.
  */
 function colorFor(
@@ -211,7 +211,7 @@ export function computeEngine(
   return { state, colors };
 }
 
-/** The program gate in its v1 resting state: present but inactive (GOALS.md). */
+/** The program gate in its v1 resting state: present but inactive (docs/goals.md). */
 export const INACTIVE_GATE: ProgramGate = { active: false, source: null };
 
 /** A device's default per-device brightness before the user changes it. */

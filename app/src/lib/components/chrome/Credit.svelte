@@ -1,5 +1,5 @@
 <script lang="ts">
-	// Subtle attribution line (DESIGN.md → "App chrome"). Absolutely positioned and
+	// Subtle attribution line (docs/design.md → "App chrome"). Absolutely positioned and
 	// non-interactive so it floats in the board's bottom margin without taking a row
 	// — the board fills the whole stage behind it.
 	import HeartIcon from "@lucide/svelte/icons/heart";

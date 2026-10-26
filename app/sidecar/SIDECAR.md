@@ -59,27 +59,18 @@ long-lived sidecars to either stdin/stdout or a localhost server; we use **stdio
 Keep `stdout` for protocol messages only; log diagnostics to `stderr` so they never corrupt
 the stream.
 
-### The Rust bridge (Phase 5 shape)
+### The Rust bridge
 
-The shell spawns the sidecar and pumps bytes both ways, translating to Tauri IPC:
+The shell spawns the sidecar, pumps its stdio both ways and translates to Tauri IPC
+(`src-tauri/src/sidecar.rs`): sidecar stdout lines become events the UI `listen`s to, and a
+Tauri command writes the UI's `UiCommand`s to the child's stdin. Both ends import the
+**same types** from `src/ipc.ts`. The same pipe carries the shell's own USB messages: the
+shell owns every serial port and forwards cabled devices' frames to the sidecar
+(`usbFrame` in, `usbSend` out; typed in `src/usb-bridge.ts`), so USB devices, and ESP-NOW
+lights relayed through a cabled bridge, reach the engine without the sidecar touching a
+port.
 
-```rust
-// illustrative — Phase 5
-let (mut rx, mut child) = app.shell().sidecar("tallybot-sidecar")?.spawn()?;
-tauri::async_runtime::spawn(async move {
-  while let Some(event) = rx.recv().await {
-    if let CommandEvent::Stdout(line) = event {
-      app.emit("sidecar", String::from_utf8_lossy(&line))?; // → UI listen("sidecar")
-    }
-  }
-});
-// UI → sidecar: a #[tauri::command] writes a serialized UiCommand to child.write(..)
-```
-
-The UI then `listen`s for `SidecarEvent`s and `invoke`s a command that forwards
-`UiCommand`s. Both ends import the **same types** from `src/ipc.ts`.
-
-## The shared contracts (Phase 0, implemented)
+## The shared contracts
 
 - **`src/protocol.ts`** — the binary device↔server codec and constants (framing, encoders,
   decoder, discovery, versioning). Keep its values in sync with the firmware `#define`s.
@@ -90,8 +81,8 @@ The UI then `listen`s for `SidecarEvent`s and `invoke`s a command that forwards
 
 ## Toolchain and conventions
 
-- **Runtime:** Node ≥ 22.6 runs `.ts` directly via native type stripping — no bundler or
-  dev runner in the loop. **Tests:** the built-in `node:test`. **Typecheck:** `tsc
+- **Runtime:** in development Node ≥ 22.6 runs `.ts` directly via native type stripping — no
+  bundler or dev runner in the loop (only the release build bundles; see Packaging). **Tests:** the built-in `node:test`. **Typecheck:** `tsc
   --noEmit` (stripping erases types but does not check them). The lone runtime dependency
   is `atem-connection`; `typescript` + `@types/node` are the dev deps. (`atem-connection`'s
   native `@julusian/freetype2` is deliberately left unbuilt — `new Atem()` loads it lazily
@@ -107,22 +98,15 @@ The UI then `listen`s for `SidecarEvent`s and `invoke`s a command that forwards
   `pnpm run check`. Isolation keeps the Node-targeted and browser-targeted type
   environments apart. (`cd app/sidecar && pnpm install` still works.)
 
-## Packaging (Phase 5)
+## Packaging
 
-Tauri's `externalBin` can only bundle a **self-contained binary**, so the sidecar is
-compiled — a bundler (e.g. esbuild) to a single JS file, then
-[`@yao-pkg/pkg`](https://github.com/yao-pkg/pkg) or Node's SEA to an executable. Wiring it
-into the shell then means:
-
-1. Add the Tauri **shell plugin** (Cargo dep + `tauri_plugin_shell::init()` in
-   `src-tauri/src/lib.rs`).
-2. Grant the capability in `src-tauri/capabilities/default.json`: `shell:allow-spawn`
-   with `{ "name": "binaries/tallybot-sidecar", "sidecar": true }`.
-3. Declare `bundle.externalBin: ["binaries/tallybot-sidecar"]` in `tauri.conf.json`.
-4. Place the built binary at `src-tauri/binaries/tallybot-sidecar-<target-triple>` (get the
-   triple with `rustc --print host-tuple`).
-5. Spawn + bridge stdio, and manage the child's lifecycle with the app window
-   (`src-tauri/src/sidecar.rs`).
+Tauri's `externalBin` can only bundle a **self-contained binary**, so releases compile the
+sidecar: `build.mjs` (run by `pnpm run build:binary`, which `tauri.conf.json`'s
+`beforeBuildCommand` calls) esbuild-bundles `src/main.ts` with `atem-connection` left
+external, then packs it with the Node runtime via
+[`@yao-pkg/pkg`](https://github.com/yao-pkg/pkg) into
+`src-tauri/binaries/tallybot-sidecar-<target-triple>`. The shell spawns it as the
+`externalBin` and manages its lifecycle in `src-tauri/src/sidecar.rs`.
 
 The lifecycle is tied in both directions. The shell respawns a sidecar that dies (with
 backoff) and shows the operator a fault until it's back, because a dead engine is otherwise
@@ -130,8 +114,8 @@ invisible behind a stale board. The sidecar exits when its stdin reaches EOF, be
 shell killed without running its exit hook would otherwise leave an orphan holding TCP
 7000 / UDP 7001, and the next launch couldn't bind.
 
-The shipped binary also needs the NVIDIA+Wayland `WEBKIT_DISABLE_DMABUF_RENDERER=1`
-workaround the dev shell already applies (see the repo `CLAUDE.md`).
+On Linux with NVIDIA + Wayland, WebKitGTK needs `WEBKIT_DISABLE_DMABUF_RENDERER=1`. The dev
+shell sets it (`flake.nix`); `sidecar.rs` sets it on the spawned sidecar.
 
 ## References
 

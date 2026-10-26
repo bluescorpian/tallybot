@@ -20,7 +20,7 @@
  *   node build.mjs                                   # build for the host triple
  *   node build.mjs --target x86_64-pc-windows-msvc   # cross-name + cross pkg target
  *
- * See ARCHITECTURE.md "Packaging the sidecar".
+ * See docs/architecture.md "Packaging the sidecar".
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";

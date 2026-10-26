@@ -1,6 +1,6 @@
 /**
  * The device side of the sidecar: the TCP server devices connect to, and the UDP
- * discovery that lets them find it without a hardcoded IP (ARCHITECTURE.md
+ * discovery that lets them find it without a hardcoded IP (docs/architecture.md
  * "Discovery Protocol", "TCP Connection").
  *
  * Devices are the TCP *clients*; this is the stable endpoint they dial. On connect
@@ -32,7 +32,7 @@ import {
 
 /** Per-device timeout: no message within this window means the device is gone. */
 export const HEARTBEAT_TIMEOUT_MS = 30_000;
-/** How often the server broadcasts its presence (ARCHITECTURE.md: every 5s). */
+/** How often the server broadcasts its presence (docs/architecture.md: every 5s). */
 export const ANNOUNCE_INTERVAL_MS = 5_000;
 
 export interface DeviceServerOptions {

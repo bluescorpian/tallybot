@@ -8,7 +8,7 @@
 </script>
 
 <script lang="ts">
-	// Program-output gate (DESIGN.md → "Program-output gate"): a single circular
+	// Program-output gate (docs/design.md → "Program-output gate"): a single circular
 	// node every trace pinches through, between the inputs and the lights. It is
 	// coloured like the traces — grey at rest, cyan when live signal passes — so it
 	// reads as part of the wiring, not a separate control. On override it shows the

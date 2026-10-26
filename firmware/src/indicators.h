@@ -4,7 +4,7 @@
 #include "protocol.h"  // COLOR_DISCONNECTED, COLOR_SETUP, LOCAL_BRIGHTNESS
 
 // Device-local bring-up indicators — the colours/motions the firmware drives itself (the
-// server drives the tally colours via SET_COLOR). One named call per LED.md device state, so
+// server drives the tally colours via SET_COLOR). One named call per docs/led.md device state, so
 // callers read as intent. All are "local": suppressed while a USB tally session owns the LED.
 namespace ind {
 

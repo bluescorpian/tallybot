@@ -3,7 +3,7 @@
 	export const LEVELS = 10;
 
 	// The level↔byte mapping is intentionally *linear*. The protocol byte is a
-	// perceptual value (ARCHITECTURE.md → SET_COLOR), and the gamma correction that
+	// perceptual value (docs/architecture.md → SET_COLOR), and the gamma correction that
 	// makes equal levels look equally spaced lives in the *firmware* (FastLED), not
 	// here — so don't add a gamma curve to these two functions. Level 5 ≈ the default
 	// byte 128 by design; a curve here would desync that and double-correct the LED.
@@ -19,7 +19,7 @@
 </script>
 
 <script lang="ts">
-	// Per-device brightness control for the light picker (DESIGN.md → "Interaction").
+	// Per-device brightness control for the light picker (docs/design.md → "Interaction").
 	//
 	// A flat, rounded amber bar that animates smoothly between 10 levels, flanked by
 	// a − and a + button, with the exact level read out in the middle of the bar.

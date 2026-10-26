@@ -1,7 +1,7 @@
 /**
  * Tally client simulator — a hardware-free stand-in for an ESP32 tally device.
  *
- * It does what the firmware does on the wire (Phase 3): discover the server over
+ * It does what the firmware does on the wire: discover the server over
  * UDP, open a TCP connection, send HELLO then periodic HEARTBEATs, and act on the
  * SET_COLOR commands the server sends back. That lets the whole
  * server-side path — discovery, the TCP server, the tally engine — be exercised
@@ -30,7 +30,7 @@ import {
   encodeHello,
 } from "./device-protocol.ts";
 
-/** How often a device heartbeats once connected (ARCHITECTURE.md: every 10s). */
+/** How often a device heartbeats once connected (docs/architecture.md: every 10s). */
 export const HEARTBEAT_INTERVAL_MS = 10_000;
 /** How often a device re-broadcasts its discovery request until it finds a server. */
 export const DISCOVERY_INTERVAL_MS = 2_000;

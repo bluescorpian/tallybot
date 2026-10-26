@@ -8,7 +8,7 @@ import type { SourceSnapshot } from "./engine.ts";
 
 /**
  * A minimal AtemLike for these unit tests — just enough to drive the lifecycle and
- * mutate state. (The Phase 1 `FakeAtem` exercises AtemSource end-to-end in tools/.)
+ * mutate state. (The `FakeAtem` exercises AtemSource end-to-end in tools/.)
  */
 class MiniAtem extends EventEmitter implements AtemLike {
   state: AtemStateSlice;

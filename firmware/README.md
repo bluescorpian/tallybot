@@ -5,14 +5,12 @@ ESP32-C3 device firmware — the **tally light** end of TallyBot. On the wire it
 and renders the `SET_COLOR` commands it streams on the onboard LED. The protocol is
 defined in [`src/protocol.h`](src/protocol.h), mirroring the sidecar's `protocol.ts`.
 
-> **Status — tally client.** The firmware is split into focused modules under `src/`:
-> `led` (rendering + state machine), `wifi` (connection, captive portal, diagnostics),
-> `usb` (USB-CDC COBS control channel), `tally` (UDP discovery + TCP client), `control`
-> (message dispatch + STATUS), and `settings` (NVS), wired by `main.cpp`. Together they
-> give WiFi provisioning via a captive portal, UDP discovery, the TCP binary protocol
-> (`HELLO` / `HEARTBEAT` / `SET_COLOR` / `IDENTIFY`), USB provisioning, and the LED state
-> machine. The wire format lives in [`src/protocol.h`](src/protocol.h), the C++ mirror of
-> [`../app/sidecar/src/protocol.ts`](../app/sidecar/src/protocol.ts) — keep the two in lockstep.
+It also speaks a COBS-framed control channel over USB-CDC (provisioning, status, logs, and
+tally while cabled), and can run as an **ESP-NOW light** (tally relayed through a cabled
+bridge, no network needed) or as that **bridge**. Code is split into focused modules under
+`src/`, wired by `main.cpp`. The wire format lives in [`src/protocol.h`](src/protocol.h), the
+C++ mirror of [`../app/sidecar/src/protocol.ts`](../app/sidecar/src/protocol.ts) — keep the
+two in lockstep.
 
 ## Hardware
 
@@ -21,9 +19,8 @@ LED (WS2812) is on **GPIO8**. PlatformIO target: `esp32-c3-devkitm-1`, Arduino f
 
 ## Develop
 
-PlatformIO provides the toolchain. On this NixOS box `pio` is installed globally (it's
-intentionally *not* in `flake.nix`, which covers the Tauri app only) — run it directly,
-no dev shell needed.
+PlatformIO provides the toolchain. It is deliberately *not* in `flake.nix`, which covers the
+Tauri app only, so install `pio` separately.
 
 ```bash
 pio run              # build
@@ -81,17 +78,25 @@ cd tools && pnpm sidecar-dev      # binds TCP 7000 / UDP 7001; drive program/pre
 
 Then flash a board (`pio run -t upload && pio device monitor`), provision it onto the
 same subnet, and it appears in the `sidecar-dev` REPL by its MAC. Driving program/preview
-changes the LED; triggering IDENTIFY flashes it; killing the runner turns it steady blue.
+changes the LED; `flash <mac>` strobes it; killing the runner turns it steady blue.
 
 ### LED meaning
 
 | LED | State | Driven by |
 |-----|-------|-----------|
+| R → G → B → W sweep | Boot self-test | device |
 | Magenta | Captive portal up — join `TallyLight-XXXXXX` | device |
-| Steady blue | No trusted server: connecting / discovering / dropped | device |
-| Red / green / dim-white | Live / preview / idle | server |
+| Amber, slow pulse | Joining WiFi | device |
+| Amber, fast blink | Lost WiFi (network problem) | device |
+| Cyan, pulse | Searching for the server (or, on ESP-NOW, the bridge) | device |
+| White, slow breathe | Connected, not assigned to an input | server |
+| Red / green / dim white | Live / preview / idle | server |
 | Flashing blue | Source can't be trusted (fault) | server |
-| Brief white flash | IDENTIFY — locate this device | server-triggered |
+| Steady blue | Lost the server (PC/app problem) | device |
+| White strobe | Locate this device | server |
+
+Once connected, every motion is streamed by the sidecar as `SET_COLOR` frames; the firmware
+animates only the bring-up states it shows before a server is reachable.
 
 ## Board gotchas (these will bite you)
 
@@ -130,8 +135,8 @@ PROVISIONING → DISCOVERING → CONNECTING → CONNECTED → BACKOFF → (redis
   socket is bound to 7001 so it catches both the server's unicast reply and its periodic
   broadcast; `TALLY_HERE:<port>` yields the server IP and TCP port.
 - **Connected** — sends `HELLO` immediately, `HEARTBEAT` every 10 s, and feeds every TCP
-  read through a length-prefix `FrameDecoder` to dispatch `SET_COLOR` / `IDENTIFY`. A drop
-  falls back to steady blue and re-discovers after a short backoff.
+  read through a length-prefix `FrameDecoder` to dispatch `SET_COLOR`. A drop falls back to
+  steady blue and re-discovers after a short backoff.
 
 The `SET_COLOR` **brightness byte is perceptual**, so the firmware gamma-corrects it
 (FastLED `applyGamma_video`, γ≈2.5) before driving the LED — the device is the single home
@@ -139,9 +144,3 @@ for that correction, so the sidecar and UI keep their 0–255 / 0–10 mappings 
 
 `src/protocol.h` is the cross-language contract — constants, framing, and the
 encode/decode helpers — and must stay in lockstep with the sidecar's `protocol.ts`.
-
-## Next
-
-The firmware is independent of the rest of the app once the protocol is fixed. Remaining
-work lives elsewhere. Firmware OTA updates are on the roadmap (see the repo README), not
-part of v1.

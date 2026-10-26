@@ -9,9 +9,9 @@
  * constants, framing, and `FrameDecoder` from `protocol.ts`, so there is one
  * source of truth for the wire format; only the direction differs.
  *
- * This is the TypeScript counterpart of what the ESP32 firmware (Phase 3)
+ * This is the TypeScript counterpart of what the ESP32 firmware
  * implements in C++. Keep all three (this file, `protocol.ts`, the firmware
- * `#define`s) consistent with `ARCHITECTURE.md`.
+ * `#define`s) consistent with `docs/architecture.md`.
  */
 
 import {

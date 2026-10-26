@@ -1,5 +1,5 @@
 <script lang="ts">
-	// The "Configure" pane — the second view inside the light popover (DESIGN.md →
+	// The "Configure" pane — the second view inside the light popover (docs/design.md →
 	// v1.2 device configuration). It mirrors the picker's own language: flat sections
 	// divided by hairlines, and a LIST (like "Assign to input") rather than bordered
 	// cards. The home for per-device settings; for v1.2 its one section is CONNECTION

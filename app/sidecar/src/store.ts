@@ -1,7 +1,6 @@
 /**
  * Persisted configuration — the device-to-input assignments (and the ATEM IP) that
- * must survive an app restart (PHASES.md "Assignment store"; ARCHITECTURE.md
- * "Device Identity").
+ * must survive an app restart (docs/architecture.md "Device Identity").
  *
  * State is a small JSON file: the source IP plus, keyed by device MAC, the input a
  * device is assigned to and its per-device brightness. The in-memory copy is the

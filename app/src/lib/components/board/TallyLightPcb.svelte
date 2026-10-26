@@ -327,7 +327,7 @@
 		color: oklch(0.9 0.01 260 / 0.8);
 	}
 
-	/* device-true LED colours (ARCHITECTURE.md) */
+	/* device-true LED colours (docs/architecture.md) */
 	.pcb.live {
 		--led: oklch(61.8% 0.246 23.6);
 		--bloom: 95%;

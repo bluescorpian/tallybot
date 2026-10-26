@@ -5,7 +5,7 @@
  * downstream depends on the {@link AtemLike} seam, so the heavy dependency lives at
  * the very edge. It loads the saved config, constructs the four pieces, hands them
  * to the orchestrator, and manages start-up / shutdown. Hardware-free runs use the
- * Phase 1 `FakeAtem` instead (see `tools/`), which is why this file is deliberately
+ * `FakeAtem` instead (see `tools/`), which is why this file is deliberately
  * thin: there is almost nothing here that the orchestrator's tests don't already cover.
  *
  * stdout is reserved for the NDJSON protocol (`src/ipc.ts`); all logging goes to
@@ -98,7 +98,7 @@ async function main(): Promise<void> {
   // on more than one (a light cabled for re-provisioning dedupes to its USB presence). The USB
   // transport rides the same shell↔sidecar bridge `ipc` owns; the shell owns the port. The
   // ESP-NOW transport rides *on top of* USB: relayed lights reach the host through the bridge's
-  // cable (see `docs/spec/esp-now-transport.md`).
+  // cable (see `docs/architecture.md`, "ESP-NOW transport").
   const tcp = new DeviceServer();
   const usb = new UsbTransport(ipc);
   const espnow = new EspNowTransport(usb);

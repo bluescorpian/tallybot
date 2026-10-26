@@ -1,7 +1,7 @@
 // TallyBot binary wire protocol — the device (firmware) side.
 //
 // This file is the C++ mirror of `app/sidecar/src/protocol.ts` (the source of truth;
-// see `ARCHITECTURE.md` "Binary Message Protocol"). There is now a THIRD, minimal
+// see `docs/architecture.md` "Binary Message Protocol"). There is now a THIRD, minimal
 // mirror in `app/src-tauri/src/usb/protocol.rs` (COBS framing + HELLO parse only).
 // Keep all three in lockstep — a maintainer editing any one should find the others.
 //
@@ -58,7 +58,7 @@
 
 #define MSG_SET_COLOR 0x01     // server → device (both transports)
 // 0x02 retired (was IDENTIFY): flashing is now driven server-side over SET_COLOR.
-#define MSG_SET_WIFI 0x03      // host → device  (USB): persist creds + validating join
+#define MSG_SET_WIFI 0x03      // host → device  (USB): persist creds; save-only, join runs in background
 #define MSG_SET_TRANSPORT 0x04  // host → device (USB): persist transport mode
 #define MSG_GET_STATUS 0x05    // host → device  (USB): request a STATUS frame
 #define MSG_SCAN_WIFI 0x06     // host → device  (USB): reserved, deferred post-v1.2
@@ -84,15 +84,15 @@
 #define LOG_LEVEL_WARN 1
 #define LOG_LEVEL_ERROR 2
 
-// ── Standard colours (ARCHITECTURE.md "Standard Colours"), R, G, B ───────────
+// ── Standard colours (docs/architecture.md "Standard Colours"), R, G, B ───────────
 // These are what the *server* drives via SET_COLOR; the firmware renders whatever
 // it's told. The two device-owned signals (DISCONNECTED, SETUP) are the only
 // colours the firmware chooses on its own — see main.cpp's LED state machine.
 #define COLOR_LIVE 255, 0, 0          // input is on Program output
 #define COLOR_PREVIEW 0, 255, 0       // input is on Preview
 #define COLOR_IDLE 30, 30, 30         // not selected, source trustworthy (dim white)
-// Device-local steady blue. As of the LED.md palette its *local* meaning narrows to a single
-// case: "WiFi is fine but we lost the TallyBot server" (LED.md state 10 — go check the PC).
+// Device-local steady blue. As of the docs/led.md palette its *local* meaning narrows to a single
+// case: "WiFi is fine but we lost the TallyBot server" (docs/led.md state 10 — go check the PC).
 // The other bring-up phases now use their own indicator colours (amber/cyan/white) defined in
 // main.cpp, so blue no longer doubles for "connecting / discovering / WiFi-down".
 #define COLOR_DISCONNECTED 0, 0, 255
@@ -118,7 +118,7 @@
 #define ESPNOW_LINK_TIMEOUT_MS 5000    // no frame from the bridge this long ⇒ the link is dead
 
 // ── Timers ───────────────────────────────────────────────────────────────────
-#define HEARTBEAT_INTERVAL_MS 10000  // device heartbeats every 10s (ARCHITECTURE.md)
+#define HEARTBEAT_INTERVAL_MS 10000  // device heartbeats every 10s (docs/architecture.md)
 #define DISCOVERY_INTERVAL_MS 2000   // re-broadcast TALLY_FIND every 2s until found
 // Server-side, for reference only (the firmware doesn't enforce these):
 //   HEARTBEAT_TIMEOUT_MS 30000 — server drops a device silent this long

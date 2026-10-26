@@ -8,10 +8,9 @@
  *
  * Or via pnpm:  pnpm atem-sim -- --inputs 4
  *
- * Phase 1 has no sidecar to connect to yet; until Phase 2 this runner is a
- * self-contained way to exercise the stub and preview the tally each change
- * implies. The same FakeAtem is what the sidecar will consume in place of the real
- * `Atem` for hardware-free testing.
+ * A self-contained way to exercise the stub and preview the tally each change
+ * implies, with no sidecar running. The same FakeAtem is what the sidecar consumes in
+ * place of the real `Atem` for hardware-free testing (`sidecar-dev-cli.ts`).
  */
 
 import { createInterface } from "node:readline";

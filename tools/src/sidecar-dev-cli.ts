@@ -1,13 +1,12 @@
 /**
- * Hardware-free sidecar runner — the whole Phase 2 brain, driven by hand.
+ * Hardware-free sidecar runner — the whole sidecar brain, driven by hand.
  *
  * It wires the real sidecar (orchestrator, engine, device server, ATEM adapter,
  * store, IPC) exactly as `app/sidecar/src/main.ts` does, but swaps the real `Atem`
- * for the Phase 1 `FakeAtem` and replaces the NDJSON-over-stdio UI with a terminal
+ * for the `FakeAtem` and replaces the NDJSON-over-stdio UI with a terminal
  * REPL. So you can drive program/preview and assign devices here and watch the
  * colours land on `tally-client` simulators — the full `ATEM → sidecar → device`
- * data flow with nothing plugged in. This realises what `atem-sim-cli.ts` could only
- * preview in Phase 1.
+ * data flow with nothing plugged in.
  *
  *   pnpm sidecar-dev                     # listens on the real TCP 7000 / UDP 7001
  *   # then, in another terminal:

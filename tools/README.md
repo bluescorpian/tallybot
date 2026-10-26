@@ -12,7 +12,7 @@ A stub of the [`atem-connection`](https://www.npmjs.com/package/atem-connection)
 sidecar uses — `connect`/`disconnect`, the `connected` / `disconnected` /
 `stateChanged` events, `state.video.mixEffects[0].programInput`/`previewInput`, the input
 names in `state.inputs[id]`, and `changeProgramInput`/`changePreviewInput` — backed by
-configurable in-memory state. In Phase 2 the sidecar swaps the real `Atem` for this and is
+configurable in-memory state. The dev sidecar entries swap the real `Atem` for this and are
 otherwise unchanged.
 
 `atem-sim-cli.ts` drives it from the terminal and prints the per-input tally each change
@@ -28,9 +28,9 @@ Interactive commands: `pgm <n>`, `pvw <n>`, `cut` (program/preview swap), `name 
 
 ## Tally client simulator
 
-A fake ESP32 tally device (`tally-client.ts`). It does what the firmware does on the wire
-(Phase 3): discover the server over UDP, open a TCP connection, send `HELLO` then periodic
-`HEARTBEAT`s, and act on the `SET_COLOR` / `IDENTIFY` commands it receives — logging each.
+A fake ESP32 tally device (`tally-client.ts`). It does what a WiFi light does on the wire:
+discover the server over UDP, open a TCP connection, send `HELLO` then periodic
+`HEARTBEAT`s, and act on the `SET_COLOR` commands it receives, logging each.
 That exercises the whole server-side path (discovery, the TCP server, the engine) without
 hardware.
 
@@ -46,16 +46,15 @@ heartbeats (to test the server's heartbeat-timeout), `d`rop the connection (to t
 reconnection), `?` status, `q`uit. It reconnects on its own when the link drops.
 
 The device half of the binary protocol — encode `HELLO`/`HEARTBEAT`, decode
-`SET_COLOR`/`IDENTIFY` — lives in `device-protocol.ts`. It's the mirror of the sidecar's
+`SET_COLOR` — lives in `device-protocol.ts`. It's the mirror of the sidecar's
 server-side `protocol.ts` and reuses that file's constants and framing, so there's one
 source of truth for the wire format. (It's also the TypeScript counterpart of what the
 firmware implements in C++.)
 
 ## Sidecar dev runner
 
-`sidecar-dev-cli.ts` wires the **real Phase 2 sidecar** — orchestrator, tally engine,
-device server, ATEM adapter, store, and IPC — exactly as `app/sidecar/src/main.ts` does,
-but swaps the real `Atem` for the `FakeAtem` above and replaces the NDJSON-over-stdio UI
+`sidecar-dev-cli.ts` wires the **real sidecar** — orchestrator, tally engine, TCP device
+server, ATEM adapter, store, and IPC — but swaps the real `Atem` for the `FakeAtem` above and replaces the NDJSON-over-stdio UI
 with a terminal REPL. So you can drive the switcher and assign devices by hand and watch the
 colours land on real `tally-client` simulators: the whole `ATEM → sidecar → device` flow
 with nothing plugged in. It binds the real ports (TCP 7000 / UDP 7001), so the simulators
@@ -70,7 +69,15 @@ pnpm tally-client -- --count 2    # two fake devices discover + connect
 REPL commands: `pgm <n>` / `pvw <n>` / `cut` / `name <id> <text>` drive the switcher;
 `assign <mac> <n>` / `unassign <mac>` / `flash <mac>` / `bright <mac> <n>` are the UI
 actions (the `<mac>` may be a short tail); `ls` reprints the board, `q` quits. The same
-wiring is asserted automatically in `sidecar-e2e.test.ts`.
+wiring is asserted automatically in `sidecar-e2e.test.ts`. It has no USB or ESP-NOW
+transport (those need the Rust shell); for real hardware use `cargo tauri dev`, below.
+
+## `cargo tauri dev` entry
+
+`sidecar-fake-main.ts` is the sidecar `cargo tauri dev` spawns: the production wiring,
+USB and ESP-NOW included, against a `FakeAtem`, so real devices can be tested without a
+switcher. Wiring added to `app/sidecar/src/main.ts` must be added here too, or it silently
+does nothing in dev.
 
 ## Develop
 

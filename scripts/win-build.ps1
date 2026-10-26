@@ -10,7 +10,7 @@
       3. Builds the app (which packages the sidecar binary via beforeBuildCommand).
       4. Assembles TallyBot.exe + tallybot-sidecar.exe into a portable zip.
 
-    See PACKAGING-WINDOWS.md for the manual version of these steps and the rationale.
+    See .github/workflows/release.yml for the CI version of these steps.
 
 .NOTES
     Run in an **elevated** PowerShell (Administrator) - winget's machine-wide installs

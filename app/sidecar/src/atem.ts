@@ -4,14 +4,14 @@
  * The sidecar reads only a thin slice of the `atem-connection` library: connect /
  * disconnect, the connection lifecycle events, and the program/preview inputs plus
  * input names off mix-effect 0. {@link AtemLike} captures exactly that slice, so
- * `AtemSource` depends on the seam, not the library — which is what lets the Phase 1
+ * `AtemSource` depends on the seam, not the library — which is what lets the
  * `FakeAtem` stand in unchanged for hardware-free tests (`tools/`), while production
  * passes a real `Atem` (`src/main.ts`).
  *
  * `AtemSource` normalises the library's evolving state into the flat
  * {@link SourceSnapshot} the engine consumes, and emits `change` whenever that
  * snapshot moves. The last-known inputs are *retained* across a disconnect so the UI
- * keeps the rig's layout while flagging the source offline (DESIGN.md); the engine
+ * keeps the rig's layout while flagging the source offline (docs/design.md); the engine
  * separately drives assigned devices to the flashing-blue fault state while the
  * source is not trustworthy, rather than a misleading idle-green.
  */
