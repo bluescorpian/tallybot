@@ -500,15 +500,17 @@
 					{/if}
 				{:else if view === "settings"}
 					{#if job.kind === "light"}
-						<!-- an existing light: its current settings come back after the install unless changed -->
-						<RadioGroup.Root
-							class="keep"
-							aria-label="Settings"
-							bind:value={() => (keep ? "keep" : "change"), (v) => (keep = v === "keep")}
-						>
-							<label><RadioGroup.Item value="keep" /> Keep as is</label>
-							<label><RadioGroup.Item value="change" /> Change</label>
-						</RadioGroup.Root>
+						<!-- an existing light: the reinstall leaves its settings alone unless they're changed here -->
+						<fieldset class="cfg">
+							<legend>{name}'s settings (connection, input, brightness)</legend>
+							<RadioGroup.Root
+								class="keep"
+								bind:value={() => (keep ? "keep" : "change"), (v) => (keep = v === "keep")}
+							>
+								<label><RadioGroup.Item value="keep" /> Keep its current settings</label>
+								<label><RadioGroup.Item value="change" /> Change them</label>
+							</RadioGroup.Root>
+						</fieldset>
 					{/if}
 					{#if job.kind === "blank" || !keep}
 						<fieldset class="cfg">
@@ -889,7 +891,8 @@
 	/* .keep sits on RadioGroup.Root (a component), so it needs :global to reach it */
 	:global(.keep) {
 		display: flex;
-		gap: 18px;
+		flex-direction: column;
+		gap: 8px;
 		font-size: 0.85rem;
 	}
 	:global(.keep) label,
