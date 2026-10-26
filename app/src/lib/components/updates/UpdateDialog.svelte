@@ -42,7 +42,11 @@
 </script>
 
 <Dialog.Root bind:open>
-	<Dialog.Content showCloseButton={false} class="gap-0 overflow-hidden rounded-3xl p-0 sm:max-w-[420px]">
+	<!-- light, unblurred backdrop, like the flasher drawer's: the tally monitor stays readable -->
+	<Dialog.Content
+		showCloseButton={false}
+		overlayClass="bg-black/10 supports-backdrop-filter:backdrop-blur-none"
+		class="gap-0 overflow-hidden rounded-3xl p-0 sm:max-w-[420px]">
 		{#if st.status === "checking"}
 			<div class="center">
 				<LoaderCircle class="text-muted-foreground size-6 animate-spin" />
@@ -57,12 +61,26 @@
 			<div class="foot">
 				<Button onclick={() => (open = false)}>OK</Button>
 			</div>
+		{:else if st.status === "error" && !update}
+			<div class="center">
+				<CircleX class="text-destructive size-7" />
+				<Dialog.Title class="text-base font-semibold">Couldn't check for updates</Dialog.Title>
+				<Dialog.Description class="select-text">{st.message}</Dialog.Description>
+			</div>
+			<div class="foot">
+				<Button variant="ghost" onclick={() => (open = false)}>Close</Button>
+				<Button onclick={() => updater.check()}>Try again</Button>
+			</div>
 		{:else if update}
 			<div class="head">
 				<span class="badge"><CircleArrowUp class="size-5" /></span>
 				<div>
 					<Dialog.Title class="text-base leading-tight font-semibold">
-						{st.status === "ready" ? `TallyBot ${update.version} is ready to install` : `TallyBot ${update.version} is available`}
+						{st.status === "ready"
+							? `TallyBot ${update.version} is ready to install`
+							: st.status === "error"
+								? `Couldn't download TallyBot ${update.version}`
+								: `TallyBot ${update.version} is available`}
 					</Dialog.Title>
 					<Dialog.Description class="text-[0.8rem]">
 						You have {updater.currentVersion} · released {date}

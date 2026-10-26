@@ -67,7 +67,6 @@ const DETAIL: Record<FlashFailure, string> = {
 };
 
 export class MockFlasher implements Flasher {
-	readonly firmwareVersion = APP_VERSION;
 	state = $state<FlashState>({ status: "idle" });
 
 	#timers: ReturnType<typeof setTimeout>[] = [];
@@ -75,8 +74,19 @@ export class MockFlasher implements Flasher {
 	/** A forced failure for the first attempt only — a retry then succeeds, as it would after the fix. */
 	#failOnce: FlashFailure | null;
 
-	constructor(opts: { failOnce?: FlashFailure | null } = {}) {
+	#bundled: () => string;
+
+	/**
+	 * `bundled` reads the firmware version this app ships. It's the app's version, so it
+	 * follows an app update (the mock app "updates" without reloading).
+	 */
+	constructor(opts: { failOnce?: FlashFailure | null; bundled?: () => string } = {}) {
 		this.#failOnce = opts.failOnce ?? null;
+		this.#bundled = opts.bundled ?? (() => APP_VERSION);
+	}
+
+	get firmwareVersion(): string {
+		return this.#bundled();
 	}
 
 	start(target: FlashTarget): void {
@@ -101,6 +111,7 @@ export class MockFlasher implements Flasher {
 			at += DURATION[stage];
 		}
 		this.#later(at, () => {
+			// a blank board's MAC is known from the bootloader; the mock invents a new one
 			const mac = target.kind === "light" ? target.mac : "30:ae:a4:00:e7:5b";
 			this.state = { status: "done", target, mac };
 		});
@@ -142,4 +153,12 @@ export class MockFlasher implements Flasher {
 
 function failsAt(f: FlashFailure): FlashStage {
 	return f === "unplugged" ? "write" : "connect";
+}
+
+/**
+ * Whether stopping or failing at `stage` leaves the board without firmware. Before erase nothing
+ * was touched; once the write is done the new firmware is in place and comes back on its own.
+ */
+export function leavesBlank(stage: FlashStage): boolean {
+	return stage === "erase" || stage === "write";
 }

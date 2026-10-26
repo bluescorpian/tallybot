@@ -24,8 +24,8 @@
 	import FlasherSheet, { type FlashJob } from "$lib/components/flasher/FlasherSheet.svelte";
 	import UpdateDialog from "$lib/components/updates/UpdateDialog.svelte";
 	import type { UpdatePill } from "$lib/components/chrome/TitleBar.svelte";
-	import { MockFlasher, type FlashFailure } from "$lib/mock/flasher.svelte";
-	import { MockUpdater, newerFirmwareUpdate } from "$lib/mock/updater.svelte";
+	import { MockFlasher, leavesBlank, type FlashFailure } from "$lib/mock/flasher.svelte";
+	import { MockUpdater, isNewer, newerFirmwareUpdate } from "$lib/mock/updater.svelte";
 	import LoaderCircle from "@lucide/svelte/icons/loader-circle";
 
 	// ── Live wiring (Tauri) ────────────────────────────────────────────────────
@@ -225,7 +225,18 @@
 	const lights = $derived(
 		isTauri
 			? props.lights
-			: props.lights.map((l) => ({ ...l, firmwareVersion: mockFirmware[l.mac] ?? null })),
+			: props.lights.map((l) => {
+					if (!(l.mac in mockFirmware)) return l;
+					const v = mockFirmware[l.mac];
+					return {
+						...l,
+						firmwareVersion: v,
+						firmwareMissing: v === null,
+						// outdated against the firmware THIS app ships, so an app update re-badges lights
+						firmwareOutdated: v === null || isNewer(flasher.firmwareVersion, v),
+						firmwareAvailable: flasher.firmwareVersion,
+					};
+				}),
 	);
 
 	// Command handlers: under Tauri they send the real UiCommand; otherwise they
@@ -314,24 +325,31 @@
 	// updater plugin). Under Tauri they stay out of the way: a blank board keeps pointing at
 	// the web flasher and no update is offered, so a hardware session never fakes a flash.
 	const mockOnly = !isTauri;
-	const flasher = new MockFlasher({
-		failOnce: ({ noresponse: "no-response", busy: "port-busy", unplugged: "unplugged" } as const)[
-			fail as "noresponse" | "busy" | "unplugged"
-		] as FlashFailure | undefined,
-	});
 	const updater = new MockUpdater({
 		available: demo === "update" || demo === "newerfw",
 		failDownload: fail === "download",
 	});
+	// The flasher ships the firmware released with this app, so it follows an app update.
+	const flasher = new MockFlasher({
+		failOnce: ({ noresponse: "no-response", busy: "port-busy", unplugged: "unplugged" } as const)[
+			fail as "noresponse" | "busy" | "unplugged"
+		] as FlashFailure | undefined,
+		bundled: () => updater.currentVersion,
+	});
 	let updateOpen = $state(false);
 
-	/** Firmware each mock light runs (MAC → version); everything not outdated is current. */
-	let mockFirmware = $state<Record<string, string>>(
+	/**
+	 * Firmware each mock light runs (MAC → version; null = blank, left so by an interrupted
+	 * install). Everything not flagged outdated by the demo starts current.
+	 */
+	let mockFirmware = $state<Record<string, string | null>>(
 		Object.fromEntries(
 			devices.map((d) => [d.mac, d.firmwareOutdated ? "1.0.1" : flasher.firmwareVersion]),
 		),
 	);
 	let mockUnflashed = $state<string[]>(demo === "unflashed" || demo === "newerfw" ? ["COM5"] : []);
+	// The cable came out mid-install: the board is off USB until the mock "replugs" it.
+	let mockUnplugged = $state(false);
 
 	// What the flasher drawer is working on. Resolved from live state each time, so a wireless
 	// light gains its port the moment it's plugged in.
@@ -342,18 +360,27 @@
 		const r = flashRequest;
 		if (!r) return null;
 		if (r.kind === "blank")
-			return { kind: "blank", port: r.port, mac: null, label: null, fromVersion: null, input: null };
+			return {
+				kind: "blank",
+				port: mockUnplugged ? null : r.port,
+				mac: null,
+				label: null,
+				fromVersion: null,
+				missing: false,
+				input: null,
+			};
 		const d = devices.find((x) => x.mac === r.mac);
 		if (!d) return null;
 		const input = inputs.find((i) => i.id === d.inputId);
 		return {
 			kind: "light",
 			// the shell would know the real port; the mock pretends
-			port: d.transport === "usb" ? "COM7" : null,
+			port: d.transport === "usb" && !mockUnplugged ? "COM7" : null,
 			mac: d.mac,
 			// the board labels a light by the last two octets of its MAC
 			label: d.mac.split(":").slice(-2).join(":"),
 			fromVersion: mockFirmware[d.mac] ?? null,
+			missing: mockFirmware[d.mac] === null,
 			input: input ? { label: input.label, live: input.tally === "live" } : null,
 		};
 	});
@@ -363,22 +390,26 @@
 	}
 	const newerUpdate = $derived(newerFirmwareUpdate(updater.state, flasher.firmwareVersion));
 
-	// Mock: a wireless light the user was asked to plug in "arrives" over USB after a moment.
+	// Mock: a board the user was asked to plug in (a wireless light, or one whose cable came
+	// out) "arrives" over USB after a moment.
 	$effect(() => {
 		const job = flashJob;
-		if (!mockOnly || !flashOpen || job?.kind !== "light" || job.port !== null) return;
+		// only while the drawer is asking for it, not on the failure screen
+		if (!mockOnly || !flashOpen || !job || job.port !== null || flasher.state.status !== "idle") return;
 		const mac = job.mac;
 		const t = setTimeout(() => {
+			mockUnplugged = false;
 			const d = devices.find((x) => x.mac === mac);
 			if (d) d.transport = "usb";
 		}, 3500);
 		return () => clearTimeout(t);
 	});
 
-	// Mock: mirror what the engine would report while a light is flashed — it drops offline
+	// Mock: mirror what the engine would report while a light is installed — it drops offline
 	// once the board starts erasing, and comes back (current firmware) when it rejoins. A blank
-	// board leaves the unflashed list and lands in the dock as a new, unassigned light.
-	let preFlashState: Device["state"] | null = null;
+	// board leaves the unflashed list and lands in the dock as a new, unassigned light. An
+	// install stopped or broken mid-erase/write leaves a known light blank (still offline, its
+	// assignment kept); one stopped after the write already has its new firmware.
 	$effect(() => {
 		const s = flasher.state;
 		if (!mockOnly) return;
@@ -386,22 +417,38 @@
 			if (s.status === "idle") return;
 			const t = s.target;
 			const d = t.kind === "light" ? devices.find((x) => x.mac === t.mac) : undefined;
+			const back = () => {
+				if (d) d.state = d.inputId !== null ? "assigned" : "unassigned";
+			};
 			if (s.status === "running" && d && s.stage !== "connect" && d.state !== "offline") {
-				preFlashState = d.state;
 				d.state = "offline";
 			} else if (s.status === "done") {
-				if (d) {
-					d.state = preFlashState ?? d.state;
-					d.firmwareOutdated = false;
-				} else if (t.kind === "blank" && !devices.some((x) => x.mac === s.mac)) {
+				back();
+				if (t.kind === "blank" && !devices.some((x) => x.mac === s.mac)) {
 					mockUnflashed = mockUnflashed.filter((p) => p !== t.port);
 					devices.push(mock(s.mac, "E7:5B", "unassigned", null, { transport: "usb", protocolVersion: 3 }));
 				}
 				mockFirmware[s.mac] = flasher.firmwareVersion;
-				preFlashState = null;
+			} else if (s.status === "failed" || s.status === "cancelled") {
+				if (s.status === "failed" && s.failure === "unplugged") mockUnplugged = true;
+				if (!d) return;
+				if (leavesBlank(s.stage)) mockFirmware[d.mac] = null;
+				else if (s.stage !== "connect") {
+					mockFirmware[d.mac] = flasher.firmwareVersion;
+					back();
+				}
 			}
 		});
 	});
+
+	// "Update TallyBot first" parks the job; the "updated" notice offers to pick it back up.
+	let resumeFlash = $state<FlashRequest | null>(null);
+	function updateAppFirst() {
+		resumeFlash = flashRequest;
+		flashOpen = false;
+		if (updater.state.status === "ready") updater.restart();
+		else updateOpen = true;
+	}
 
 	// Titlebar pill: only once there's something to act on, and never as a popup.
 	const updatePill = $derived.by<UpdatePill | null>(() => {
@@ -496,11 +543,13 @@
 			if (mockOnly) {
 				// the drawer already says everything while it's working on this board
 				if (flashOpen && flashRequest?.kind === "blank" && flashRequest.port === port) continue;
+				// Not dismissible: it's the only way into setting the board up, and it goes away by
+				// itself once the board is set up or unplugged.
 				list.push({
 					key: `unflashed:${port}`,
 					level: "info",
-					message: `A new board on ${port} has no TallyBot firmware yet. Set it up as a light in about a minute; your other lights stay live.`,
-					dismissible: true,
+					message: "A new tally light is plugged in but isn't set up yet.",
+					dismissible: false,
 					action: { label: "Set up as a light", run: () => openFlasher({ kind: "blank", port }) },
 				});
 				continue;
@@ -513,13 +562,43 @@
 				action: { label: "Open flasher", run: openWebFlasher },
 			});
 		}
+		// A known light left blank by an interrupted install. Its MAC is known (the bootloader
+		// reports it even with no firmware), so it keeps its name and assignment.
+		for (const d of devices) {
+			if (!mockOnly || mockFirmware[d.mac] !== null) continue;
+			if (flashOpen && flashRequest?.kind === "light" && flashRequest.mac === d.mac) continue;
+			const label = d.mac.split(":").slice(-2).join(":");
+			const input = inputs.find((i) => i.id === d.inputId);
+			list.push({
+				key: `blank:${d.mac}`,
+				level: "warn",
+				message: `${label} needs its firmware reinstalled: an install was interrupted, so it stays dark${input ? ` instead of showing ${input.label}` : ""}.`,
+				dismissible: false,
+				action: { label: "Reinstall firmware", run: () => openFlasher({ kind: "light", mac: d.mac }) },
+			});
+		}
 		const justUpdated = updater.state.status === "current" ? updater.state.justUpdated : undefined;
 		if (justUpdated) {
+			const n = lights.filter((l) => l.firmwareOutdated).length;
+			const resume = resumeFlash;
 			list.push({
 				key: "updated",
 				level: "info",
-				message: `TallyBot is updated to ${justUpdated}.`,
+				message:
+					`TallyBot is updated to ${justUpdated}.` +
+					(n && !resume
+						? ` ${n} ${n === 1 ? "light has" : "lights have"} newer firmware available: click a light marked ↑ to update it.`
+						: ""),
 				dismissible: true,
+				action: resume
+					? {
+							label: resume.kind === "blank" ? "Continue setting up the new light" : "Continue updating the light",
+							run: () => {
+								resumeFlash = null;
+								openFlasher(resume);
+							},
+						}
+					: undefined,
 			});
 		}
 		const n = sidecar.notice;
@@ -562,10 +641,8 @@
 		job={flashJob}
 		{flasher}
 		{newerUpdate}
-		onupdateapp={() => {
-			flashOpen = false;
-			updateOpen = true;
-		}}
+		newerReady={updater.state.status === "ready"}
+		onupdateapp={updateAppFirst}
 	/>
 
 	<UpdateDialog bind:open={updateOpen} {updater} />

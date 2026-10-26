@@ -47,6 +47,8 @@ function provisioning(d: Device) {
 		firmwareOutdated: d.firmwareOutdated,
 		// not on the wire yet: devices report a protocol version, not a firmware version
 		firmwareVersion: null,
+		firmwareMissing: false,
+		firmwareAvailable: null,
 	};
 }
 

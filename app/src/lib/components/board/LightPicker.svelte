@@ -85,6 +85,10 @@
 		firmwareOutdated?: boolean;
 		/** The light's firmware version, when known (null today outside the mock). */
 		firmwareVersion?: string | null;
+		/** No firmware at all (an interrupted install): badge "!" and offer a reinstall. */
+		firmwareMissing?: boolean;
+		/** The version an update installs (this app's firmware), when known. */
+		firmwareAvailable?: string | null;
 		/** Start the firmware update (the host opens the flasher drawer). */
 		onupdatefirmware?: () => void;
 		open?: boolean;
@@ -112,6 +116,8 @@
 		onsetbridge,
 		firmwareOutdated = false,
 		firmwareVersion = null,
+		firmwareMissing = false,
+		firmwareAvailable = null,
 		onupdatefirmware,
 		open = $bindable(false),
 	}: Props = $props();
@@ -160,7 +166,12 @@
 					<!-- Static badge on the corner, like an app-icon badge: findable at a glance,
 					     never animated, so it doesn't pull focus mid-show. Drawn on the trigger so
 					     the locked PCB primitive stays untouched. -->
-					<span class="fw-badge" title="Firmware update available"><ArrowUp class="size-2.5" strokeWidth={3} /></span>
+					<span
+						class="fw-badge"
+						class:missing={firmwareMissing}
+						title={firmwareMissing ? "Needs its firmware reinstalled" : "Firmware update available"}
+						>{#if firmwareMissing}!{:else}<ArrowUp class="size-2.5" strokeWidth={3} />{/if}</span
+					>
 				{/if}
 			</button>
 		{/snippet}
@@ -256,12 +267,16 @@
 			>
 				<CircleArrowUp class="text-primary size-4 shrink-0" />
 				<span class="min-w-0 flex-1">
-					<span class="block text-sm leading-tight font-medium">Update firmware</span>
+					<span class="block text-sm leading-tight font-medium"
+						>{firmwareMissing ? "Reinstall firmware" : "Update firmware"}</span
+					>
 					<span class="text-muted-foreground block text-[0.68rem] leading-tight">
-						{#if !wired}
+						{#if firmwareMissing}
+							No firmware, so it stays dark
+						{:else if !wired}
 							Needs a USB cable
-						{:else if firmwareVersion}
-							<span class="font-mono">{firmwareVersion}</span> installed
+						{:else if firmwareVersion && firmwareAvailable}
+							<span class="font-mono">{firmwareVersion} → {firmwareAvailable}</span>
 						{:else}
 							About a minute, over USB
 						{/if}
@@ -364,6 +379,13 @@
 		color: var(--primary-foreground);
 		box-shadow: 0 0 0 2px var(--board);
 		pointer-events: none;
+	}
+	.fw-badge.missing {
+		background: var(--destructive);
+		color: #fff;
+		font-size: 11px;
+		font-weight: 700;
+		line-height: 1;
 	}
 	.light-trigger:focus-visible {
 		outline: 2px solid var(--ring);

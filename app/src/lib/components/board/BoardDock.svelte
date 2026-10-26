@@ -66,6 +66,8 @@
 					bridge={light.bridge}
 					firmwareVersion={light.firmwareVersion}
 					firmwareOutdated={light.firmwareOutdated}
+					firmwareMissing={light.firmwareMissing}
+					firmwareAvailable={light.firmwareAvailable}
 					onupdatefirmware={() => onupdatefirmware?.(light.mac)}
 					onassign={(id) => onassign?.(light.mac, id)}
 					onflash={() => onflash?.(light.mac)}

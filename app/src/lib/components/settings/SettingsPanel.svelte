@@ -479,7 +479,7 @@
 									Check now
 								</Button>
 							{:else if us.status === "ready"}
-								<Button variant="outline" onclick={onviewupdate}><RotateCw /> Restart…</Button>
+								<Button variant="outline" onclick={onviewupdate}><RotateCw /> Install &amp; restart…</Button>
 							{:else if us.status === "available"}
 								<Button onclick={onviewupdate}>View update</Button>
 							{:else}

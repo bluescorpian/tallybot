@@ -12,6 +12,8 @@
 		label: string | null;
 		/** Firmware the light runs now, when known (null for a blank board, or unreported). */
 		fromVersion: string | null;
+		/** A known light with no firmware (an install was interrupted): this is a reinstall. */
+		missing: boolean;
 		/** The input the light is assigned to, if any — flashing takes it dark. */
 		input: { label: string; live: boolean } | null;
 	}
@@ -34,7 +36,7 @@
 	import { Button } from "$lib/components/ui/button";
 	import { Progress } from "$lib/components/ui/progress";
 	import type { Flasher, FlashStage, FlashTarget } from "$lib/mock/flasher.svelte";
-	import { FLASH_STAGES } from "$lib/mock/flasher.svelte";
+	import { FLASH_STAGES, leavesBlank } from "$lib/mock/flasher.svelte";
 	import type { AppUpdate } from "$lib/mock/updater.svelte";
 	import Cpu from "@lucide/svelte/icons/cpu";
 	import Usb from "@lucide/svelte/icons/usb";
@@ -55,10 +57,13 @@
 		flasher: Flasher;
 		/** A newer TallyBot release whose firmware is newer than this app's, if one is known. */
 		newerUpdate?: AppUpdate | null;
+		/** That update is already downloaded, so "update first" is just a restart. */
+		newerReady?: boolean;
 		/** "Update TallyBot first" — the host closes this and opens the app updater. */
 		onupdateapp?: () => void;
 	}
-	let { open = $bindable(false), job, flasher, newerUpdate = null, onupdateapp }: Props = $props();
+	let { open = $bindable(false), job, flasher, newerUpdate = null, newerReady = false, onupdateapp }: Props =
+		$props();
 
 	const fw = $derived(flasher.firmwareVersion);
 	const st = $derived(flasher.state);
@@ -79,7 +84,19 @@
 	});
 
 	const name = $derived(job?.kind === "light" ? job.label : null);
-	const title = $derived(job?.kind === "blank" ? "Set up a new light" : "Update light firmware");
+	const title = $derived(
+		job?.kind === "blank" ? "Set up a new light" : job?.missing ? "Reinstall light firmware" : "Update light firmware",
+	);
+	// A wireless light plugged in just for the update can be unplugged again afterwards.
+	let wasWireless = $state(false);
+	// Asked to plug the board back in (the cable came out) rather than plug it in for the first time.
+	let replug = $state(false);
+	$effect(() => {
+		if (!open) {
+			wasWireless = false;
+			replug = false;
+		} else if (view === "plug" && !replug) wasWireless = true;
+	});
 
 	function target(): FlashTarget | null {
 		if (!job || job.port === null) return null;
@@ -99,7 +116,9 @@
 	}
 	function retry() {
 		flasher.reset();
-		start();
+		// no port (the cable came out): the drawer goes back to "plug it in", then review
+		if (job?.port == null) replug = true;
+		else start();
 	}
 	function stop() {
 		flasher.cancel();
@@ -168,14 +187,16 @@
 							{#if job.port}
 								<span class="text-muted-foreground font-mono">{job.kind === "light" ? "· " : ""}{job.port}</span>
 							{:else}
-								<span class="text-muted-foreground">· wireless</span>
+								<span class="text-muted-foreground"
+								>{job.kind === "light" ? (replug ? "· unplugged" : "· wireless") : "Unplugged"}</span
+							>
 							{/if}
 						</span>
 					</span>
 					<span class="versions" title="Firmware">
 						{#if fromVersion}
 							<span class="ver old">{fromVersion}</span>
-						{:else if job.kind === "blank"}
+						{:else if job.kind === "blank" || job.missing}
 							<span class="ver old">none</span>
 						{/if}
 						<ArrowRight class="text-muted-foreground size-3" />
@@ -186,25 +207,36 @@
 				{#if view === "plug"}
 					<div class="plug">
 						<span class="plug-icon"><Usb class="size-7" /></span>
-						<h3>Plug {name} into this PC</h3>
-						<p>
-							Firmware can only be installed over a USB cable. Use a USB-C cable that carries
-							data (some charge-only cables don't).
+						{#if replug}
+							<h3>Plug {name ?? "the board"} back in</h3>
+							<p>Then the install starts over from the beginning. Nothing is damaged.</p>
+						{:else}
+							<h3>Plug {name} into this PC</h3>
+							<p>
+								Firmware can only be installed over a USB cable. Use a USB-C cable that carries
+								data (some charge-only cables don't).
+							</p>
+						{/if}
+						<p class="waiting">
+							<LoaderCircle class="size-3.5 animate-spin" /> Waiting for {name ?? "the board"}…
 						</p>
-						<p class="waiting"><LoaderCircle class="size-3.5 animate-spin" /> Waiting for {name}…</p>
 					</div>
 				{:else if view === "review"}
 					<p class="lead">
 						{#if job.kind === "blank"}
 							This installs TallyBot firmware so the board can work as a tally light. It takes about
 							a minute.
+						{:else if job.missing}
+							{name} has no firmware after an interrupted install, so it's dark. This installs
+							{fw} and brings it back{job.input ? ` on ${job.input.label}` : ""}. It takes about a
+							minute.
 						{:else}
 							{name} runs firmware {job.fromVersion ?? "older than this app's"}. Updating installs
 							{fw}, the version made for this copy of TallyBot. It takes about a minute.
 						{/if}
 					</p>
 
-					{#if job.input}
+					{#if job.input && !job.missing}
 						<div class="callout" class:hot={job.input.live}>
 							<TriangleAlert class="size-4 shrink-0" />
 							<p>
@@ -233,15 +265,30 @@
 						<div class="newer">
 							<div class="newer-head">
 								<CircleArrowUp class="text-primary size-4 shrink-0" />
-								<span>Newer firmware comes with TallyBot {newerUpdate.version}</span>
+								<span>A newer TallyBot ({newerUpdate.version}) comes with improved light firmware</span>
 							</div>
-							<p>
-								This copy of TallyBot installs firmware {fw}. TallyBot {newerUpdate.version}
-								installs {newerUpdate.firmwareVersion}. Either works: update TallyBot first to get the
-								newer firmware, or install {fw} now and update later.
-							</p>
-							<Button variant="outline" size="sm" onclick={() => onupdateapp?.()}>
-								<CircleArrowUp /> Update TallyBot first
+							<!-- Each path's cost, and a lean: an existing light would otherwise go dark twice;
+							     a blank board isn't in use, so setting it up now costs nothing. -->
+							{#if job.kind === "light"}
+								<p>
+									<strong>Updating TallyBot first is better here.</strong> It restarts TallyBot (every
+									light blinks off for a few seconds), then {name} gets the newer firmware in one go.
+									Install now and {name} will need updating again later, going dark twice.
+								</p>
+							{:else}
+								<p>
+									<strong>Setting it up now is fine.</strong> It works with this TallyBot, and you can
+									update its firmware later from its menu. Updating TallyBot first restarts it, so
+									every light blinks off for a few seconds.
+								</p>
+							{/if}
+							<Button
+								variant={job.kind === "light" ? "default" : "outline"}
+								size="sm"
+								onclick={() => onupdateapp?.()}
+							>
+								<CircleArrowUp />
+								{newerReady ? "Restart TallyBot and update first" : "Update TallyBot first"}
 							</Button>
 						</div>
 					{/if}
@@ -283,10 +330,13 @@
 										Click it there to choose its input.
 									</p>
 								{:else}
-									<h3>{name} is up to date</h3>
+									<h3>{job.missing || fromVersion === null ? `${name} is working again` : `${name} is up to date`}</h3>
 									<p>
 										Running firmware {fw}{job.input ? `, and back on ${job.input.label}` : ""}.
 									</p>
+									{#if wasWireless}
+										<p class="mt-1.5">You can unplug it now. It goes back to running wirelessly.</p>
+									{/if}
 								{/if}
 							</div>
 						</div>
@@ -326,11 +376,24 @@
 					<div class="outcome muted">
 						<CircleSlash class="size-5 shrink-0" />
 						<div>
+							<!-- What stopping actually did depends on how far it got. -->
 							<h3>Stopped</h3>
-							<p>
-								{job.kind === "light" ? name : "The board"} has no firmware now, so it stays dark until
-								it's flashed again. Nothing is damaged.
-							</p>
+							{#if st.status === "cancelled" && st.stage === "connect"}
+								<p>
+									Nothing was changed.
+									{#if job.kind === "light" && fromVersion}{name} is still on {fromVersion}.{/if}
+								</p>
+							{:else if st.status === "cancelled" && !leavesBlank(st.stage)}
+								<p>
+									The new firmware {fw} was already installed, so {job.kind === "light" ? name : "it"}
+									should come back by itself in a moment.
+								</p>
+							{:else}
+								<p>
+									{job.kind === "light" ? name : "The board"} has no firmware now, so it stays dark until
+									you install it again. Nothing is damaged.
+								</p>
+							{/if}
 						</div>
 					</div>
 				{/if}
@@ -340,10 +403,13 @@
 		<footer class="footer">
 			{#if view === "running"}
 				{#if confirmStop}
-					<span class="foot-msg warn">Leave the board blank?</span>
+					<!-- "Keep going" lands where Stop was, so a double-click doesn't stop it -->
+					<span></span>
 					<div class="foot-actions">
-						<Button variant="ghost" onclick={() => (confirmStop = false)}>Keep going</Button>
-						<Button variant="destructive" onclick={stop}>Stop</Button>
+						<Button variant="destructive" onclick={stop}
+							>{st.status === "running" && leavesBlank(st.stage) ? "Stop and leave it blank" : "Stop"}</Button
+						>
+						<Button onclick={() => (confirmStop = false)}>Keep going</Button>
 					</div>
 				{:else}
 					<span class="foot-msg"><Usb class="size-3.5" /> Don't unplug the board</span>
@@ -356,7 +422,7 @@
 				<div class="foot-actions">
 					<Button variant="ghost" onclick={() => (open = false)}>Cancel</Button>
 					<Button onclick={start}>
-						{job?.kind === "blank" ? `Install firmware ${fw}` : `Update to ${fw}`}
+						{job?.kind === "blank" ? "Set up light" : job?.missing ? "Reinstall firmware" : `Update to ${fw}`}
 					</Button>
 				</div>
 			{:else if view === "plug"}
@@ -371,8 +437,8 @@
 				<span></span>
 				<div class="foot-actions">
 					<Button variant="ghost" onclick={() => (open = false)}>Close</Button>
-					<Button onclick={retry} disabled={job?.port == null}>
-						{view === "cancelled" ? "Flash again" : "Try again"}
+					<Button onclick={retry}>
+						{view === "cancelled" ? "Install again" : "Try again"}
 					</Button>
 				</div>
 			{/if}
@@ -514,6 +580,10 @@
 		align-items: center;
 		gap: 8px;
 		font-size: 0.85rem;
+		font-weight: 600;
+	}
+	.newer strong {
+		color: var(--foreground);
 		font-weight: 600;
 	}
 	.newer p {

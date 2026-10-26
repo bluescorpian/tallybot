@@ -65,4 +65,8 @@ export interface BoardLight {
 	 * so this is null outside the mock; the UI copes with it missing.
 	 */
 	firmwareVersion: string | null;
+	/** The light has no firmware at all (an install was interrupted): it needs a reinstall. */
+	firmwareMissing: boolean;
+	/** The firmware version an update would install (this app's), when known. */
+	firmwareAvailable: string | null;
 }

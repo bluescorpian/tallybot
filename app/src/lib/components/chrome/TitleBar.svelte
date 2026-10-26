@@ -77,7 +77,7 @@
 			>
 				{#if update.kind === "downloading"}
 					<!-- a determinate ring, so progress reads without opening anything -->
-					<svg class="ring" viewBox="0 0 16 16" aria-hidden="true">
+					<svg class="dl-ring" viewBox="0 0 16 16" aria-hidden="true">
 						<circle cx="8" cy="8" r="6" class="ring-track" />
 						<circle
 							cx="8"
@@ -212,12 +212,12 @@
 		outline: 2px solid var(--primary);
 		outline-offset: 2px;
 	}
-	.ring {
+	.dl-ring {
 		width: 14px;
 		height: 14px;
 		transform: rotate(-90deg);
 	}
-	.ring circle {
+	.dl-ring circle {
 		fill: none;
 		stroke-width: 2.5;
 	}
