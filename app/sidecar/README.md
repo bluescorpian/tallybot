@@ -59,5 +59,21 @@ objects + union types instead). `tsconfig.json`'s `erasableSyntaxOnly` enforces 
 Releases package it into one binary with esbuild + [pkg] (`pnpm run build:binary`,
 `build.mjs`).
 
+## Runtime configuration
+
+The sidecar reads one setting from the environment, resolved for every entry in
+[`src/config.ts`](src/config.ts):
+
+| Variable | Effect |
+|----------|--------|
+| `TALLYBOT_STATE_FILE` | Path of the persisted config (`state.json`). The diagnostic log, `sidecar.log`, is written beside it. Unset or empty: the entry's default. |
+
+The packaged app always sets it: the Tauri shell points it at `state.json` in the OS app-config
+dir (`%APPDATA%\com.tallybot.app` on Windows, `~/.config/com.tallybot.app` on Linux), where the
+shell's own `shell.log` also lives. Without it, `pnpm start` uses
+`$XDG_STATE_HOME/tallybot/state.json` (`~/.local/state/tallybot/` when `XDG_STATE_HOME` is unset
+or relative), and the dev entries in `tools/` (`cargo tauri dev`, `pnpm sidecar-dev`) use a
+`tallybot-dev/` directory in the OS temp dir, so dev assignments never touch a real config.
+
 [tauri-sidecar]: https://v2.tauri.app/learn/sidecar-nodejs/
 [pkg]: https://github.com/yao-pkg/pkg

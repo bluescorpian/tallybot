@@ -18,14 +18,14 @@
  */
 
 import { createInterface } from "node:readline";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { EventEmitter } from "node:events";
 
 import { FakeAtem } from "./atem-sim.ts";
+import { DEV_STATE_FILE } from "./dev-config.ts";
 
 import type { IpcPort } from "../../app/sidecar/src/app.ts";
 import { AtemSource } from "../../app/sidecar/src/atem.ts";
+import { loadRuntimeConfig } from "../../app/sidecar/src/config.ts";
 import { scanNetwork } from "../../app/sidecar/src/scanner.ts";
 import { ConfigStore } from "../../app/sidecar/src/store.ts";
 import type { UsbBridgePort } from "../../app/sidecar/src/usb-transport.ts";
@@ -128,7 +128,8 @@ const USAGE = `commands:
   q                  quit`;
 
 async function main(): Promise<void> {
-  const stateFile = process.env["TALLYBOT_STATE_FILE"] ?? join(tmpdir(), "tallybot-dev-state.json");
+  // The REPL owns the terminal, so it logs to stderr only and opens no log file.
+  const { stateFile } = loadRuntimeConfig(process.env, DEV_STATE_FILE);
   const store = await ConfigStore.load(stateFile);
   const fakeAtem = new FakeAtem({ inputCount: 4, programInput: 1, previewInput: 2 });
   const atem = new AtemSource(fakeAtem);

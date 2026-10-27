@@ -17,40 +17,30 @@
  *
  * Like the other tools it imports the real sidecar from `../../app/sidecar/src`; the
  * dependency direction stays tools → sidecar (the production sidecar never sees a fake).
- * stdout is reserved for the NDJSON protocol; all logging goes to stderr.
+ * stdout is reserved for the NDJSON protocol; all logging goes to stderr and `sidecar.log`.
  */
 
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { FakeAtem } from "./atem-sim.ts";
+import { DEV_STATE_FILE } from "./dev-config.ts";
 
 import { AtemSource } from "../../app/sidecar/src/atem.ts";
+import { loadRuntimeConfig } from "../../app/sidecar/src/config.ts";
+import { startDiagnostics } from "../../app/sidecar/src/diagnostics.ts";
 import { IpcBridge } from "../../app/sidecar/src/ipc-bridge.ts";
+import { macTail } from "../../app/sidecar/src/protocol.ts";
 import { scanNetwork } from "../../app/sidecar/src/scanner.ts";
 import { ConfigStore } from "../../app/sidecar/src/store.ts";
 import { createSidecar, runUntilClosed } from "../../app/sidecar/src/wiring.ts";
 
-// stdout is the NDJSON IPC channel the Tauri shell parses; one stray library log line
-// on it corrupts the stream. Route console.log/info/debug to stderr (warn/error already
-// go there), mirroring main.ts.
-const logToStderr = (...args: unknown[]): void => {
-  process.stderr.write(`${args.map(String).join(" ")}\n`);
-};
-console.log = logToStderr;
-console.info = logToStderr;
-console.debug = logToStderr;
+// `TALLYBOT_STATE_FILE` wins; otherwise the dev tmpdir state. The log goes beside it, as in production.
+const config = loadRuntimeConfig(process.env, DEV_STATE_FILE);
 
-/**
- * Where the dev config lives. `TALLYBOT_STATE_FILE` wins; otherwise a tmpdir file kept
- * separate from production state so dev assignments never clobber a real config.
- */
-function stateFilePath(): string {
-  return process.env["TALLYBOT_STATE_FILE"] ?? join(tmpdir(), "tallybot-dev-state.json");
-}
+// The same diagnostic channel as `main.ts`: stdout stays NDJSON-only, and dev writes the
+// `sidecar.log` the release build depends on.
+const { logFile, diag, exitAfterFlush } = startDiagnostics(config.logFile);
 
 async function main(): Promise<void> {
-  const store = await ConfigStore.load(stateFilePath());
+  const store = await ConfigStore.load(config.stateFile);
 
   const fakeAtem = new FakeAtem({ inputCount: 4, programInput: 1, previewInput: 2 });
   const atem = new AtemSource(fakeAtem);
@@ -59,14 +49,13 @@ async function main(): Promise<void> {
   // The same composition root as production (`wiring.ts`): USB provisioning, a real ESP32-C3 on
   // USB (relayed by the Rust shell) alongside LAN devices, and the ESP-NOW transport, so a bridge
   // + relayed lights work in dev exactly as in production.
-  const { app, deviceServer } = createSidecar({ atem, ipc, store, log: logToStderr, scanNetwork, dev: true });
+  const { app, deviceServer } = createSidecar({ atem, ipc, store, log: diag, scanNetwork, dev: true });
 
-  // Dev-only: mirror device TLOG lines (USB LOG frames) to stderr, so firmware-side events
-  // (bridge enter/exit, session loss, every SET_COLOR rendered) show in the `cargo tauri dev`
-  // terminal alongside the sidecar's own logs — production forwards them to the UI only.
-  deviceServer.on("log", ({ mac, level, text }) => {
-    process.stderr.write(`[device ${mac.slice(-5)}] ${level}: ${text.endsWith("\n") ? text : `${text}\n`}`);
-  });
+  // Dev-only: mirror device TLOG lines (USB LOG frames) to stderr as well as the log file, so
+  // firmware-side events (bridge enter/exit, session loss, every SET_COLOR rendered) show in the
+  // `cargo tauri dev` terminal alongside the sidecar's own logs; production writes them to the
+  // file only.
+  deviceServer.on("log", ({ mac, level, text }) => diag(`[device ${macTail(mac)}] ${level}: ${text.trimEnd()}`));
 
   // Dev-only: drive the fake ATEM's program from the UI. Clicking an input takes it to
   // air; the previously-live input drops to preview (a swap, as on a real ME cut). This
@@ -82,12 +71,12 @@ async function main(): Promise<void> {
   await app.start();
   // Bring the fake ATEM online (its IP is irrelevant — the sim has no network).
   atem.connect("simulated");
-  process.stderr.write("tallybot sidecar (dev/fake-ATEM) started\n");
+  diag(`tallybot sidecar (dev/fake-ATEM) started; log file ${logFile.path}`);
 
-  runUntilClosed(app, { log: logToStderr, onExit: () => process.exit(0) });
+  runUntilClosed(app, { log: diag, onExit: () => exitAfterFlush(0) });
 }
 
 main().catch((err: unknown) => {
-  process.stderr.write(`fatal: ${(err as Error).stack ?? String(err)}\n`);
-  process.exit(1);
+  diag(`fatal: ${(err as Error).stack ?? String(err)}`);
+  exitAfterFlush(1);
 });
