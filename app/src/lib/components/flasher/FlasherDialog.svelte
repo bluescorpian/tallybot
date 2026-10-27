@@ -14,8 +14,6 @@
 		label: string | null;
 		/** Firmware the light runs now, when known (null for a blank board, or unreported). */
 		fromVersion: string | null;
-		/** A known light with no firmware (an install was interrupted): this is a reinstall. */
-		missing: boolean;
 		/** A different light turned up on USB while waiting for this one (its label). */
 		wrongLight: string | null;
 		/** The input the light is assigned to, if any — flashing takes it dark. */
@@ -46,7 +44,7 @@
 		label: string | null;
 		/** Firmware a light runs, when known. */
 		version: string | null;
-		/** Older than this app's firmware (or missing). */
+		/** Older than this app's firmware. */
 		outdated: boolean;
 	}
 </script>
@@ -249,13 +247,13 @@
 
 	const name = $derived(job?.kind === "light" ? job.label : null);
 	// a light already on this app's firmware: installing again is a reinstall, not an update
-	const current = $derived(job?.kind === "light" && !job.missing && job.fromVersion === fw);
+	const current = $derived(job?.kind === "light" && job.fromVersion === fw);
 	const title = $derived(
 		!job
 			? "Install light firmware"
 			: job.kind === "blank"
 				? "Set up a new light"
-				: job.missing || current
+				: current
 					? "Reinstall light firmware"
 					: "Update light firmware",
 	);
@@ -290,7 +288,7 @@
 		if (job?.port == null) replug = true;
 		else start(pending);
 	}
-	const leanUpdateFirst = $derived(!!newerUpdate && job?.kind === "light" && !job.missing && !current);
+	const leanUpdateFirst = $derived(!!newerUpdate && job?.kind === "light" && !current);
 	function finish(pick: boolean) {
 		const mac = newMac;
 		open = false;
@@ -415,7 +413,7 @@
 					<span class="versions" title="Firmware">
 						{#if fromVersion}
 							<span class="ver old">{fromVersion}</span>
-						{:else if job.kind === "blank" || job.missing}
+						{:else if job.kind === "blank"}
 							<span class="ver old">none</span>
 						{/if}
 						<ArrowRight class="text-muted-foreground size-3" />
@@ -456,15 +454,9 @@
 					</div>
 				{:else if view === "review"}
 					<!-- the versions are in the target row above; the lead only adds what it doesn't say -->
-					<p class="lead">
-						{#if job.missing}
-							{name} has no firmware after an interrupted install, so it's dark. Takes about a minute.
-						{:else}
-							Takes about a minute.
-						{/if}
-					</p>
+					<p class="lead">Takes about a minute.</p>
 
-					{#if job.input && !job.missing}
+					{#if job.input}
 						<div class="callout" class:hot={job.input.live}>
 							<TriangleAlert class="size-4 shrink-0" />
 							<p>
@@ -649,7 +641,7 @@
 											> tray.{/if}
 									</p>
 								{:else}
-									<h3>{job.missing || fromVersion === null ? `${name} is working again` : `${name} is up to date`}</h3>
+									<h3>{fromVersion === null ? `${name} is working again` : `${name} is up to date`}</h3>
 									<p>
 										Running firmware {fw}{landedOn ? `, and back on ${landedOn}` : ""}.
 									</p>
@@ -781,7 +773,7 @@
 				<Button variant="ghost" onclick={() => (step = "settings")}>Back</Button>
 				<!-- the summary shows the kept settings, but a reinstall leaves them in place untouched -->
 				<Button onclick={() => start(job?.kind === "light" && keep ? null : chosen)}>
-					{job?.kind === "light" && (job.missing || current) ? "Reinstall firmware" : `Install ${fw}`}
+					{job?.kind === "light" && current ? "Reinstall firmware" : `Install ${fw}`}
 				</Button>
 			{:else if view === "plug" || view === "found" || view === "choose" || view === "waiting"}
 				<span></span>

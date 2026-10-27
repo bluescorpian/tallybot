@@ -47,7 +47,6 @@ function provisioning(d: Device) {
 		// route knows and this mapper doesn't: it applies `firmwareOutdated` ($lib/flasher/flasher).
 		firmwareOutdated: false,
 		firmwareVersion: d.firmware.kind === "reported" ? d.firmware.version : null,
-		firmwareMissing: false,
 		firmwareAvailable: null,
 	};
 }

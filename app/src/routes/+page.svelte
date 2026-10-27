@@ -113,9 +113,8 @@
 		mock("b2:5a:01:00:ee:ff", "B2:5A", "assigned", 4),
 	];
 	const wifiDemo = params.get("wifi");
-	// The firmware a mock light starts on when the demo shows outdated lights. A mock device's
-	// `firmware` only seeds `mockFirmware` (a reported version starts it there, anything else
-	// starts on the bundled firmware), which is what the mock reads from then on.
+	// The firmware a mock light starts on when the demo shows outdated lights. A mock light with
+	// no version given starts on the bundled firmware (set once the flasher exists, below).
 	const MOCK_OLD_FIRMWARE: DeviceFirmware = { kind: "reported", version: "1.0.1" };
 	let devices = $state<Device[]>(demo === "hero" ? HERO_DEVICES : demo === "firstrun" ? [] : [
 		mock("a4:f2:01:00:11:22", "A4:F2", "assigned", 1, {
@@ -249,7 +248,6 @@
 			return {
 				...l,
 				firmwareVersion: f.version,
-				firmwareMissing: f.missing,
 				firmwareOutdated: isOutdated(f),
 				firmwareAvailable: flasher.firmwareVersion,
 			};
@@ -357,48 +355,41 @@
 					fail as "noresponse" | "busy" | "unplugged"
 				] as FlashFailure | undefined,
 				bundled: () => updater.currentVersion,
+				boardMac: (port) => mockUnflashed.find((b) => b.port === port)?.mac ?? null,
 			});
 	if (flasher instanceof TauriFlasher) void flasher.init();
 	// A build that bundles no firmware (a dev build without `pnpm firmware:stage`) offers no
 	// flasher: blank boards point at the web flasher, as before the in-app one existed.
 	const flasherReady = $derived(flasher.firmwareVersion !== null);
 
-	/**
-	 * What firmware a light runs: the sidecar's `firmware` under Tauri, `mockFirmware` otherwise.
-	 * `version` is the reported one, if any. The mock also models a light left blank by an
-	 * interrupted install (`missing`), which under Tauri shows up as a blank board instead; a blank
-	 * mock light reads as `legacy` so it is flagged for an update like any too-old one.
-	 */
-	function lightFirmware(d: Device): { firmware: DeviceFirmware; version: string | null; missing: boolean } {
-		if (isTauri) {
-			const firmware = d.firmware;
-			return { firmware, version: firmware.kind === "reported" ? firmware.version : null, missing: false };
-		}
-		const version = d.mac in mockFirmware ? mockFirmware[d.mac] : flasher.firmwareVersion;
-		return version === null
-			? { firmware: { kind: "legacy" }, version, missing: true }
-			: { firmware: { kind: "reported", version }, version, missing: false };
+	/** What firmware a light runs, and the version it reported, if any. */
+	function lightFirmware(d: Device): { firmware: DeviceFirmware; version: string | null } {
+		return { firmware: d.firmware, version: d.firmware.kind === "reported" ? d.firmware.version : null };
 	}
 	const isOutdated = (f: { firmware: DeviceFirmware }) => firmwareOutdated(flasher.firmwareVersion, f.firmware);
 	/** The USB port a light is on, or null when it isn't plugged in. */
 	function portOf(d: Device): string | null {
 		if (isTauri) return health.lightPorts.find((l) => l.mac === d.mac)?.port ?? null;
-		return d.transport === "usb" && !mockUnplugged ? mockPort(d.mac) : null;
+		return d.transport === "usb" ? mockPort(d.mac) : null;
 	}
 	let updateOpen = $state(false);
 
+	// Mock lights with no version given run the bundled firmware.
+	for (const d of devices) {
+		if (d.firmware.kind !== "reported" && flasher.firmwareVersion !== null)
+			d.firmware = { kind: "reported", version: flasher.firmwareVersion };
+	}
 	/**
-	 * Firmware each mock light runs (MAC → version; null = blank, left so by an interrupted
-	 * install). Seeded from each mock device's `firmware` (see `MOCK_OLD_FIRMWARE`).
+	 * Mock boards on USB with no TallyBot firmware, and the light each one used to be (null for a
+	 * brand-new board). As under Tauri, a light an interrupted install left blank isn't a light on
+	 * USB any more: it's a blank board (its light stays on the board, offline, assignment kept).
 	 */
-	let mockFirmware = $state<Record<string, string | null>>(
-		Object.fromEntries(
-			devices.map((d) => [d.mac, d.firmware.kind === "reported" ? d.firmware.version : flasher.firmwareVersion]),
-		),
+	type MockBlank = { port: string; mac: string | null };
+	let mockUnflashed = $state<MockBlank[]>(
+		demo === "unflashed" || demo === "newerfw" ? [{ port: "COM5", mac: null }] : [],
 	);
-	let mockUnflashed = $state<string[]>(demo === "unflashed" || demo === "newerfw" ? ["COM5"] : []);
-	// The cable came out mid-install: the board is off USB until the mock "replugs" it.
-	let mockUnplugged = $state(false);
+	// A board whose cable came out mid-install: off USB until the mock "replugs" it.
+	let mockPulled = $state<MockBlank | null>(null);
 	// `?fail=wronglight`: the label of a different light plugged in while waiting for another.
 	let mockWrong = $state<string | null>(null);
 	let wrongOnce = fail === "wronglight";
@@ -409,7 +400,7 @@
 			: {
 					sidecarDown: demo === "enginedown" ? "exit code 1" : null,
 					usbPortErrors: [],
-					unflashedPorts: mockUnflashed,
+					unflashedPorts: mockUnflashed.map((b) => b.port),
 					lightPorts: [],
 				},
 	);
@@ -426,11 +417,10 @@
 		if (r.kind === "blank")
 			return {
 				kind: "blank",
-				port: isTauri ? (health.unflashedPorts.includes(r.port) ? r.port : null) : mockUnplugged ? null : r.port,
+				port: health.unflashedPorts.includes(r.port) ? r.port : null,
 				mac: null,
 				label: null,
 				fromVersion: null,
-				missing: false,
 				wrongLight: null,
 				input: null,
 			};
@@ -445,7 +435,6 @@
 			// the board labels a light by the last two octets of its MAC
 			label: d.mac.split(":").slice(-2).join(":"),
 			fromVersion: f.version,
-			missing: f.missing,
 			wrongLight: mockWrong,
 			input: input ? { label: input.label, live: input.tally === "live" } : null,
 		};
@@ -494,7 +483,7 @@
 	// Mock: opened with nothing plugged in, a blank board "arrives" after a few seconds.
 	$effect(() => {
 		if (!mockOnly || !flashOpen || flashRequest?.kind !== "any" || flashCandidates.length) return;
-		const t = setTimeout(() => (mockUnflashed = [...mockUnflashed, "COM6"]), 3500);
+		const t = setTimeout(() => (mockUnflashed = [...mockUnflashed, { port: "COM6", mac: null }]), 3500);
 		return () => clearTimeout(t);
 	});
 
@@ -506,8 +495,14 @@
 		if (!mockOnly || !flashOpen || !job || job.port !== null || flasher.state.status !== "idle") return;
 		const mac = job.mac;
 		const plugIn = () => {
-			mockUnplugged = false;
 			mockWrong = null;
+			if (mockPulled) {
+				mockUnflashed = [...mockUnflashed, mockPulled];
+				mockPulled = null;
+				return;
+			}
+			// a light left blank comes back as a blank board, never as the light (as under Tauri)
+			if (mockUnflashed.some((b) => b.mac === mac)) return;
 			const d = devices.find((x) => x.mac === mac);
 			if (d) d.transport = "usb";
 		};
@@ -522,11 +517,13 @@
 		return () => clearTimeout(t);
 	});
 
-	// Mock: mirror what the engine would report while a light is installed — it drops offline
-	// once the board starts erasing, and comes back (current firmware) when it rejoins. A blank
-	// board leaves the unflashed list and lands in the dock as a new, unassigned light. An
-	// install stopped or broken mid-erase/write leaves a known light blank (still offline, its
-	// assignment kept); one stopped after the write already has its new firmware.
+	// Mock: mirror what the engine and the shell would report while a board is installed. A light
+	// drops offline once its board starts erasing, and comes back (current firmware) when it
+	// rejoins; a blank board leaves the unflashed list and lands in the dock as a new, unassigned
+	// light, or as the light it used to be. An install stopped or broken mid-erase/write leaves the
+	// board blank: a light's board leaves USB and turns up as an unflashed port (the light stays
+	// offline, its assignment kept), or, if the cable came out, once it's plugged back in. One
+	// stopped after the write already has its new firmware.
 	$effect(() => {
 		const s = flasher.state;
 		if (!mockOnly) return;
@@ -541,17 +538,33 @@
 				d.state = "offline";
 			} else if (s.status === "done") {
 				back();
-				if (t.kind === "blank" && !devices.some((x) => x.mac === s.mac)) {
-					mockUnflashed = mockUnflashed.filter((p) => p !== t.port);
-					devices.push(mock(s.mac, "E7:5B", "unassigned", null, { transport: "usb", protocolVersion: 3 }));
+				if (t.kind === "blank") {
+					mockUnflashed = mockUnflashed.filter((b) => b.port !== t.port);
+					const was = devices.find((x) => x.mac === s.mac);
+					if (was) {
+						was.transport = "usb";
+						was.state = was.inputId !== null ? "assigned" : "unassigned";
+					} else devices.push(mock(s.mac, "E7:5B", "unassigned", null, { transport: "usb", protocolVersion: 3 }));
 				}
-				mockFirmware[s.mac] = flasher.firmwareVersion;
+				const done = devices.find((x) => x.mac === s.mac);
+				if (done && flasher.firmwareVersion !== null) done.firmware = { kind: "reported", version: flasher.firmwareVersion };
 			} else if (s.status === "failed" || s.status === "cancelled") {
-				if (s.status === "failed" && s.failure === "unplugged") mockUnplugged = true;
+				const pulled = s.status === "failed" && s.failure === "unplugged";
+				if (t.kind === "blank") {
+					if (pulled) {
+						mockPulled = mockUnflashed.find((b) => b.port === t.port) ?? { port: t.port, mac: null };
+						mockUnflashed = mockUnflashed.filter((b) => b.port !== t.port);
+					}
+					return;
+				}
 				if (!d) return;
-				if (leavesBlank(s.stage)) mockFirmware[d.mac] = null;
-				else if (s.stage !== "connect") {
-					mockFirmware[d.mac] = flasher.firmwareVersion;
+				if (leavesBlank(s.stage)) {
+					const blank = { port: t.port, mac: d.mac };
+					d.transport = "wifi"; // what the engine reports for a light it can't reach
+					if (pulled) mockPulled = blank;
+					else mockUnflashed = [...mockUnflashed, blank];
+				} else if (s.stage !== "connect") {
+					if (flasher.firmwareVersion !== null) d.firmware = { kind: "reported", version: flasher.firmwareVersion };
 					back();
 				}
 			}
@@ -735,21 +748,6 @@
 				message: `The board on ${port} doesn't have TallyBot firmware yet. Flash it with the web flasher (TallyBot can stay open), then unplug it and plug it back in.`,
 				dismissible: true,
 				action: { label: "Open flasher", run: openWebFlasher },
-			});
-		}
-		// A known light left blank by an interrupted install. Its MAC is known (the bootloader
-		// reports it even with no firmware), so it keeps its name and assignment.
-		for (const d of devices) {
-			if (!mockOnly || mockFirmware[d.mac] !== null) continue;
-			if ((flashOpen || installRunning) && flashRequest?.kind === "light" && flashRequest.mac === d.mac) continue;
-			const label = d.mac.split(":").slice(-2).join(":");
-			const input = inputs.find((i) => i.id === d.inputId);
-			list.push({
-				key: `blank:${d.mac}`,
-				level: "warn",
-				message: `${label} needs its firmware reinstalled: an install was interrupted, so it stays dark${input ? ` instead of showing ${input.label}` : ""}.`,
-				dismissible: false,
-				action: { label: "Reinstall firmware", run: () => openFlasher({ kind: "light", mac: d.mac }) },
 			});
 		}
 		const justUpdated = updater.state.status === "current" ? updater.state.justUpdated : undefined;

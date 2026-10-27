@@ -125,11 +125,8 @@
 					<!-- Static badge on the corner, like an app-icon badge: findable at a glance,
 					     never animated, so it doesn't pull focus mid-show. Drawn on the trigger so
 					     the locked PCB primitive stays untouched. -->
-					<span
-						class="fw-badge"
-						class:missing={light.firmwareMissing}
-						title={light.firmwareMissing ? "Needs its firmware reinstalled" : "Firmware update available"}
-						>{#if light.firmwareMissing}!{:else}<ArrowUp class="size-2.5" strokeWidth={3} />{/if}</span
+					<span class="fw-badge" title="Firmware update available"
+						><ArrowUp class="size-2.5" strokeWidth={3} /></span
 					>
 				{/if}
 			</button>
@@ -216,12 +213,10 @@
 				<CircleArrowUp class="text-primary size-4 shrink-0" />
 				<span class="min-w-0 flex-1">
 					<span class="block text-sm leading-tight font-medium"
-						>{light.firmwareMissing ? "Reinstall firmware" : "Update firmware"}</span
+						>Update firmware</span
 					>
 					<span class="text-muted-foreground block text-[0.68rem] leading-tight">
-						{#if light.firmwareMissing}
-							No firmware, so it stays dark
-						{:else if !wired}
+						{#if !wired}
 							Plug into PC
 						{:else if light.firmwareVersion && light.firmwareAvailable}
 							<span class="font-mono">{light.firmwareVersion} → {light.firmwareAvailable}</span>
@@ -340,13 +335,6 @@
 		color: var(--primary-foreground);
 		box-shadow: 0 0 0 2px var(--board);
 		pointer-events: none;
-	}
-	.fw-badge.missing {
-		background: var(--destructive);
-		color: #fff;
-		font-size: 11px;
-		font-weight: 700;
-		line-height: 1;
 	}
 	.light-trigger:focus-visible {
 		outline: 2px solid var(--ring);

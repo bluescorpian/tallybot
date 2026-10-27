@@ -63,8 +63,6 @@ export interface BoardLight {
 	 * older than 1.1 never does, and a light not heard from yet hasn't).
 	 */
 	firmwareVersion: string | null;
-	/** The light has no firmware at all (an install was interrupted): it needs a reinstall. */
-	firmwareMissing: boolean;
 	/** The firmware version an update would install (this app's), when known. */
 	firmwareAvailable: string | null;
 }

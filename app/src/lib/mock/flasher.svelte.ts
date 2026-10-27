@@ -30,14 +30,21 @@ export class MockFlasher implements Flasher {
 	#failOnce: FlashFailure | null;
 
 	#bundled: () => string;
+	#boardMac: (port: string) => string | null;
 
 	/**
 	 * `bundled` reads the firmware version this app ships. It's the app's version, so it
-	 * follows an app update (the mock app "updates" without reloading).
+	 * follows an app update (the mock app "updates" without reloading). `boardMac` names the
+	 * light a blank board on `port` used to be (one left blank by an interrupted install), which
+	 * comes back as that light, as the real bootloader-reported MAC would; otherwise a blank board
+	 * comes back as a new light.
 	 */
-	constructor(opts: { failOnce?: FlashFailure | null; bundled?: () => string } = {}) {
+	constructor(
+		opts: { failOnce?: FlashFailure | null; bundled?: () => string; boardMac?: (port: string) => string | null } = {},
+	) {
 		this.#failOnce = opts.failOnce ?? null;
 		this.#bundled = opts.bundled ?? (() => APP_VERSION);
+		this.#boardMac = opts.boardMac ?? (() => null);
 	}
 
 	get firmwareVersion(): string {
@@ -66,8 +73,8 @@ export class MockFlasher implements Flasher {
 			at += DURATION[stage];
 		}
 		this.#later(at, () => {
-			// a blank board's MAC is known from the bootloader; the mock invents a new one
-			const mac = target.kind === "light" ? target.mac : "30:ae:a4:00:e7:5b";
+			// a blank board's MAC is known from the bootloader; the mock invents one for a new board
+			const mac = target.kind === "light" ? target.mac : (this.#boardMac(target.port) ?? "30:ae:a4:00:e7:5b");
 			this.state = { status: "done", target, mac };
 		});
 	}
