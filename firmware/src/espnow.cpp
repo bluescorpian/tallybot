@@ -366,15 +366,15 @@ void espnow::exitBridge() {
   radioDown();
   g_role = Role::NONE;
   TLOG(LOG_LEVEL_INFO, "Bridge mode off; restoring radio per transport mode\n");
-  // Restore the radio to what the device's own NVS transport mode dictates. main.cpp's per-tick
-  // service then resumes the matching client (WiFi tally / ESP-NOW light) as needed.
+  // Restore the radio to what the device's own NVS transport mode dictates. main.cpp's
+  // startTransportClient(..., Resume::RADIO_RESTORED) then resumes the matching client.
   switch (settings::transportMode()) {
     case TRANSPORT_WIFI:
       wifi::enableRadio();
       wifi::beginAssociation();  // resume the warm association
       break;
     case TRANSPORT_ESPNOW:
-      // main.cpp restarts the light role on the next tick (when unplugged); nothing to do here.
+      // main.cpp's startTransportClient restarts the light role; nothing to do here.
       break;
     default:  // TRANSPORT_NOTX
       wifi::disableRadio();

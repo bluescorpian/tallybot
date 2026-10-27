@@ -53,12 +53,65 @@ bool g_wifiUp = false;      // last-seen WiFi link state, to detect up/down edge
 
 void onMessage(const ServerMessage& msg) { control::dispatch(msg); }
 
-// Run the blocking WiFi bring-up (saved creds → captive portal), then start the tally client.
-void startWifiClient() {
-  wifi::connectBlocking();
+// Start the WiFi tally client (discovery/TCP) on whatever link the radio has now. Not yet
+// associated is fine: serviceWifiClient's up edge or sustained-loss retry takes it from there.
+void enterWifiClient() {
   tally::start();
   g_wifiUp = wifi::connected();
   g_mode = Mode::WIFI_CLIENT;
+}
+
+// Run the blocking WiFi bring-up (saved creds → captive portal), then start the tally client.
+void startWifiClient() {
+  wifi::connectBlocking();
+  enterWifiClient();
+}
+
+// Why the device is (re)starting its own transport client; it decides how a WiFi device gets there.
+enum class Resume {
+  BOOT,            // cold radio, and a USB host may still claim the cable
+  RADIO_RESTORED,  // bridge torn down: espnow::exitBridge already rebuilt the radio per NVS
+  USB_RELEASED,    // a USB host let go of a WiFi device whose association was kept warm
+};
+
+// The one place the device resumes its own transport client, without a reboot (it must keep
+// rendering through designation changes).
+//
+// The WiFi paths deliberately differ, and are kept so: BOOT warms an association and waits in
+// USB_DECIDING for kUsbBootGraceMs ("USB first"); RADIO_RESTORED goes straight to the tally client
+// with no grace window (exitBridge has already begun a non-blocking association); USB_RELEASED uses
+// the warm link if it is up, else does the blocking bring-up. Neither docs/decisions.md nor git
+// history (4610a9b introduced the bridge-exit path) records why the bridge-exit path skips the
+// boot path's warm-join wait and grace window: it is unverified whether it should also warm-join
+// and wait, which needs a bridge cable-pull on hardware to settle.
+void startTransportClient(uint8_t transport, Resume from) {
+  switch (transport) {
+    case TRANSPORT_WIFI:
+      if (from == Resume::BOOT) {
+        wifi::enableRadio();       // STA + channel widening + cache the stored SSID
+        wifi::beginAssociation();  // non-blocking warm join (if provisioned), kept warm for USB-first
+        ind::joiningWifi();        // amber pulse during the grace window
+        g_mode = Mode::USB_DECIDING;
+        g_bootStart = millis();
+      } else if (from == Resume::USB_RELEASED && !wifi::connected()) {
+        startWifiClient();  // not associated (creds missing / out of range) — full bring-up
+      } else {
+        enterWifiClient();  // radio already up; (re)bind discovery
+      }
+      break;
+    case TRANSPORT_ESPNOW:
+      espnow::startLight();  // radio up as a light + begin discovery (ind::searching, cyan)
+      g_espnowGated = false;
+      g_mode = Mode::ESPNOW_CLIENT;
+      TLOG(LOG_LEVEL_INFO, "ESP-NOW mode: discovering a bridge\n");
+      break;
+    default:  // TRANSPORT_NOTX
+      if (from == Resume::BOOT) wifi::disableRadio();  // otherwise exitBridge already did
+      ind::lostServer();  // steady blue: USB-only until the app connects over USB
+      g_mode = Mode::NOTX;
+      TLOG(LOG_LEVEL_INFO, "No-TX mode: WiFi off, USB only\n");
+      break;
+  }
 }
 
 // Hold BOOT for kReprovisionHoldMs to re-open the captive portal (switch networks) in any state.
@@ -75,9 +128,7 @@ void checkBootButton(unsigned long now) {
     usb::resetSession();
     tally::stop();
     wifi::openPortal();  // blocks until reconfigured or cancelled
-    tally::start();
-    g_wifiUp = wifi::connected();
-    g_mode = Mode::WIFI_CLIENT;
+    enterWifiClient();
   }
 }
 
@@ -106,11 +157,7 @@ void serviceWifiClient(unsigned long now) {
       g_wifiUp = false;
       tally::stop();
     }
-    if (wifi::serviceDown(now)) {  // sustained loss → retry + portal
-      wifi::connectBlocking();
-      tally::start();
-      g_wifiUp = wifi::connected();
-    }
+    if (wifi::serviceDown(now)) startWifiClient();  // sustained loss → retry + portal
     return;
   }
   if (!g_wifiUp) {  // up edge: (re)bind discovery and start hunting
@@ -144,26 +191,7 @@ void setup() {
   pinMode(kBootButtonPin, INPUT_PULLUP);
   led::bootSelfTest();  // R→G→B→W — prove the LED works before anything network-related
 
-  switch (settings::transportMode()) {
-    case TRANSPORT_WIFI:
-      wifi::enableRadio();       // STA + channel widening + cache the stored SSID
-      wifi::beginAssociation();  // non-blocking warm join (if provisioned), kept warm for USB-first
-      ind::joiningWifi();        // amber pulse during the grace window
-      g_mode = Mode::USB_DECIDING;
-      g_bootStart = millis();
-      break;
-    case TRANSPORT_ESPNOW:
-      espnow::startLight();  // radio up as a light + begin discovery (ind::searching, cyan)
-      g_mode = Mode::ESPNOW_CLIENT;
-      TLOG(LOG_LEVEL_INFO, "ESP-NOW mode: discovering a bridge\n");
-      break;
-    default:  // TRANSPORT_NOTX
-      wifi::disableRadio();
-      ind::lostServer();  // steady blue: USB-only until the app connects over USB
-      g_mode = Mode::NOTX;
-      TLOG(LOG_LEVEL_INFO, "No-TX mode: WiFi off, USB only\n");
-      break;
-  }
+  startTransportClient(settings::transportMode(), Resume::BOOT);
 }
 
 void loop() {
@@ -182,25 +210,7 @@ void loop() {
       TLOG(LOG_LEVEL_INFO, "USB host lost; leaving bridge mode\n");
       usb::resetSession();
       espnow::exitBridge();  // tears the bridge radio down + restores it per NVS (WiFi/No-TX)
-      // Resume the device's own transport client. exitBridge already rebuilt the WiFi/No-TX radio;
-      // here we re-establish g_mode + restart the matching client without a reboot (the device
-      // must keep rendering through designation changes).
-      switch (settings::transportMode()) {
-        case TRANSPORT_WIFI:
-          tally::start();  // radio re-enabled by exitBridge; (re)bind discovery
-          g_wifiUp = wifi::connected();
-          g_mode = Mode::WIFI_CLIENT;
-          break;
-        case TRANSPORT_ESPNOW:
-          espnow::startLight();  // exitBridge left the radio down for the light to own
-          g_espnowGated = false;
-          g_mode = Mode::ESPNOW_CLIENT;
-          break;
-        default:  // TRANSPORT_NOTX
-          ind::lostServer();
-          g_mode = Mode::NOTX;
-          break;
-      }
+      startTransportClient(settings::transportMode(), Resume::RADIO_RESTORED);
     } else {
       led::render(now);
       delay(1);
@@ -224,13 +234,9 @@ void loop() {
       if (usbTallyReleased) {
         TLOG(LOG_LEVEL_INFO, "USB host lost; reverting to WiFi\n");
         usb::resetSession();
-        if (wifi::connected()) {  // warm association already up — straight to discovery
-          tally::start();
-          g_wifiUp = true;
-          g_mode = Mode::WIFI_CLIENT;
-        } else {  // not associated (creds missing / out of range) — full bring-up
-          startWifiClient();
-        }
+        // TRANSPORT_WIFI, not the NVS mode: USB_OWNED is reached only from a WiFi boot, and a
+        // SET_TRANSPORT received while cabled applies next boot.
+        startTransportClient(TRANSPORT_WIFI, Resume::USB_RELEASED);
       }
       break;
 
