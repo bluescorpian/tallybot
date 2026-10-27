@@ -49,7 +49,7 @@ const HEALTHY: ShellHealth = {
 	lightPorts: [],
 };
 
-/** True when running inside the Tauri webview (mirrors `TitleBar.svelte`). */
+/** True when running inside the Tauri webview; false in a plain browser (`pnpm dev`). */
 export const isTauri =
 	typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 

@@ -363,34 +363,30 @@ export function serializeMessage(message: SidecarEvent | UiCommand): string {
   return `${JSON.stringify(message)}\n`;
 }
 
-function parseJson(line: string): unknown {
-  try {
-    return JSON.parse(line) as unknown;
-  } catch {
-    return undefined;
-  }
-}
-
-function discriminant(value: unknown): string | undefined {
-  if (typeof value !== "object" || value === null) return undefined;
-  const type = (value as { type?: unknown }).type;
-  return typeof type === "string" ? type : undefined;
-}
-
 /**
- * Parse one NDJSON line into a sidecar→UI event, or null if it isn't valid JSON
- * or carries an unknown `type`. Validation is intentionally light — this is a
- * trusted local pipe, not untrusted network input.
+ * Parse one NDJSON line as a message whose `type` is one of `types`, or null if it isn't
+ * valid JSON or carries another `type`. Validation is intentionally light — this is a
+ * trusted local pipe, not untrusted network input. Shared with the USB bridge vocabulary
+ * (`usb-bridge.ts`), which rides the same pipe.
  */
-export function parseEvent(line: string): SidecarEvent | null {
-  const value = parseJson(line);
-  const type = discriminant(value);
-  return type !== undefined && eventTypes.has(type) ? (value as SidecarEvent) : null;
+export function parseTypedLine<T>(line: string, types: ReadonlySet<string>): T | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (typeof value !== "object" || value === null) return null;
+  const type = (value as { type?: unknown }).type;
+  return typeof type === "string" && types.has(type) ? (value as T) : null;
 }
 
-/** Parse one NDJSON line into a UI→sidecar command, or null (see {@link parseEvent}). */
+/** Parse one NDJSON line into a sidecar→UI event, or null (see {@link parseTypedLine}). */
+export function parseEvent(line: string): SidecarEvent | null {
+  return parseTypedLine<SidecarEvent>(line, eventTypes);
+}
+
+/** Parse one NDJSON line into a UI→sidecar command, or null (see {@link parseTypedLine}). */
 export function parseCommand(line: string): UiCommand | null {
-  const value = parseJson(line);
-  const type = discriminant(value);
-  return type !== undefined && commandTypes.has(type) ? (value as UiCommand) : null;
+  return parseTypedLine<UiCommand>(line, commandTypes);
 }

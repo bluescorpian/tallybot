@@ -34,7 +34,7 @@
 
 	import { onMount, untrack } from "svelte";
 	import type { Source, SourceScanEvent } from "$ipc";
-	import { PROTOCOL_VERSION } from "$protocol";
+	import { PROTOCOL_VERSION, isIPv4 } from "$protocol";
 	import { version as APP_VERSION } from "../../../../package.json";
 	import { Button } from "$lib/components/ui/button";
 	import { Input } from "$lib/components/ui/input";
@@ -115,9 +115,7 @@
 		dirty = isDirty;
 	});
 	// only flag a bad IP once something's typed; empty isn't "invalid", just not savable
-	const ipValid = $derived(
-		ipTrim === "" ? true : /^(\d{1,3}\.){3}\d{1,3}$/.test(ipTrim),
-	);
+	const ipValid = $derived(ipTrim === "" || isIPv4(ipTrim));
 	const ipError = $derived(ipChanged && ipTrim !== "" && !ipValid);
 	// savable only if there's a change AND any IP change is a valid, non-empty IP
 	const canSave = $derived(

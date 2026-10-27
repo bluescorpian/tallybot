@@ -26,6 +26,7 @@
 	// clickable.
 	import { getCurrentWindow } from "@tauri-apps/api/window";
 	import { onMount, onDestroy } from "svelte";
+	import { isTauri } from "$lib/ipc.svelte";
 	import Wordmark from "./Wordmark.svelte";
 	import SettingsIcon from "@lucide/svelte/icons/settings";
 	import MinusIcon from "@lucide/svelte/icons/minus";
@@ -56,8 +57,6 @@
 	// Window controls only work inside the Tauri webview. Under `pnpm dev` in a
 	// plain browser (e.g. screenshot verification) the bar still renders fully, but
 	// the OS actions no-op instead of throwing.
-	const isTauri =
-		typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 	let maximized = $state(false);
 	let unlisten: (() => void) | undefined;

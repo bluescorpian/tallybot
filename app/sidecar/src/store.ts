@@ -17,7 +17,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
-import { DEFAULT_BRIGHTNESS } from "./protocol.ts";
+import { DEFAULT_BRIGHTNESS, isMac } from "./protocol.ts";
 
 /** One device's persisted configuration. */
 export interface DeviceConfig {
@@ -66,11 +66,6 @@ function coerceDevice(value: unknown): DeviceConfig | null {
   return device;
 }
 
-/** A full MAC: six colon-separated two-hex-digit octets, e.g. `e8:3d:c1:85:dc:6c`. */
-function isFullMac(mac: string): boolean {
-  return /^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$/.test(mac);
-}
-
 /** Salvage whatever is recognisable from a parsed file; unknown shapes → defaults. */
 function coerceShape(value: unknown): {
   sourceIp: string | null;
@@ -83,13 +78,13 @@ function coerceShape(value: unknown): {
   const sourceIp = typeof raw.sourceIp === "string" ? raw.sourceIp : null;
   // A stored bridge MAC must be a full MAC to be trusted (anything else is garbage from a hand-
   // edited or corrupt file); fall back to "no bridge" rather than re-asserting onto a bogus MAC.
-  const bridgeMac = typeof raw.bridgeMac === "string" && isFullMac(raw.bridgeMac) ? raw.bridgeMac : null;
+  const bridgeMac = typeof raw.bridgeMac === "string" && isMac(raw.bridgeMac) ? raw.bridgeMac : null;
   if (typeof raw.devices === "object" && raw.devices !== null) {
     for (const [mac, entry] of Object.entries(raw.devices)) {
       // Drop keys that aren't a full MAC. Devices are keyed by their 6-octet MAC;
       // a short key (e.g. a 3-octet tail) is legacy garbage that would surface as a
       // phantom offline device, so it self-heals on load rather than persisting.
-      if (!isFullMac(mac)) continue;
+      if (!isMac(mac)) continue;
       const device = coerceDevice(entry);
       if (device) devices.set(mac, device);
     }

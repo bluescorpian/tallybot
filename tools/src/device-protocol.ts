@@ -23,31 +23,15 @@ import {
   ServerMessageType,
   formatMac,
   frame,
+  parseMac,
 } from "../../app/sidecar/src/protocol.ts";
 import { randomBytes } from "node:crypto";
 
 // Re-exported so a simulated device imports its whole wire surface from one
 // module (the codec here + the shared framing it sits on).
-export { FrameDecoder } from "../../app/sidecar/src/protocol.ts";
+export { FrameDecoder, parseMac } from "../../app/sidecar/src/protocol.ts";
 
 // ── MAC helpers ─────────────────────────────────────────────────────────────
-
-/** Parse "aa:bb:cc:dd:ee:ff" into its six raw bytes. Inverse of {@link formatMac}. */
-export function parseMac(mac: string): Uint8Array {
-  const octets = mac.split(":");
-  if (octets.length !== 6) {
-    throw new RangeError(`MAC must have 6 colon-separated octets, got ${octets.length} in "${mac}"`);
-  }
-  const bytes = new Uint8Array(6);
-  for (let i = 0; i < 6; i++) {
-    const octet = octets[i]!;
-    if (!/^[0-9a-fA-F]{2}$/.test(octet)) {
-      throw new RangeError(`MAC octet "${octet}" is not two hex digits in "${mac}"`);
-    }
-    bytes[i] = Number.parseInt(octet, 16);
-  }
-  return bytes;
-}
 
 /**
  * A random MAC for a simulated device, in colon form. The first octet is forced

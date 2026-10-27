@@ -219,6 +219,3 @@ export function computeEngine(
 
 /** The program gate in its v1 resting state: present but inactive (docs/goals.md). */
 export const INACTIVE_GATE: ProgramGate = { active: false, source: null };
-
-/** A device's default per-device brightness before the user changes it. */
-export { DEFAULT_BRIGHTNESS };

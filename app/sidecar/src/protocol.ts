@@ -525,13 +525,15 @@ export function formatMac(bytes: Uint8Array): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join(":");
 }
 
+/** A full MAC: six colon-separated two-hex-digit octets (any case), e.g. `e8:3d:c1:85:dc:6c`. */
+export function isMac(mac: string): boolean {
+  return /^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$/.test(mac);
+}
+
 /** "aa:bb:cc:dd:ee:ff" (any case) → six raw MAC bytes. Inverse of {@link formatMac}. */
 export function parseMac(mac: string): Uint8Array {
-  const parts = mac.split(":");
-  if (parts.length !== 6 || parts.some((p) => !/^[0-9a-fA-F]{2}$/.test(p))) {
-    throw new RangeError(`not a MAC address: "${mac}"`);
-  }
-  return Uint8Array.from(parts, (p) => Number.parseInt(p, 16));
+  if (!isMac(mac)) throw new RangeError(`not a MAC address: "${mac}"`);
+  return Uint8Array.from(mac.split(":"), (p) => Number.parseInt(p, 16));
 }
 
 /**
@@ -567,4 +569,13 @@ export function parseDiscoveryResponse(message: string): { port: number } | null
   const port = Number(message.slice(DISCOVERY_RESPONSE_PREFIX.length));
   if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
   return { port };
+}
+
+/**
+ * A dotted-quad IPv4 address, each octet 0–255, e.g. `192.168.10.240` — the form the ATEM
+ * source IP takes.
+ */
+export function isIPv4(ip: string): boolean {
+  const octets = ip.split(".");
+  return octets.length === 4 && octets.every((o) => /^\d{1,3}$/.test(o) && Number(o) <= 255);
 }

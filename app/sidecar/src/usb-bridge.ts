@@ -12,6 +12,7 @@
  * built with the same codecs; the shell only applies the COBS wrapper.
  */
 
+import { parseTypedLine } from "./ipc.ts";
 import { type DeviceMessage, decodeDeviceMessage } from "./protocol.ts";
 
 // ── shell → sidecar (arrives on the sidecar's stdin) ─────────────────────────────
@@ -59,15 +60,7 @@ const INBOUND_TYPES = new Set<string>([
 
 /** Parse one NDJSON line as a USB bridge inbound message, or null if it isn't one. */
 export function parseUsbInbound(line: string): UsbInbound | null {
-  let value: unknown;
-  try {
-    value = JSON.parse(line);
-  } catch {
-    return null;
-  }
-  if (typeof value !== "object" || value === null) return null;
-  const type = (value as { type?: unknown }).type;
-  return typeof type === "string" && INBOUND_TYPES.has(type) ? (value as UsbInbound) : null;
+  return parseTypedLine<UsbInbound>(line, INBOUND_TYPES);
 }
 
 /** Hex-encode a payload for transport over the bridge. */
