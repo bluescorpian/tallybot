@@ -172,6 +172,9 @@
 				action: { label: "Settings", run: () => (settingsOpen = true) },
 			});
 		}
+		if (health.configDirMissing) {
+			list.push({ key: "config-dir", level: "warn", message: health.configDirMissing, dismissible: true });
+		}
 		for (const e of health.usbPortErrors) {
 			list.push({ key: `usb:${e.port}`, level: "warn", message: e.message, dismissible: true });
 		}

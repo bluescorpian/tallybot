@@ -33,6 +33,9 @@ pub struct Health {
     /// board without firmware (`flash.rs`), so it sends no HELLO and has no MAC of its own to show.
     /// Kept until the port is unplugged or a light speaks on it again.
     pub blank_lights: Vec<LightPort>,
+    /// Set when the OS app-config dir couldn't be resolved: the sidecar then keeps its state in
+    /// its own fallback location and `shell.log` isn't written. Operator-facing message.
+    pub config_dir_missing: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -159,6 +162,17 @@ pub fn set_blank_light(app: &AppHandle, port: &str, mac: Option<&str>) {
             h.blank_lights.sort_by(|a, b| a.port.cmp(&b.port));
         }
         h.blank_lights != before
+    });
+}
+
+/// Report that the app-config dir couldn't be resolved (`lib.rs` setup). Emits only on change.
+pub fn set_config_dir_missing(app: &AppHandle, message: Option<String>) {
+    update(app, |h| {
+        if h.config_dir_missing == message {
+            return false;
+        }
+        h.config_dir_missing = message;
+        true
     });
 }
 

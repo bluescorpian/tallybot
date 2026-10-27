@@ -111,7 +111,16 @@ pub fn run() {
             // supervisors below have a file for their lines from the start.
             match app.path().app_config_dir() {
                 Ok(dir) => log::init(&dir),
-                Err(e) => log::diag!("[log] no app config dir ({e}); logging to stderr only"),
+                Err(e) => {
+                    log::diag!("[log] no app config dir ({e}); logging to stderr only");
+                    // The sidecar falls back to its own state path too (sidecar.rs): say so.
+                    health::set_config_dir_missing(
+                        app.handle(),
+                        Some(format!(
+                            "TallyBot couldn't find its settings folder ({e}), so it keeps settings in a fallback location and doesn't write its shell log. Settings saved elsewhere before won't load."
+                        )),
+                    );
+                }
             }
             updater::restore_install_failure(app.handle()); // a failed install's reason, before the UI pulls
             sidecar::start(app.handle().clone()); // spawn + respawn-on-crash supervisor

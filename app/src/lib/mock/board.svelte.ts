@@ -234,6 +234,7 @@ export class MockBoard implements Backend {
 		unflashedPorts: this.#unflashed.map((b) => b.port),
 		lightPorts: [],
 		blankLights: this.#unflashed.flatMap((b) => (b.mac === null ? [] : [{ mac: b.mac, port: b.port }])),
+		configDirMissing: null,
 	}));
 	get unflashedPorts() {
 		return this.health.unflashedPorts;

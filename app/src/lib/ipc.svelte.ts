@@ -44,6 +44,8 @@ export interface ShellHealth {
 	 * sends no HELLO, so this is the only record of which light it is.
 	 */
 	blankLights: { mac: string; port: string }[];
+	/** Why the OS settings folder couldn't be used (state and the shell log fall back), or null. */
+	configDirMissing: string | null;
 }
 
 /** A sidecar notice as the page lists it: `id` tells two apart, so one can be dismissed alone. */
@@ -62,6 +64,7 @@ const HEALTHY: ShellHealth = {
 	unflashedPorts: [],
 	lightPorts: [],
 	blankLights: [],
+	configDirMissing: null,
 };
 
 /** True when running inside the Tauri webview; false in a plain browser (`pnpm dev`). */
