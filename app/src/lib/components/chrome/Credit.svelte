@@ -7,7 +7,7 @@
 </script>
 
 <div class="credit">
-	<a href="https://github.com/bluescorpian" target="_blank" rel="noreferrer">
+	<a href="https://hrry.sh" target="_blank" rel="noreferrer">
 		<span>Made with</span>
 		<HeartIcon class="heart size-[11px]" fill="currentColor" stroke="none" />
 		<span>by Harry</span>
