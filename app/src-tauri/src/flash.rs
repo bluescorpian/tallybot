@@ -697,4 +697,31 @@ mod tests {
         one.begin(0x0, 1);
         assert!(one.on_first_segment() && one.on_last_segment());
     }
+
+    #[test]
+    fn only_a_stop_or_failure_from_erase_to_verify_leaves_the_board_blank() {
+        for stage in [Stage::Erase, Stage::Write, Stage::Verify] {
+            assert!(stage.leaves_blank(), "{stage:?}");
+        }
+        // Before the erase nothing was touched; from the reset on, the new firmware is in place.
+        for stage in [Stage::Connect, Stage::Restart, Stage::Rejoin] {
+            assert!(!stage.leaves_blank(), "{stage:?}");
+        }
+    }
+
+    #[test]
+    fn a_connect_failure_reads_as_its_cause() {
+        let no_answer = || espflash::Error::from(std::io::Error::new(std::io::ErrorKind::TimedOut, "no sync"));
+        assert_eq!(connect_failure(&no_answer(), true), Failure::NoResponse);
+
+        assert_eq!(connect_failure(&espflash::Error::ChipDetectError("magic 0x1234".into()), true), Failure::WrongChip);
+        assert_eq!(
+            connect_failure(&espflash::Error::ChipMismatch("esp32c3".into(), "esp32".into()), true),
+            Failure::WrongChip
+        );
+
+        // A port that went away is an unplug, whatever espflash said about it.
+        assert_eq!(connect_failure(&no_answer(), false), Failure::Unplugged);
+        assert_eq!(connect_failure(&espflash::Error::ChipDetectError("x".into()), false), Failure::Unplugged);
+    }
 }

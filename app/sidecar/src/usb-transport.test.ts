@@ -152,6 +152,20 @@ test("transportModeValue maps espnow to the ESPNOW wire byte", () => {
   assert.equal(transportModeValue("espnow"), Transport.ESPNOW);
 });
 
+test("a STATUS wifiState byte this sidecar doesn't know reads as unknown (null), not idle", () => {
+  const bridge = new FakeBridge();
+  const usb = new UsbTransport(bridge);
+  const statuses: Array<{ wifiState: unknown }> = [];
+  usb.on("status", (s) => statuses.push(s));
+  bridge.feed({ type: "usbDeviceConnected", mac: MAC, version: 3 });
+
+  // STATUS [type][transport=WIFI][wifiState=0x7f, from newer firmware][rssi=0][ssidLen=0]
+  const payload = Uint8Array.of(DeviceMessageType.STATUS, Transport.WIFI, 0x7f, 0, 0);
+  bridge.feed({ type: "usbFrame", mac: MAC, payloadHex: toHex(payload) });
+  assert.equal(statuses.length, 1);
+  assert.equal(statuses[0]!.wifiState, null);
+});
+
 test("a STATUS with the [channel][bridging] pair surfaces channel + bridge", () => {
   const bridge = new FakeBridge();
   const usb = new UsbTransport(bridge);

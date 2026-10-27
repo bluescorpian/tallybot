@@ -20,6 +20,12 @@ test("a light on the bundled firmware or newer is not offered an update", () => 
 	assert.equal(firmwareOutdated("1.9.0", reported("1.10.0")), false);
 });
 
+test("a light reporting a version that isn't x.y.z is offered the update, not read as current", () => {
+	assert.equal(firmwareOutdated("1.2.0", reported("garbage")), true);
+	assert.equal(firmwareOutdated("1.2.0", reported("1.2")), true);
+	assert.equal(firmwareOutdated("1.2.0", reported("")), true);
+});
+
 test("a light not yet heard from is not offered an update", () => {
 	assert.equal(firmwareOutdated("1.2.0", { kind: "unknown" }), false);
 });
@@ -34,10 +40,10 @@ const target: FlashTarget = { kind: "blank", port: "/dev/ttyACM0" };
 const settled: FlashState[] = [
 	{ status: "idle" },
 	{ status: "done", target, mac: "aa:bb:cc:dd:ee:ff" },
-	{ status: "failed", target, stage: "write", failure: "unplugged", detail: "" },
-	{ status: "cancelled", target, stage: "erase" },
+	{ status: "failed", target, stage: "write", failure: "unplugged", detail: "", leavesBlank: true },
+	{ status: "cancelled", target, stage: "erase", leavesBlank: true },
 ];
-const running: FlashState = { status: "running", target, stage: "write", progress: 0.5 };
+const running: FlashState = { status: "running", target, stage: "write", progress: 0.5, leavesBlank: true };
 
 test("a flash can't be started or reset while one runs", () => {
 	assert.equal(canStart(running), false);

@@ -45,6 +45,7 @@ test("send writes one NDJSON line that parses back to the event", async () => {
       inputs: [],
       devices: [],
       programGate: { active: false, source: null },
+      faults: [],
     },
   };
   bridge.send(event);

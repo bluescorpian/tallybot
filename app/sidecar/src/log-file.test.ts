@@ -94,3 +94,25 @@ test("past the queue bound lines are dropped and a note records how many", async
     assert.match(notes[0]!, new RegExp(`\\b${total - kept}\\b.*dropped`));
   });
 });
+
+test("lines lost to a failed write are counted in the next batch that lands", async () => {
+  await withTempDir(async (dir) => {
+    const blocker = join(dir, "not-a-dir");
+    await writeFile(blocker, "");
+    const log = new RotatingLogFile(join(blocker, "sidecar.log"), { maxBytes: 1024 * 1024, keep: 1 });
+
+    log.write("lost-1");
+    log.write("lost-2");
+    await log.flush();
+
+    await rm(blocker);
+    log.write("back");
+    await log.flush();
+
+    const written = lines(await readFile(join(blocker, "sidecar.log"), "utf8"));
+    assert.ok(written.at(-1)!.endsWith(" back"));
+    const notes = written.filter((l) => !l.endsWith(" back"));
+    assert.equal(notes.length, 1);
+    assert.match(notes[0]!, /\b2 line\(s\) lost/);
+  });
+});

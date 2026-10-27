@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import { type Socket, createConnection } from "node:net";
+import { type AddressInfo, type Socket, createConnection, createServer } from "node:net";
 import { createSocket } from "node:dgram";
 
 import { DeviceServer } from "./device-server.ts";
@@ -253,6 +253,30 @@ test("a reconnect for a known MAC replaces the old socket without a spurious dis
   } finally {
     first.destroy();
     await server.stop();
+  }
+});
+
+test("start rejects with EADDRINUSE when the TCP port is already taken, instead of hanging", async () => {
+  // Another engine (a second TallyBot) already owns the port.
+  const rival = createServer();
+  rival.listen(0, LOCAL);
+  await once(rival, "listening");
+  const server = new DeviceServer({
+    tcpPort: (rival.address() as AddressInfo).port,
+    discoveryPort: 0,
+    host: LOCAL,
+  });
+  server.on("error", () => {});
+  try {
+    let timer: NodeJS.Timeout | undefined;
+    const hung = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("start() never settled")), 1000);
+    });
+    await assert.rejects(Promise.race([server.start(), hung]), { code: "EADDRINUSE" });
+    clearTimeout(timer);
+  } finally {
+    await server.stop();
+    rival.close();
   }
 });
 

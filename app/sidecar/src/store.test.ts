@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { ConfigStore } from "./store.ts";
 import { DEFAULT_BRIGHTNESS } from "./protocol.ts";
@@ -188,5 +188,25 @@ test("an atomic write leaves no stray temp file behind", async () => {
     await store.assign("aa:bb:cc:dd:ee:ff", 1);
     await store.flush();
     await assert.rejects(readFile(`${path}.tmp`, "utf8"), /ENOENT/, "the temp file should be renamed away");
+  });
+});
+
+test("a failed write rejects only that write: flush still settles and the next write saves everything", async () => {
+  await withTempFile(async (path) => {
+    // A regular file where the state file's directory should be: every write fails until it goes.
+    const blocker = join(dirname(path), "sub");
+    const filePath = join(blocker, "state.json");
+    const store = await ConfigStore.load(filePath);
+    await writeFile(blocker, "");
+
+    await assert.rejects(store.assign("aa:bb:cc:dd:ee:ff", 2));
+    await store.flush(); // never rejects
+
+    await rm(blocker);
+    await store.setBrightness("aa:bb:cc:dd:ee:ff", 200);
+
+    // The write that landed carried the change the failed one lost.
+    const reloaded = await ConfigStore.load(filePath);
+    assert.deepEqual(reloaded.device("aa:bb:cc:dd:ee:ff"), { inputId: 2, brightness: 200 });
   });
 });

@@ -367,6 +367,24 @@ mod tests {
     }
 
     #[test]
+    fn the_down_reason_carries_the_sidecars_fatal_line_trimmed() {
+        let exit = || describe_exit(&TerminatedPayload { code: Some(1), signal: None });
+        let cause = fatal_cause("fatal: uncaught exception: Error: EACCES: permission denied\n");
+        assert_eq!(with_cause(exit(), cause.as_deref()), "exited with code 1: uncaught exception: Error: EACCES: permission denied");
+
+        // Any other line is no cause, and no cause leaves the reason as it was.
+        assert_eq!(fatal_cause("    at main (main.ts:12:3)"), None);
+        assert_eq!(fatal_cause("[device ee:01] info: hello"), None);
+        assert_eq!(with_cause(exit(), None), "exited with code 1");
+
+        // A long cause is cut to 160 characters (counted as characters, not bytes).
+        let long = format!("fatal: {}{}", "é".repeat(160), "b".repeat(40));
+        let trimmed = fatal_cause(&long).unwrap();
+        assert!(trimmed.starts_with(&"é".repeat(160)), "{trimmed}");
+        assert!(!trimmed.contains('b'), "{trimmed}");
+    }
+
+    #[test]
     fn sidecar_mode_follows_the_build_and_refuses_what_it_cannot_run() {
         use SidecarMode::{Fake, Packaged};
         // Unset or empty: fake for `cargo tauri dev`, packaged for a release build.

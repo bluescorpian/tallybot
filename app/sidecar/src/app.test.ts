@@ -97,6 +97,8 @@ class FakeIpc extends EventEmitter implements IpcPort {
 class FakeStore implements StorePort {
   sourceIp: string | null = null;
   bridgeMac: string | null = null;
+  /** When set, every write fails with it (the change still lands in memory, as ConfigStore's does). */
+  failWrites: Error | null = null;
   readonly #devices = new Map<string, DeviceConfig>();
   device(mac: string): DeviceConfig | undefined {
     return this.#devices.get(mac);
@@ -106,33 +108,36 @@ class FakeStore implements StorePort {
   }
   setSourceIp(ip: string | null): Promise<void> {
     this.sourceIp = ip;
-    return Promise.resolve();
+    return this.#written();
   }
   setBridgeMac(mac: string | null): Promise<void> {
     this.bridgeMac = mac;
-    return Promise.resolve();
+    return this.#written();
   }
   assign(mac: string, inputId: number): Promise<void> {
     this.#ensure(mac).inputId = inputId;
-    return Promise.resolve();
+    return this.#written();
   }
   unassign(mac: string): Promise<void> {
     const device = this.#devices.get(mac);
     if (device) device.inputId = null;
-    return Promise.resolve();
+    return this.#written();
   }
   setBrightness(mac: string, brightness: number): Promise<void> {
     this.#ensure(mac).brightness = brightness;
-    return Promise.resolve();
+    return this.#written();
   }
   setSsid(mac: string, ssid: string | null): Promise<void> {
     const device = this.#ensure(mac);
     if (ssid === null) delete device.ssid;
     else device.ssid = ssid;
-    return Promise.resolve();
+    return this.#written();
   }
   flush(): Promise<void> {
     return Promise.resolve();
+  }
+  #written(): Promise<void> {
+    return this.failWrites ? Promise.reject(this.failWrites) : Promise.resolve();
   }
   #ensure(mac: string): DeviceConfig {
     let device = this.#devices.get(mac);
@@ -156,9 +161,12 @@ class FakeProvisioning extends EventEmitter implements ProvisioningPort {
   readonly statusRequested: string[] = [];
   /** MACs currently reachable over USB (drives `transportOf` + the boolean returns). */
   readonly wired = new Set<string>();
+  /** MACs the test reports as riding ESP-NOW (through a bridge). */
+  readonly espnow = new Set<string>();
 
   transportOf(mac: string): DeviceTransport | null {
-    return this.wired.has(mac) ? "usb" : null;
+    if (this.wired.has(mac)) return "usb";
+    return this.espnow.has(mac) ? "espnow" : null;
   }
   provisionWifi(mac: string, ssid: string, password: string): boolean {
     if (!this.wired.has(mac)) return false;
@@ -836,4 +844,135 @@ test("on start the ESP-NOW transport is told the persisted bridge MAC", async ()
   harness.store.bridgeMac = BRIDGE; // a designation that survived a restart
   await harness.app.start();
   assert.equal(harness.espnow.bridgeMacs.at(-1), BRIDGE);
+});
+
+// ── Failures reaching the operator ───────────────────────────────────────────
+
+const faultsOf = (ipc: FakeIpc) => ipc.lastState()?.state.faults ?? [];
+const stateCount = (ipc: FakeIpc): number => ipc.events.filter((e) => e.type === "state").length;
+const noSource = (): SourceSnapshot => ({
+  ip: null,
+  connection: "disconnected",
+  programInput: null,
+  previewInput: null,
+  inputs: [],
+});
+
+test("a command that throws sends an error notice and the engine keeps taking commands", async () => {
+  const { app, server, ipc, provisioning, store } = setup();
+  await app.start();
+  provisioning.wired.add(MAC);
+  server.connectDevice(MAC, 2);
+  provisioning.setTransport = () => {
+    throw new Error("the serial port went away");
+  };
+
+  ipc.command({ type: "setTransport", mac: MAC, mode: "wifi" });
+  await tick();
+  assert.equal(ipc.notices.at(-1)?.level, "error");
+
+  ipc.command({ type: "assignDevice", mac: MAC, inputId: 1 });
+  await tick();
+  assert.equal(store.device(MAC)?.inputId, 1, "the next command still runs");
+});
+
+test("a failed save is a state.write error fault, the change still takes effect, and the next good save clears it", async () => {
+  const { app, atem, store, ipc } = setup(noSource());
+  await app.start();
+
+  store.failWrites = new Error("EACCES: permission denied");
+  ipc.command({ type: "setSource", ip: "10.0.0.9" });
+  await tick();
+  assert.deepEqual(atem.connects, ["10.0.0.9"], "the IP the operator typed still connects");
+  assert.equal(faultsOf(ipc).find((f) => f.key === "state.write")?.level, "error");
+
+  store.failWrites = null;
+  ipc.command({ type: "assignDevice", mac: MAC, inputId: 1 });
+  await tick();
+  assert.equal(faultsOf(ipc).find((f) => f.key === "state.write"), undefined);
+});
+
+test("an ATEM error while connecting is an atem fault until it connects or is disconnected; while connected it isn't one", async () => {
+  const { app, atem, ipc } = setup({ ...connectedSource(), connection: "connecting" });
+  await app.start();
+  const atemFault = () => faultsOf(ipc).find((f) => f.key === "atem");
+
+  atem.emit("error", new Error("connect ECONNREFUSED 10.0.0.5"));
+  assert.ok(atemFault(), "an error while connecting is the reason it isn't connecting");
+
+  atem.set(connectedSource());
+  assert.equal(atemFault(), undefined, "cleared once it connects");
+
+  atem.emit("error", new Error("a mid-session hiccup"));
+  assert.equal(atemFault(), undefined, "an error while connected is not a fault");
+
+  atem.set({ ...connectedSource(), connection: "connecting" });
+  atem.emit("error", new Error("connect EHOSTUNREACH 10.0.0.5"));
+  assert.ok(atemFault());
+  atem.set({ ...connectedSource(), connection: "disconnected" });
+  assert.equal(atemFault(), undefined, "cleared when the operator disconnects");
+});
+
+test("a light's WARN/ERROR log line is its fault, holding the latest line, until it reconnects; INFO is not", async () => {
+  const { app, server, ipc, provisioning } = setup();
+  await app.start();
+  server.connectDevice(MAC);
+  const logFaults = () => faultsOf(ipc).filter((f) => f.key === `device:${MAC}:log`);
+
+  provisioning.emit("log", { mac: MAC, level: "info", text: "bridge summary: 4 frames/s" });
+  assert.deepEqual(logFaults(), []);
+
+  provisioning.emit("log", { mac: MAC, level: "warn", text: "relink gap 3 s" });
+  assert.equal(logFaults().length, 1);
+  assert.equal(logFaults()[0]!.mac, MAC);
+  assert.match(logFaults()[0]!.message, /relink gap 3 s/);
+
+  const before = stateCount(ipc);
+  provisioning.emit("log", { mac: MAC, level: "warn", text: "relink gap 3 s" });
+  assert.equal(stateCount(ipc), before, "the same line again changes nothing, so isn't republished");
+  assert.equal(logFaults().length, 1);
+
+  provisioning.emit("log", { mac: MAC, level: "error", text: "radio init failed" });
+  assert.equal(logFaults().length, 1, "one fault per light, not a growing list");
+  assert.match(logFaults()[0]!.message, /radio init failed/);
+
+  server.connectDevice(MAC); // a reconnect is a fresh session
+  assert.deepEqual(logFaults(), []);
+});
+
+test("a connected light that sent no FIRMWARE reads legacy over TCP or USB, but unknown over ESP-NOW", async () => {
+  const TCP = "aa:bb:cc:dd:ee:01";
+  const USB = "aa:bb:cc:dd:ee:02";
+  const ESPNOW = "aa:bb:cc:dd:ee:03";
+  const { app, server, ipc, provisioning } = setup();
+  await app.start();
+  provisioning.wired.add(USB);
+  provisioning.espnow.add(ESPNOW);
+  for (const mac of [TCP, USB, ESPNOW]) server.connectDevice(mac, 3);
+  const firmwareOf = (mac: string) => ipc.lastState()!.state.devices.find((d) => d.mac === mac)!.firmware;
+
+  assert.deepEqual(firmwareOf(TCP), { kind: "legacy" });
+  assert.deepEqual(firmwareOf(USB), { kind: "legacy" });
+  // ESP-NOW is fire-and-forget: a lost FIRMWARE is no evidence of old firmware.
+  assert.deepEqual(firmwareOf(ESPNOW), { kind: "unknown" });
+});
+
+test("provisionWifi refuses credentials over a light's limits with a warning, sending and storing nothing", async () => {
+  const { app, server, ipc, provisioning, store } = setup();
+  await app.start();
+  provisioning.wired.add(MAC);
+  server.connectDevice(MAC, 2);
+
+  for (const [ssid, password] of [
+    ["s".repeat(33), "hunter2"],
+    ["GreenRoom-5G", "p".repeat(64)],
+  ]) {
+    const before = ipc.notices.length;
+    ipc.command({ type: "provisionWifi", mac: MAC, ssid: ssid!, password: password! });
+    await tick();
+    assert.equal(ipc.notices.length, before + 1);
+    assert.equal(ipc.notices.at(-1)?.level, "warn");
+  }
+  assert.deepEqual(provisioning.provisioned, []);
+  assert.equal(store.device(MAC)?.ssid, undefined);
 });

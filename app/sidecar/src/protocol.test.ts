@@ -132,6 +132,15 @@ test("setWifiPayload handles empty creds and UTF-8 byte length (not char length)
   assert.equal(wire[1], 2);
 });
 
+test("setWifiPayload refuses an SSID over 32 bytes or a password over 63, counted in bytes", () => {
+  // At the limits the frame is built; one byte past either, it's refused (the firmware would drop it).
+  assert.doesNotThrow(() => setWifiPayload("s".repeat(32), "p".repeat(63)));
+  assert.throws(() => setWifiPayload("s".repeat(33), "pw"), RangeError);
+  assert.throws(() => setWifiPayload("Net", "p".repeat(64)), RangeError);
+  // 17 characters, but 34 bytes.
+  assert.throws(() => setWifiPayload("é".repeat(17), "pw"), RangeError);
+});
+
 test("setTransportPayload / getStatusPayload", () => {
   // No-TX/WiFi: bare [type][mode], no channel byte.
   assert.deepEqual(setTransportPayload(Transport.NOTX), Uint8Array.of(ServerMessageType.SET_TRANSPORT, 0));
