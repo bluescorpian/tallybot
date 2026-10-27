@@ -29,7 +29,7 @@ jobs:
           # The published release; a manual run falls back to the latest one.
           TAG: ${{ github.event.release.tag_name }}
         run: echo "tag=${TAG:-$(gh release view --json tagName -q .tagName)}" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ steps.tag.outputs.tag }}
       - name: Write and attach latest.json

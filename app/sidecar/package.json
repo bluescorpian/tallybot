@@ -4,6 +4,9 @@
   "private": true,
   "description": "TallyBot sidecar — the brain: ATEM connection, TCP/UDP device server, the tally engine, and the NDJSON IPC bridge to the UI.",
   "type": "module",
+  "engines": {
+    "node": ">=22.6"
+  },
   "scripts": {
     "start": "node --experimental-strip-types src/main.ts",
     "test": "node --experimental-strip-types --test \"src/**/*.test.ts\"",

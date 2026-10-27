@@ -9,7 +9,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TallyBot Flasher</title>
-  <script type="module" src="https://cdn.jsdelivr.net/npm/esp-web-tools@10/dist/web/install-button.js"></script>
+  <!-- Pinned exactly, with SRI on the entry: this page writes firmware to the user's board. The
+       entry imports content-hashed chunks from the same immutable npm version path. Bump the
+       version and the hash together (sha384 of the file at the new URL). -->
+  <script type="module" src="https://cdn.jsdelivr.net/npm/esp-web-tools@10.4.0/dist/web/install-button.js"
+          integrity="sha384-9XfyvAabgkISlB/Xb3OpshGKpZx0TOt5Mmu78SeiNU3so/p4o2s9m66vy6Utdnom"
+          crossorigin="anonymous"></script>
   <style>
     :root {
       --bg: #fafafa; --fg: #1a1a1a; --muted: #5c5c5c; --card: #fff; --line: #e2e2e2;
