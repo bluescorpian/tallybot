@@ -220,9 +220,9 @@ export interface SourceScanEvent {
 }
 
 /**
- * A device-log line, sourced from a USB `LOG` frame. The live device-log channel over USB
- * directly attacks the deferred WiFi-join problem (`docs/wifi-troubleshooting.md`) — the
- * wizard streams join progress/verdicts straight from the device.
+ * A device-log line: a light's own `LOG` frame (over USB, or relayed by an ESP-NOW bridge), or a
+ * transport's note on a light. The webview doesn't read these; every line is in the engine's log
+ * file, and a WARN/ERROR line also becomes the light's fault in {@link AppState.faults}.
  */
 export interface DeviceLogEvent {
   type: "deviceLog";
@@ -306,8 +306,8 @@ export interface SetProgramCommand {
 
 /**
  * Provision a USB-connected device's WiFi creds. The device persists them and attempts a
- * validating join immediately, streaming progress via `deviceLog` + the device's
- * `wifiState`/`rssi` so the wizard confirms a join *before* the cable is pulled.
+ * validating join immediately, reporting progress in its STATUS (`wifiState`/`rssi` on the
+ * device) so the wizard confirms a join *before* the cable is pulled.
  */
 export interface ProvisionWifiCommand {
   type: "provisionWifi";

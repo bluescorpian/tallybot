@@ -235,6 +235,11 @@ export interface SidecarAppDeps {
   dev?: boolean;
 }
 
+/** The fault key for a light's latest WARN/ERROR line (cleared when it reconnects). */
+function deviceLogFault(mac: string): string {
+  return `device:${mac}:log`;
+}
+
 function colorsEqual(a: { color: Color; brightness: number }, b: { color: Color; brightness: number }): boolean {
   return (
     a.brightness === b.brightness &&
@@ -318,6 +323,8 @@ export class SidecarApp {
 
     this.#server.on("deviceConnected", ({ mac, version }) => {
       this.#online.set(mac, version);
+      // A reconnect is a fresh start: the light's last complaint was about the session before.
+      this.#faults.clear(deviceLogFault(mac));
       this.#lastColor.delete(mac); // reconnect may skip the disconnect event; always re-push
       // Pull a fresh STATUS so an already-provisioned device reports its mode/ssid-state at once,
       // rather than waiting for a spontaneous frame (no-op for non-USB devices).
@@ -377,8 +384,13 @@ export class SidecarApp {
       if (ssid !== stored) void this.#save(this.#store.setSsid(mac, ssid === "" ? null : ssid));
       this.#sync(); // the wizard reads mode/wifiState/rssi off the snapshot
     });
+    // A light's WARN/ERROR lines (its own LOG frames, relayed ones such as an ESP-NOW relink gap,
+    // and a transport's notes on it such as a TCP expiry) are a per-light fault holding the latest
+    // line, so the operator sees an outage the light itself noticed. INFO stays in the log file.
     this.#provisioning.on("log", ({ mac, level, text }) => {
       this.#ipc.send({ type: "deviceLog", mac, level, text });
+      if (level === "info") return;
+      this.#report({ key: deviceLogFault(mac), level, mac, message: `Light ${macTail(mac)}: ${text.trim()}` });
     });
 
     this.#atem.on("change", (snapshot) => {

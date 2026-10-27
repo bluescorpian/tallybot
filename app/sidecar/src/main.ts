@@ -44,8 +44,8 @@ async function main(): Promise<void> {
   const { app, deviceServer } = createSidecar({ atem, ipc, store, log: diag, scanNetwork });
 
   // Every device line, INFO included (a bridge's 1 s summary is what shows a relay outage), goes
-  // to the file only: the UI already gets them as `deviceLog`, and at one a second they would
-  // drown everything else on stderr.
+  // to the file only: at one a second they would drown everything else on stderr. The operator
+  // sees a light's WARN/ERROR lines as its fault on the board (`app.ts`).
   deviceServer.on("log", ({ mac, level, text }) => logFile.write(`[device ${macTail(mac)}] ${level}: ${text}`));
 
   await app.start();
