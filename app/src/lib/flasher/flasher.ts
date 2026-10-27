@@ -5,6 +5,7 @@
 // Rule: the flasher only ever writes the firmware bundled with THIS app (`firmwareVersion`),
 // never "latest" — an app and a firmware from different releases can disagree on the protocol.
 // A newer firmware is reached by updating the app.
+import type { DeviceFirmware } from "$ipc";
 import { isNewer } from "../updater/updater";
 
 /** What is being flashed: a board with no TallyBot firmware, or a known light. */
@@ -55,23 +56,22 @@ export interface Flasher {
 	reset(): void;
 }
 
-/** What firmware a light runs, as far as the app can tell. */
-export interface LightFirmware {
-	/** The version it reported, or null when it hasn't reported one. */
-	version: string | null;
-	/**
-	 * Whether a null `version` means old firmware: the light connected this session without
-	 * reporting one (firmware older than 1.1 doesn't). False when it just hasn't been heard from.
-	 */
-	known: boolean;
-}
-
 /**
  * Whether a light should be offered a firmware update: the app bundles firmware (`bundled`, null
- * when this build carries none) and the light runs an older one, or one too old to say.
+ * when this build carries none) and the light runs an older one. Firmware too old to report its
+ * version (`legacy`) is older than anything bundled; a light not yet heard from (`unknown`) isn't
+ * flagged on a guess.
  */
-export function firmwareOutdated(bundled: string | null, light: LightFirmware): boolean {
-	return bundled !== null && light.known && (light.version === null || isNewer(bundled, light.version));
+export function firmwareOutdated(bundled: string | null, firmware: DeviceFirmware): boolean {
+	if (bundled === null) return false;
+	switch (firmware.kind) {
+		case "reported":
+			return isNewer(bundled, firmware.version);
+		case "legacy":
+			return true;
+		case "unknown":
+			return false;
+	}
 }
 
 /**

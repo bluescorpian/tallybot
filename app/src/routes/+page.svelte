@@ -8,7 +8,7 @@
 	// there's no sidecar, so the page falls back to the Phase-4 MOCK below — same
 	// shape, local data — so the board still renders and design iteration works.
 	import { onMount, onDestroy, untrack } from "svelte";
-	import type { AppState, Device, Input, Tally } from "$ipc";
+	import type { AppState, Device, DeviceFirmware, Input, Tally } from "$ipc";
 	import Board from "$lib/components/board/Board.svelte";
 	import { sidecarLost, toBoardProps } from "$lib/boardState";
 	import { autostart, sidecar, isTauri } from "$lib/ipc.svelte";
@@ -35,7 +35,6 @@
 		leavesBlank,
 		type FlashFailure,
 		type Flasher,
-		type LightFirmware,
 	} from "$lib/flasher/flasher";
 	import { MockUpdater } from "$lib/mock/updater.svelte";
 	import { TauriUpdater } from "$lib/updater/tauri.svelte";
@@ -114,10 +113,14 @@
 		mock("b2:5a:01:00:ee:ff", "B2:5A", "assigned", 4),
 	];
 	const wifiDemo = params.get("wifi");
+	// The firmware a mock light starts on when the demo shows outdated lights. A mock device's
+	// `firmware` only seeds `mockFirmware` (a reported version starts it there, anything else
+	// starts on the bundled firmware), which is what the mock reads from then on.
+	const MOCK_OLD_FIRMWARE: DeviceFirmware = { kind: "reported", version: "1.0.1" };
 	let devices = $state<Device[]>(demo === "hero" ? HERO_DEVICES : demo === "firstrun" ? [] : [
 		mock("a4:f2:01:00:11:22", "A4:F2", "assigned", 1, {
 			transport: "usb",
-			firmwareOutdated: showOutdated,
+			firmware: showOutdated ? MOCK_OLD_FIRMWARE : undefined,
 			provisionedMode: "wifi",
 			ssid: "GreenRoom-5G",
 			wifiState:
@@ -129,7 +132,7 @@
 		mock("c1:08:01:00:77:88", "C1:08", "offline", 3),
 		mock("b2:5a:01:00:ee:ff", "B2:5A", "assigned", 4, {
 			transport: "espnow",
-			firmwareOutdated: showOutdated,
+			firmware: showOutdated ? MOCK_OLD_FIRMWARE : undefined,
 			provisionedMode: "espnow",
 			protocolVersion: 3,
 		}),
@@ -161,7 +164,7 @@
 				| "rssi"
 				| "protocolVersion"
 				| "bridge"
-				| "firmwareOutdated"
+				| "firmware"
 			>
 		> = {},
 	): Device {
@@ -172,7 +175,7 @@
 			inputId,
 			brightness: 128,
 			protocolVersion: opts.protocolVersion ?? (opts.transport === "usb" ? 2 : 1),
-			firmwareOutdated: opts.firmwareOutdated ?? false,
+			firmware: opts.firmware ?? { kind: "unknown" },
 			transport: opts.transport ?? "wifi",
 			provisionedMode: opts.provisionedMode ?? null,
 			ssid: opts.ssid ?? null,
@@ -247,9 +250,7 @@
 				...l,
 				firmwareVersion: f.version,
 				firmwareMissing: f.missing,
-				// the engine also flags firmware below its protocol minimum; the mock's flag is only
-				// the demo's starting point, which `mockFirmware` already carries
-				firmwareOutdated: (isTauri && l.firmwareOutdated) || isOutdated(f),
+				firmwareOutdated: isOutdated(f),
 				firmwareAvailable: flasher.firmwareVersion,
 			};
 		}),
@@ -363,20 +364,22 @@
 	const flasherReady = $derived(flasher.firmwareVersion !== null);
 
 	/**
-	 * What firmware a light runs. `version` is null when unknown; `known` says whether "unknown"
-	 * means old firmware (it connected this session and reported none: older than 1.1) or just
-	 * not heard from. The mock also models a light left blank by an interrupted install, which
-	 * under Tauri shows up as a blank board instead.
+	 * What firmware a light runs: the sidecar's `firmware` under Tauri, `mockFirmware` otherwise.
+	 * `version` is the reported one, if any. The mock also models a light left blank by an
+	 * interrupted install (`missing`), which under Tauri shows up as a blank board instead; a blank
+	 * mock light reads as `legacy` so it is flagged for an update like any too-old one.
 	 */
-	function lightFirmware(d: Device): LightFirmware & { missing: boolean } {
+	function lightFirmware(d: Device): { firmware: DeviceFirmware; version: string | null; missing: boolean } {
 		if (isTauri) {
-			const version = d.firmwareVersion ?? null;
-			return { version, missing: false, known: version !== null || d.protocolVersion !== null };
+			const firmware = d.firmware;
+			return { firmware, version: firmware.kind === "reported" ? firmware.version : null, missing: false };
 		}
 		const version = d.mac in mockFirmware ? mockFirmware[d.mac] : flasher.firmwareVersion;
-		return { version, missing: version === null, known: true };
+		return version === null
+			? { firmware: { kind: "legacy" }, version, missing: true }
+			: { firmware: { kind: "reported", version }, version, missing: false };
 	}
-	const isOutdated = (f: LightFirmware) => firmwareOutdated(flasher.firmwareVersion, f);
+	const isOutdated = (f: { firmware: DeviceFirmware }) => firmwareOutdated(flasher.firmwareVersion, f.firmware);
 	/** The USB port a light is on, or null when it isn't plugged in. */
 	function portOf(d: Device): string | null {
 		if (isTauri) return health.lightPorts.find((l) => l.mac === d.mac)?.port ?? null;
@@ -386,11 +389,11 @@
 
 	/**
 	 * Firmware each mock light runs (MAC → version; null = blank, left so by an interrupted
-	 * install). Everything not flagged outdated by the demo starts current.
+	 * install). Seeded from each mock device's `firmware` (see `MOCK_OLD_FIRMWARE`).
 	 */
 	let mockFirmware = $state<Record<string, string | null>>(
 		Object.fromEntries(
-			devices.map((d) => [d.mac, d.firmwareOutdated ? "1.0.1" : flasher.firmwareVersion]),
+			devices.map((d) => [d.mac, d.firmware.kind === "reported" ? d.firmware.version : flasher.firmwareVersion]),
 		),
 	);
 	let mockUnflashed = $state<string[]>(demo === "unflashed" || demo === "newerfw" ? ["COM5"] : []);

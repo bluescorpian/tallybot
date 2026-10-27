@@ -57,12 +57,13 @@ export interface BoardLight {
 	bridge: boolean;
 	/**
 	 * The light's firmware is older than the firmware this app ships, so its menu offers an
-	 * update. From the sidecar's `firmwareOutdated` (today: protocol below MIN_SUPPORTED).
+	 * update. Decided by `firmwareOutdated` in `$lib/flasher/flasher.ts` from the device's
+	 * `firmware` against the bundled version.
 	 */
 	firmwareOutdated: boolean;
 	/**
-	 * The light's firmware version, when known. Devices report only a protocol version today,
-	 * so this is null outside the mock; the UI copes with it missing.
+	 * The firmware version the light reported, or null when it hasn't reported one (firmware
+	 * older than 1.1 never does, and a light not heard from yet hasn't).
 	 */
 	firmwareVersion: string | null;
 	/** The light has no firmware at all (an install was interrupted): it needs a reinstall. */

@@ -63,6 +63,19 @@ export type DeviceTransport = "wifi" | "usb" | "espnow";
 /** WiFi join progress, surfaced while provisioning a device over USB. */
 export type DeviceWifiState = "idle" | "joining" | "connected" | "failed";
 
+/**
+ * What firmware a device runs, as far as the sidecar can tell. Produced in one place
+ * (`SidecarApp`'s `#firmwareOf` in `app.ts`); every consumer reads these three states rather than
+ * re-deriving them from the protocol version.
+ */
+export type DeviceFirmware =
+  /** The device reported its firmware's own semver (a FIRMWARE message). Kept across disconnects. */
+  | { kind: "reported"; version: string }
+  /** It connected and reported no version: firmware older than 1.1, which predates FIRMWARE. */
+  | { kind: "legacy" }
+  /** Nothing to go on: it hasn't connected since the sidecar started, so it hasn't had the chance. */
+  | { kind: "unknown" };
+
 /** A physical tally light, identified by MAC with no user-given name (docs/goals.md). */
 export interface Device {
   /** Full MAC, lower-case colon form — the device's identity. */
@@ -77,13 +90,11 @@ export interface Device {
   /** Protocol version from the device's HELLO, or null if it has never connected. */
   protocolVersion: number | null;
   /**
-   * Firmware version the device reported (its FIRMWARE message), or null when it never has —
-   * firmware older than 1.1 doesn't report one. The UI compares it with the firmware the app
-   * bundles to decide whether a light needs an update.
+   * What the sidecar knows about the firmware the device runs. The UI compares it with the
+   * firmware the app bundles to decide whether a light needs an update (`firmwareOutdated` in
+   * `app/src/lib/flasher/flasher.ts`, the only place that rule lives).
    */
-  firmwareVersion?: string | null;
-  /** True when the device's protocol version is below the server's minimum. */
-  firmwareOutdated: boolean;
+  firmware: DeviceFirmware;
   /** Transport currently serving the device (drives the wired indicator). */
   transport: DeviceTransport;
   /** WiFi join progress while provisioning over USB; null when not applicable. */

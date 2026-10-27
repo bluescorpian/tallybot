@@ -44,8 +44,10 @@ function provisioning(d: Device) {
 		rssi: d.rssi,
 		protocolVersion: d.protocolVersion,
 		bridge: d.bridge ?? false,
-		firmwareOutdated: d.firmwareOutdated,
-		firmwareVersion: d.firmwareVersion ?? null,
+		// Whether that version is out of date depends on the firmware this app bundles, which the
+		// route knows and this mapper doesn't: it applies `firmwareOutdated` ($lib/flasher/flasher).
+		firmwareOutdated: false,
+		firmwareVersion: d.firmware.kind === "reported" ? d.firmware.version : null,
 		firmwareMissing: false,
 		firmwareAvailable: null,
 	};

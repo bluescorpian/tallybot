@@ -83,7 +83,7 @@
 		onsetbridge?: (enabled: boolean) => void;
 		/** Firmware older than this app ships: badge the light and offer an update row. */
 		firmwareOutdated?: boolean;
-		/** The light's firmware version, when known (null today outside the mock). */
+		/** The firmware version the light reported, or null when it hasn't reported one. */
 		firmwareVersion?: string | null;
 		/** No firmware at all (an interrupted install): badge "!" and offer a reinstall. */
 		firmwareMissing?: boolean;

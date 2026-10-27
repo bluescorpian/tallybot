@@ -20,6 +20,7 @@
 import type {
   AppState,
   Device,
+  DeviceFirmware,
   DeviceTransport,
   DeviceWifiState,
   Input,
@@ -27,7 +28,7 @@ import type {
   SourceConnection,
   Tally,
 } from "./ipc.ts";
-import { type Color, COLORS, DEFAULT_BRIGHTNESS, PROTOCOL_VERSION, SETUP_COLOR } from "./protocol.ts";
+import { type Color, COLORS, DEFAULT_BRIGHTNESS, SETUP_COLOR } from "./protocol.ts";
 
 // ── Inputs the engine derives from ──────────────────────────────────────────────
 
@@ -57,8 +58,11 @@ export interface DeviceRecord {
   online: boolean;
   /** Protocol version from the device's most recent HELLO, or null if never seen. */
   protocolVersion: number | null;
-  /** Firmware version the device last reported, or null if it never has (pre-1.1 firmware). */
-  firmwareVersion?: string | null;
+  /**
+   * What firmware the device runs, as the orchestrator decides it. Optional so pure-engine record
+   * literals need no change (absent reads as `unknown`); the orchestrator always supplies it.
+   */
+  firmware?: DeviceFirmware;
   /** The input this device is assigned to, or null when unassigned. */
   inputId: number | null;
   /** Per-device LED brightness, 0–255. */
@@ -189,9 +193,7 @@ export function computeEngine(
       inputId: device.inputId,
       brightness: device.brightness,
       protocolVersion: device.protocolVersion,
-      firmwareVersion: device.firmwareVersion ?? null,
-      firmwareOutdated:
-        device.protocolVersion !== null && device.protocolVersion < PROTOCOL_VERSION.MIN_SUPPORTED,
+      firmware: device.firmware ?? { kind: "unknown" },
       transport: device.transport,
       wifiState: device.wifiState,
       rssi: device.rssi,

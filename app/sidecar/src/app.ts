@@ -23,7 +23,7 @@ import {
   computeEngine,
 } from "./engine.ts";
 import type { DeviceConfig } from "./store.ts";
-import type { DeviceTransport, DeviceWifiState, SidecarEvent, SourceScanHit, UiCommand } from "./ipc.ts";
+import type { DeviceFirmware, DeviceTransport, DeviceWifiState, SidecarEvent, SourceScanHit, UiCommand } from "./ipc.ts";
 import { type Color, DEFAULT_BRIGHTNESS, type UnsupportedReason, macTail, supportsEspNow } from "./protocol.ts";
 import { provisionedModeName, transportModeValue } from "./usb-transport.ts";
 
@@ -534,7 +534,7 @@ export class SidecarApp {
         macTail: macTail(mac),
         online,
         protocolVersion: this.#online.get(mac) ?? null,
-        firmwareVersion: this.#firmware.get(mac) ?? null,
+        firmware: this.#firmwareOf(mac),
         inputId: config?.inputId ?? null,
         brightness: config?.brightness ?? DEFAULT_BRIGHTNESS,
         // Offline/unknown devices default to WiFi; the indicator only flips to "usb" while cabled.
@@ -551,6 +551,17 @@ export class SidecarApp {
       });
     }
     return records;
+  }
+
+  /**
+   * The one place a device's {@link DeviceFirmware} is decided. A reported version wins (and
+   * outlives a disconnect, see {@link #firmware}); a device that is connected — so has sent its
+   * HELLO — without one runs firmware that predates FIRMWARE; anything else hasn't been heard from.
+   */
+  #firmwareOf(mac: string): DeviceFirmware {
+    const version = this.#firmware.get(mac);
+    if (version !== undefined) return { kind: "reported", version };
+    return this.#online.has(mac) ? { kind: "legacy" } : { kind: "unknown" };
   }
 
   #sync(): void {
