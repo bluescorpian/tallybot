@@ -12,10 +12,10 @@
 //   outdated    — two lights on older firmware (1.0.1): A4:F2 (11:22) wired + live on Cam 1 (the
 //                 "goes dark while live" warning), B2:5A (ee:ff) wireless on Cam 4 (plug-in step);
 //                 each shows the update badge, and an "Update firmware" row in its menu
-//   update      — a newer TallyBot (1.1.0) is out: the titlebar pill, the update dialog
+//   update      — a newer TallyBot (the next minor) is out: the titlebar pill, the update dialog
 //                 (download → restart now / later), and Settings → About → Updates
-//   newerfw     — unflashed + outdated + update together: the flasher's review step says
-//                 TallyBot 1.1.0 ships newer firmware and offers "Update TallyBot first"
+//   newerfw     — unflashed + outdated + update together: the flasher's review step says that
+//                 TallyBot ships newer firmware and offers "Update TallyBot first"
 //   enginedown  — the sidecar crashed and is restarting: the error notice + dimmed board
 // `?fail=noresponse|busy|unplugged` makes the next flash fail that way (a retry succeeds);
 // `?fail=bridge` makes the flasher's "Apply settings" stage fail once when the light was set
@@ -165,12 +165,12 @@ export class MockBoard implements Backend {
 			available: demo === "update" || demo === "newerfw",
 			failDownload: fail === "download",
 		});
-		// The flasher ships the firmware released with this app (the mock's follows a mock update).
+		// The flasher ships the firmware bundled with this app, which a mock app update replaces.
 		this.flasher = new MockFlasher({
 			failOnce: ({ noresponse: "no-response", busy: "port-busy", unplugged: "unplugged" } as const)[
 				fail as "noresponse" | "busy" | "unplugged"
 			] as FlashFailure | undefined,
-			bundled: () => this.updater.currentVersion,
+			bundled: () => this.updater.bundledFirmware,
 			boardMac: (port) => this.#unflashed.find((b) => b.port === port)?.mac ?? null,
 		});
 		const devices =
@@ -179,9 +179,9 @@ export class MockBoard implements Backend {
 				: demo === "firstrun"
 					? []
 					: rigDevices(demo === "outdated" || demo === "newerfw", params.get("wifi"));
-		// Mock lights with no version given run the bundled firmware.
+		// Mock lights with no version given run the bundled firmware (unknown when none is bundled).
 		for (const d of devices) {
-			if (d.firmware.kind !== "reported") d.firmware = { kind: "reported", version: this.flasher.firmwareVersion };
+			if (d.firmware.kind !== "reported") d.firmware = this.#bundledFirmware();
 		}
 		this.devices = devices;
 		if (demo === "unflashed" || demo === "newerfw") this.#unflashed = [{ port: "COM5", mac: null }];
@@ -370,6 +370,11 @@ export class MockBoard implements Backend {
 		});
 	}
 
+	#bundledFirmware(): DeviceFirmware {
+		const version = this.flasher.firmwareVersion;
+		return version === null ? { kind: "unknown" } : { kind: "reported", version };
+	}
+
 	#follow(s: MockFlasher["state"]) {
 		if (s.status === "idle") return;
 		const t = s.target;
@@ -377,7 +382,6 @@ export class MockBoard implements Backend {
 		const back = (x: Device | undefined) => {
 			if (x) x.state = x.inputId !== null ? "assigned" : "unassigned";
 		};
-		const current = (): DeviceFirmware => ({ kind: "reported", version: this.flasher.firmwareVersion });
 		if (s.status === "running" && d && s.stage !== "connect" && d.state !== "offline") {
 			d.state = "offline";
 		} else if (s.status === "done") {
@@ -391,7 +395,7 @@ export class MockBoard implements Backend {
 				} else this.devices.push(mock(s.mac, "E7:5B", "unassigned", null, { transport: "usb", protocolVersion: 3 }));
 			}
 			const done = this.devices.find((x) => x.mac === s.mac);
-			if (done) done.firmware = current();
+			if (done) done.firmware = this.#bundledFirmware();
 		} else if (s.status === "failed" || s.status === "cancelled") {
 			const pulled = s.status === "failed" && s.failure === "unplugged";
 			if (t.kind === "blank") {
@@ -408,7 +412,7 @@ export class MockBoard implements Backend {
 				if (pulled) this.#pulled = blank;
 				else this.#unflashed = [...this.#unflashed, blank];
 			} else if (s.stage !== "connect") {
-				d.firmware = current();
+				d.firmware = this.#bundledFirmware();
 				back(d);
 			}
 		}

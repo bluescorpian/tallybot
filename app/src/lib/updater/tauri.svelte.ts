@@ -5,7 +5,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
-import { releaseNotes, type AppUpdate, type Updater, type UpdaterState } from "./updater";
+import { canCheck, downloadable, releaseNotes, type AppUpdate, type Updater, type UpdaterState } from "./updater";
 
 /** `updater.rs` `UpdateInfo`. */
 interface UpdateInfo {
@@ -44,7 +44,7 @@ export class TauriUpdater implements Updater {
 	}
 
 	check(): void {
-		if (this.state.status === "checking" || this.state.status === "downloading") return;
+		if (!canCheck(this.state)) return;
 		void this.#check();
 	}
 
@@ -61,9 +61,8 @@ export class TauriUpdater implements Updater {
 	}
 
 	download(): void {
-		const s = this.state;
-		const update = "update" in s ? s.update : null;
-		if (!update || !update.installable || s.status === "downloading") return;
+		const update = downloadable(this.state);
+		if (!update) return;
 		this.state = { status: "downloading", update, received: 0 };
 		invoke("update_download").then(
 			() => {

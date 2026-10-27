@@ -1,11 +1,22 @@
 // App updater — FAKE driver, for the browser preview and the `?demo=` states. The real one is
 // `TauriUpdater` ($lib/updater/tauri.svelte); both implement `Updater`.
 import { version as APP_VERSION } from "../../../package.json";
-import { isNewer, type AppUpdate, type Updater, type UpdaterState } from "$lib/updater/updater";
+import { canCheck, downloadable, isNewer, type AppUpdate, type Updater, type UpdaterState } from "$lib/updater/updater";
+import { MOCK_BUNDLED_FIRMWARE } from "./flasher.svelte";
 
+/** The next minor release after `v` (plain x.y.z). */
+function nextMinor(v: string): string {
+	const [major = 0, minor = 0] = v.split(".").map(Number);
+	return `${major}.${minor + 1}.0`;
+}
+
+// The release the mock finds: the next TallyBot, shipping newer light firmware than this one
+// bundles (so `?demo=newerfw` can offer "Update TallyBot first"). Derived, so it stays newer as
+// the real versions move.
+const MOCK_VERSION = nextMinor(APP_VERSION);
 const MOCK_UPDATE: AppUpdate = {
-	version: "1.1.0",
-	firmwareVersion: "1.1.0",
+	version: MOCK_VERSION,
+	firmwareVersion: nextMinor(MOCK_BUNDLED_FIRMWARE ?? "0.0.0"),
 	date: "2026-10-20T09:00:00Z",
 	notes: [
 		"Lights reconnect faster after a Wi-Fi drop",
@@ -14,7 +25,7 @@ const MOCK_UPDATE: AppUpdate = {
 	],
 	sizeBytes: 38_400_000,
 	installable: true,
-	releaseUrl: "https://github.com/bluescorpian/tallybot/releases/tag/v1.1.0",
+	releaseUrl: `https://github.com/bluescorpian/tallybot/releases/tag/v${MOCK_VERSION}`,
 };
 const SIZE = 38_400_000;
 
@@ -22,6 +33,8 @@ export class MockUpdater implements Updater {
 	currentVersion = $state(APP_VERSION);
 	state = $state<UpdaterState>({ status: "idle" });
 	lastChecked = $state<Date | null>(null);
+	/** The light firmware the running mock app bundles; an install brings the update's. */
+	bundledFirmware = $state<string | null>(MOCK_BUNDLED_FIRMWARE);
 
 	#available: boolean;
 	#failDownload: boolean;
@@ -41,7 +54,7 @@ export class MockUpdater implements Updater {
 	}
 
 	check(): void {
-		if (this.state.status === "checking" || this.state.status === "downloading") return;
+		if (!canCheck(this.state)) return;
 		this.state = { status: "checking" };
 		setTimeout(() => {
 			this.lastChecked = new Date();
@@ -53,9 +66,8 @@ export class MockUpdater implements Updater {
 	}
 
 	download(): void {
-		const s = this.state;
-		const update = "update" in s ? s.update : null;
-		if (!update || s.status === "downloading") return;
+		const update = downloadable(this.state);
+		if (!update) return;
 		clearInterval(this.#timer);
 		const fail = this.#failDownload;
 		this.#failDownload = false; // a retry succeeds
@@ -84,6 +96,7 @@ export class MockUpdater implements Updater {
 		// In a browser there's nothing to restart: pretend the new version came back up.
 		setTimeout(() => {
 			this.currentVersion = update.version;
+			this.bundledFirmware = update.firmwareVersion;
 			this.#available = false;
 			this.state = { status: "current", justUpdated: update.version };
 		}, 2800);

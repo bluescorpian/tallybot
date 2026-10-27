@@ -68,6 +68,20 @@ export interface Updater {
 	restart(): void;
 }
 
+/** Whether `check` may run: not while a check or a download is already in flight. */
+export function canCheck(state: UpdaterState): boolean {
+	return state.status !== "checking" && state.status !== "downloading";
+}
+
+/**
+ * The update `download` would fetch, or null when it may not: there is none, it's already
+ * downloading, or this install can't update itself (it gets the release page instead).
+ */
+export function downloadable(state: UpdaterState): AppUpdate | null {
+	const update = "update" in state ? state.update : null;
+	return update && update.installable && state.status !== "downloading" ? update : null;
+}
+
 /** True when semver `a` is newer than `b` (plain x.y.z). */
 export function isNewer(a: string, b: string): boolean {
 	const pa = a.split(".").map(Number);

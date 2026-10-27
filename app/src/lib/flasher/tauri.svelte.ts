@@ -3,7 +3,7 @@
 // adding the target (which the shell doesn't echo back).
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { FlashFailure, FlashStage, FlashState, FlashTarget, Flasher } from "./flasher";
+import { canReset, canStart, type FlashFailure, type FlashStage, type FlashState, type FlashTarget, type Flasher } from "./flasher";
 
 /** `flash.rs` `FlashEvent`. */
 type FlashEvent =
@@ -24,7 +24,7 @@ export class TauriFlasher implements Flasher {
 	}
 
 	start(target: FlashTarget): void {
-		if (this.state.status === "running") return;
+		if (!canStart(this.state)) return;
 		this.state = { status: "running", target, stage: "connect", progress: 0 };
 		invoke("flash_start", { port: target.port, mac: target.kind === "light" ? target.mac : null }).catch(
 			(err) => {
@@ -39,7 +39,7 @@ export class TauriFlasher implements Flasher {
 	}
 
 	reset(): void {
-		if (this.state.status !== "running") this.state = { status: "idle" };
+		if (canReset(this.state)) this.state = { status: "idle" };
 	}
 
 	#onEvent(e: FlashEvent): void {

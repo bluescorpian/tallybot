@@ -1,7 +1,22 @@
 // Firmware flasher — FAKE driver, for the browser preview and the `?demo=` states. The real
 // one is `TauriFlasher` ($lib/flasher/tauri.svelte); both implement `Flasher`.
-import { version as APP_VERSION } from "../../../package.json";
-import { FLASH_STAGES, type FlashFailure, type FlashStage, type FlashState, type FlashTarget, type Flasher } from "$lib/flasher/flasher";
+import {
+	canReset,
+	canStart,
+	FLASH_STAGES,
+	type FlashFailure,
+	type FlashStage,
+	type FlashState,
+	type FlashTarget,
+	type Flasher,
+} from "$lib/flasher/flasher";
+
+/**
+ * The light firmware this mock app bundles: mirrors `firmware/VERSION`, which is versioned apart
+ * from the app (a release can ship the same firmware as the last). Set it to null to preview a
+ * build that bundles none (no in-app flasher).
+ */
+export const MOCK_BUNDLED_FIRMWARE: string | null = "1.1.0";
 
 // Stage durations (ms). Write is the long one; the rest are realistic-ish but brisk.
 const DURATION: Record<FlashStage, number> = {
@@ -29,39 +44,43 @@ export class MockFlasher implements Flasher {
 	/** A forced failure for the first attempt only — a retry then succeeds, as it would after the fix. */
 	#failOnce: FlashFailure | null;
 
-	#bundled: () => string;
+	#bundled: () => string | null;
 	#boardMac: (port: string) => string | null;
 
 	/**
-	 * `bundled` reads the firmware version this app ships. It's the app's version, so it
-	 * follows an app update (the mock app "updates" without reloading). `boardMac` names the
+	 * `bundled` reads the firmware version this app ships, so it can follow an app update (the
+	 * mock app "updates" without reloading). `boardMac` names the
 	 * light a blank board on `port` used to be (one left blank by an interrupted install), which
 	 * comes back as that light, as the real bootloader-reported MAC would; otherwise a blank board
 	 * comes back as a new light.
 	 */
 	constructor(
-		opts: { failOnce?: FlashFailure | null; bundled?: () => string; boardMac?: (port: string) => string | null } = {},
+		opts: { failOnce?: FlashFailure | null; bundled?: () => string | null; boardMac?: (port: string) => string | null } = {},
 	) {
 		this.#failOnce = opts.failOnce ?? null;
-		this.#bundled = opts.bundled ?? (() => APP_VERSION);
+		this.#bundled = opts.bundled ?? (() => MOCK_BUNDLED_FIRMWARE);
 		this.#boardMac = opts.boardMac ?? (() => null);
 	}
 
-	get firmwareVersion(): string {
+	get firmwareVersion(): string | null {
 		return this.#bundled();
 	}
 
 	start(target: FlashTarget): void {
+		if (!canStart(this.state)) return;
 		this.#clear();
 		const fail = this.#failOnce;
 		this.#failOnce = null;
+		const enter = (stage: FlashStage) => {
+			this.state = { status: "running", target, stage, progress: 0 };
+			if (stage === "write") this.#animateWrite(target, DURATION.write);
+		};
 		let at = 0;
 		for (const stage of FLASH_STAGES) {
 			const begin = at;
-			this.#later(begin, () => {
-				this.state = { status: "running", target, stage, progress: 0 };
-				if (stage === "write") this.#animateWrite(target, DURATION.write);
-			});
+			// the first stage is entered at once, as the real driver does, so `running` holds from the call
+			if (begin === 0) enter(stage);
+			else this.#later(begin, () => enter(stage));
 			if (fail && failsAt(fail) === stage) {
 				const failAfter = fail === "unplugged" ? DURATION.write * 0.43 : fail === "port-busy" ? 500 : 3200;
 				this.#later(begin + failAfter, () => {
@@ -87,6 +106,7 @@ export class MockFlasher implements Flasher {
 	}
 
 	reset(): void {
+		if (!canReset(this.state)) return;
 		this.#clear();
 		this.state = { status: "idle" };
 	}

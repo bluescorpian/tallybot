@@ -74,6 +74,16 @@ export function firmwareOutdated(bundled: string | null, firmware: DeviceFirmwar
 	}
 }
 
+/** Whether `start` may begin a flash: one runs at a time, and a call while one runs is ignored. */
+export function canStart(state: FlashState): boolean {
+	return state.status !== "running";
+}
+
+/** Whether `reset` may clear the state: a running flash is stopped with `cancel`, never reset. */
+export function canReset(state: FlashState): boolean {
+	return state.status !== "running";
+}
+
 /**
  * Whether stopping or failing at `stage` leaves the board without firmware. Before erase nothing
  * was touched; once the write is done the new firmware is in place and comes back on its own.
