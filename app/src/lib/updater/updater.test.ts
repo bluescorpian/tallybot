@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { downloadProgress, newerFirmwareUpdate, releaseNotes, type AppUpdate } from "./updater";
+import { downloadProgress, downloadable, newerFirmwareUpdate, releaseNotes, type AppUpdate } from "./updater";
 import { formatReleaseDate } from "../format/time";
 
 const update = (over: Partial<AppUpdate> = {}): AppUpdate => ({
@@ -58,4 +58,12 @@ test("a release's publish instant shows as the user's local date, and a missing 
 
 	assert.equal(formatReleaseDate(null), null);
 	assert.equal(formatReleaseDate("not a date"), null, "never 'Invalid Date'");
+});
+
+test("an installable update can be downloaded; one that isn't installable, or is already downloading, can't", () => {
+	const u = update({ installable: true });
+	assert.equal(downloadable({ status: "available", update: u }), u);
+	assert.equal(downloadable({ status: "available", update: update({ installable: false }) }), null);
+	assert.equal(downloadable({ status: "downloading", update: u, received: 10 }), null);
+	assert.equal(downloadable({ status: "current" }), null);
 });
