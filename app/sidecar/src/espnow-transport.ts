@@ -26,9 +26,9 @@
 import { EventEmitter } from "node:events";
 
 import { type DeviceTransportEvents, announceDevice, seconds } from "./device-events.ts";
-import { HEARTBEAT_TIMEOUT_MS } from "./device-server.ts";
 import {
   type Color,
+  HEARTBEAT_TIMEOUT_MS,
   type LogLevelName,
   decodeDeviceMessage,
   logLevelName,

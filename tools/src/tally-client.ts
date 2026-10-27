@@ -19,8 +19,10 @@ import { readFileSync } from "node:fs";
 
 import {
   type Color,
+  DISCOVERY_INTERVAL_MS,
   DISCOVERY_PORT,
   DISCOVERY_REQUEST,
+  HEARTBEAT_INTERVAL_MS,
   PROTOCOL_VERSION,
   parseDiscoveryResponse,
 } from "../../app/sidecar/src/protocol.ts";
@@ -37,11 +39,6 @@ export const CURRENT_FIRMWARE_VERSION = readFileSync(
   new URL("../../firmware/VERSION", import.meta.url),
   "utf8",
 ).trim();
-
-/** How often a device heartbeats once connected (docs/architecture.md: every 10s). */
-export const HEARTBEAT_INTERVAL_MS = 10_000;
-/** How often a device re-broadcasts its discovery request until it finds a server. */
-export const DISCOVERY_INTERVAL_MS = 2_000;
 
 // ── A single device's TCP session ───────────────────────────────────────────────
 

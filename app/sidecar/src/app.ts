@@ -25,7 +25,14 @@ import {
 import type { DeviceTransportEvents } from "./device-events.ts";
 import type { DeviceConfig } from "./store.ts";
 import type { DeviceFirmware, DeviceTransport, DeviceWifiState, LogLevelName, SidecarEvent, SourceScanHit, UiCommand } from "./ipc.ts";
-import { type Color, DEFAULT_BRIGHTNESS, isIPv4, macTail, supportsEspNow } from "./protocol.ts";
+import {
+  type Color,
+  DEFAULT_BRIGHTNESS,
+  ESPNOW_LINK_TIMEOUT_MS,
+  isIPv4,
+  macTail,
+  supportsEspNow,
+} from "./protocol.ts";
 import { provisionedModeName, transportModeValue } from "./usb-transport.ts";
 
 // ── Collaborator ports (the concrete classes satisfy these structurally) ─────────
@@ -157,6 +164,10 @@ const FLASH_OFF: Color = { r: 0, g: 0, b: 0 };
 const IDENTIFY_COLOR: Color = { r: 255, g: 255, b: 255 };
 const IDENTIFY_HALF_MS = 150;
 const IDENTIFY_DURATION_MS = IDENTIFY_HALF_MS * 6; // three white/off cycles (~0.9 s)
+
+/** Keyframes an ESP-NOW light can miss in a row before its link times out (250 ms at 5 s). */
+const KEYFRAMES_PER_LINK_TIMEOUT = 20;
+
 /**
  * How often to re-assert every connected device's current colour, regardless of change. Treats
  * SET_COLOR as periodic *state* rather than a one-shot *event*: a packet lost in flight self-heals
@@ -166,12 +177,14 @@ const IDENTIFY_DURATION_MS = IDENTIFY_HALF_MS * 6; // three white/off cycles (~0
  * trustworthy — and it lets a light that power-cycles or drifts into range mid-show recover within
  * a tick, without waiting on a reconnect handshake. 250 ms (not 1 s) because the keyframe is also
  * an ESP-NOW light's only proof its bridge is alive: its 5 s link timeout
- * (`ESPNOW_LINK_TIMEOUT_MS`) then takes 20 consecutive lost keyframes rather than 5, and a light
- * that did lose the link relinks on the next keyframe to reach it. Animated devices already re-send
+ * ({@link ESPNOW_LINK_TIMEOUT_MS}) then takes {@link KEYFRAMES_PER_LINK_TIMEOUT} consecutive lost
+ * keyframes rather than 5, and a light that did lose the link relinks on the next keyframe to reach
+ * it. So the period is derived from that timeout, not set beside it: shortening the firmware's
+ * timeout shortens the keyframe with it. Animated devices already re-send
  * every {@link ANIM_TICK_MS}; this keyframe is their redundant-but-harmless backstop and the only
  * resend a steady device gets.
  */
-const REFRESH_PERIOD_MS = 250;
+const REFRESH_PERIOD_MS = ESPNOW_LINK_TIMEOUT_MS / KEYFRAMES_PER_LINK_TIMEOUT;
 
 /**
  * The brightness to drive a breathing device this tick: its configured brightness modulated by

@@ -15,13 +15,14 @@ import { parseArgs } from "node:util";
 
 import {
   type Color,
+  DISCOVERY_INTERVAL_MS,
   PROTOCOL_VERSION,
   SERVER_PORT,
   formatMac,
   macTail,
 } from "../../app/sidecar/src/protocol.ts";
 import { colorName, parseMac, randomMac } from "./device-protocol.ts";
-import { DISCOVERY_INTERVAL_MS, TallyClient, discoverServer } from "./tally-client.ts";
+import { TallyClient, discoverServer } from "./tally-client.ts";
 
 // ── Pretty logging ────────────────────────────────────────────────────────────
 

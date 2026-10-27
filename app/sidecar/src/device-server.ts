@@ -20,8 +20,10 @@ import { type Socket as UdpSocket, createSocket } from "node:dgram";
 
 import { type DeviceTransportEvents, announceDevice, seconds } from "./device-events.ts";
 import {
+  ANNOUNCE_INTERVAL_MS,
   type Color,
   DISCOVERY_PORT,
+  HEARTBEAT_TIMEOUT_MS,
   FrameDecoder,
   SERVER_PORT,
   encodeDiscoveryResponse,
@@ -29,11 +31,6 @@ import {
   isDiscoveryRequest,
   decodeDeviceMessage,
 } from "./protocol.ts";
-
-/** Per-device timeout: no message within this window means the device is gone. */
-export const HEARTBEAT_TIMEOUT_MS = 30_000;
-/** How often the server broadcasts its presence (docs/architecture.md: every 5s). */
-export const ANNOUNCE_INTERVAL_MS = 5_000;
 
 export interface DeviceServerOptions {
   /** TCP port devices connect to (default {@link SERVER_PORT}; 0 picks a free one). */

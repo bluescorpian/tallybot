@@ -106,6 +106,24 @@ export const Transport = {
  */
 export const ESPNOW_CHANNEL = 1;
 
+/**
+ * An ESP-NOW light that hears nothing from its bridge this long treats the link as dead
+ * (enforced by the firmware). The sidecar's keyframe period is derived from it (`app.ts`).
+ */
+export const ESPNOW_LINK_TIMEOUT_MS = 5_000;
+
+// ── Timers ────────────────────────────────────────────────────────────────────
+// Firmware-side values mirror `protocol.h`; server-side ones are listed there for reference.
+
+/** How often a device heartbeats once connected over TCP (firmware). */
+export const HEARTBEAT_INTERVAL_MS = 10_000;
+/** How often a device re-broadcasts its discovery request until it finds a server (firmware). */
+export const DISCOVERY_INTERVAL_MS = 2_000;
+/** Per-device timeout: no message within this window means the device is gone (server). */
+export const HEARTBEAT_TIMEOUT_MS = 30_000;
+/** How often the server broadcasts its presence (server). */
+export const ANNOUNCE_INTERVAL_MS = 5_000;
+
 /** WiFi join progress, streamed in STATUS so the wizard confirms a join before unplug. */
 export const WifiState = {
   IDLE: 0,
