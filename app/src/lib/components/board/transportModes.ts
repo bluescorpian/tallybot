@@ -1,7 +1,7 @@
 // What a light does when unplugged — the one list both the light's Configure pane and the
 // flasher's Settings step offer, so the two say the same thing. Each row names the transport
 // and says in the small text when to pick it (Harry's call: name first, reason second).
-export type TransportMode = "wifi" | "notx" | "espnow";
+import type { TransportMode } from "$ipc";
 
 export const TRANSPORT_MODES: { id: TransportMode; label: string; desc: string }[] = [
 	{ id: "wifi", label: "Wi-Fi", desc: "When the venue Wi-Fi is reliable" },

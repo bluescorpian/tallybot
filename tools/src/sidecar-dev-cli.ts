@@ -30,7 +30,7 @@ import { scanNetwork } from "../../app/sidecar/src/scanner.ts";
 import { ConfigStore } from "../../app/sidecar/src/store.ts";
 import type { UsbBridgePort } from "../../app/sidecar/src/usb-transport.ts";
 import { createSidecar } from "../../app/sidecar/src/wiring.ts";
-import { type AppState, type SidecarEvent, type UiCommand } from "../../app/sidecar/src/ipc.ts";
+import { type AppState, type LogLevelName, type SidecarEvent, type UiCommand } from "../../app/sidecar/src/ipc.ts";
 import { type Color, COLORS, SETUP_COLOR } from "../../app/sidecar/src/protocol.ts";
 
 // ── A REPL standing in for the UI's IPC channel ──────────────────────────────────
@@ -56,7 +56,7 @@ class ReplIpc extends EventEmitter implements IpcPort, UsbBridgePort {
       console.log(`${stamp()} LOG ${event.mac} ${event.level.toUpperCase()}: ${event.text}`);
     }
   }
-  notice(level: "info" | "warn" | "error", message: string): void {
+  notice(level: LogLevelName, message: string): void {
     console.log(`${stamp()} ${level.toUpperCase()}: ${message}`);
   }
   close(): void {}

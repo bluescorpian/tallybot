@@ -33,8 +33,7 @@
 	import BrightnessBar from "$lib/components/board/BrightnessBar.svelte";
 	import DeviceConfig from "$lib/components/board/DeviceConfig.svelte";
 	import DeviceWifi from "$lib/components/board/DeviceWifi.svelte";
-	import type { ProvisionedMode } from "$lib/components/board/types";
-	import type { DeviceTransport, DeviceWifiState } from "$ipc";
+	import type { DeviceTransport, DeviceWifiState, TransportMode } from "$ipc";
 	import Zap from "@lucide/svelte/icons/zap";
 	import Check from "@lucide/svelte/icons/check";
 	import Unplug from "@lucide/svelte/icons/unplug";
@@ -59,7 +58,7 @@
 		/** Transport currently carrying the device — `"usb"` enables Configure + the wired cuff. */
 		transport?: DeviceTransport;
 		/** Persisted "when unplugged" mode; null until provisioned. */
-		provisionedMode?: ProvisionedMode;
+		provisionedMode?: TransportMode | null;
 		/** SSID the device is provisioned to join, or null. */
 		ssid?: string | null;
 		/** Live WiFi join progress while provisioning over USB, or null. */
@@ -78,7 +77,7 @@
 		/** Provision Wi-Fi: persist creds + start the validating join over the cable. */
 		onprovisionwifi?: (ssid: string, pass: string) => void;
 		/** Set the unplugged transport mode. */
-		onsettransport?: (mode: "wifi" | "notx" | "espnow") => void;
+		onsettransport?: (mode: TransportMode) => void;
 		/** Designate (true) / un-designate (false) this device as the ESP-NOW bridge. */
 		onsetbridge?: (enabled: boolean) => void;
 		/** Firmware older than this app ships: badge the light and offer an update row. */

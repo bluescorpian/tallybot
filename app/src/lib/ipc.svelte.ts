@@ -18,6 +18,7 @@ import {
 	type AppState,
 	type NoticeEvent,
 	type SourceScanEvent,
+	type TransportMode,
 	type UiCommand,
 } from "$ipc";
 
@@ -147,7 +148,7 @@ class SidecarStore {
 	 * Set what a USB device does when unplugged: join WiFi, stay dark (No-TX), or
 	 * receive tally from a bridge over ESP-NOW (v1.3, devices reporting version ≥ 3).
 	 */
-	setTransport(mac: string, mode: "wifi" | "notx" | "espnow"): void {
+	setTransport(mac: string, mode: TransportMode): void {
 		this.#send({ type: "setTransport", mac, mode });
 	}
 	/**

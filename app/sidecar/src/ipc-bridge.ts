@@ -12,7 +12,7 @@
 import { EventEmitter } from "node:events";
 import { type Interface, createInterface } from "node:readline";
 
-import { type SidecarEvent, type UiCommand, parseCommand, serializeMessage } from "./ipc.ts";
+import { type LogLevelName, type SidecarEvent, type UiCommand, parseCommand, serializeMessage } from "./ipc.ts";
 import { type UsbInbound, type UsbOutbound, parseUsbInbound } from "./usb-bridge.ts";
 
 export interface IpcBridgeOptions {
@@ -63,7 +63,7 @@ export class IpcBridge extends EventEmitter {
   }
 
   /** Convenience for an out-of-band notice (info / warn / error). */
-  notice(level: "info" | "warn" | "error", message: string): void {
+  notice(level: LogLevelName, message: string): void {
     this.send({ type: "notice", level, message });
   }
 

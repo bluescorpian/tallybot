@@ -17,7 +17,7 @@
 import { EventEmitter } from "node:events";
 
 import { type DeviceTransportEvents, announceDevice } from "./device-events.ts";
-import type { DeviceWifiState } from "./ipc.ts";
+import type { DeviceWifiState, TransportMode } from "./ipc.ts";
 import {
   type Color,
   ESPNOW_CHANNEL,
@@ -215,7 +215,7 @@ export class UsbTransport extends EventEmitter {
 }
 
 /** Map a UI transport-mode string to its wire {@link Transport} value. */
-export function transportModeValue(mode: "notx" | "wifi" | "espnow"): number {
+export function transportModeValue(mode: TransportMode): number {
   switch (mode) {
     case "notx":
       return Transport.NOTX;
@@ -231,7 +231,7 @@ export function transportModeValue(mode: "notx" | "wifi" | "espnow"): number {
  * device does when unplugged. `null` for any value we don't recognise (e.g. a future mode an
  * older sidecar doesn't model), so the wizard shows "unprovisioned" rather than a wrong mode.
  */
-export function provisionedModeName(mode: number): "wifi" | "notx" | "espnow" | null {
+export function provisionedModeName(mode: number): TransportMode | null {
   return mode === Transport.WIFI
     ? "wifi"
     : mode === Transport.NOTX

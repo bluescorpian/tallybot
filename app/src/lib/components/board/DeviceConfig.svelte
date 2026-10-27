@@ -10,9 +10,8 @@
 	// Flat shadcn surface (the popover is flat, not the neumorphic board). Cyan
 	// `--signal` is activity (the wired chip), never a tally state.
 	import { Switch } from "$lib/components/ui/switch/index.js";
-	import type { DeviceTransport } from "$ipc";
+	import type { DeviceTransport, TransportMode } from "$ipc";
 	import { supportsEspNow } from "$protocol";
-	import type { ProvisionedMode } from "$lib/components/board/types";
 	import PopoverPageHeader from "$lib/components/board/PopoverPageHeader.svelte";
 	import ChevronRight from "@lucide/svelte/icons/chevron-right";
 	import Wifi from "@lucide/svelte/icons/wifi";
@@ -26,7 +25,7 @@
 	interface Props {
 		label: string;
 		transport: DeviceTransport;
-		provisionedMode: ProvisionedMode;
+		provisionedMode: TransportMode | null;
 		ssid: string | null;
 		/** Device's HELLO protocol version (null if never connected) — gates ESP-NOW. */
 		protocolVersion: number | null;
@@ -35,7 +34,7 @@
 		/** Open the Wi-Fi credentials page. */
 		onwifi?: () => void;
 		/** Set the unplugged transport mode inline (only Wi-Fi has its own page). */
-		onsettransport?: (mode: "wifi" | "notx" | "espnow") => void;
+		onsettransport?: (mode: TransportMode) => void;
 		/** Designate (true) or un-designate (false) this device as the ESP-NOW bridge. */
 		onsetbridge?: (enabled: boolean) => void;
 		/** Return to the compact picker. */

@@ -12,6 +12,8 @@
  * device, program-gate — so the schema, persisted state, and UI all line up.
  */
 
+import type { LogLevelName } from "./protocol.ts";
+
 // ── Domain ──────────────────────────────────────────────────────────────────
 
 /**
@@ -52,13 +54,25 @@ export interface Input {
  */
 export type DeviceState = "assigned" | "unassigned" | "offline";
 
+// The transport and log-level vocabularies are **open unions** centralised here, never copied
+// as string literals across files: the sidecar, the UI (via `$ipc`) and `tools/` import these
+// names. `LogLevelName` is defined beside the wire LOG codec in `protocol.ts` and re-exported.
+
 /**
- * Which transport currently carries a device. **Open union** (centralised here, never
- * copied as a string literal across files): v1.3 adds `"espnow"`. A USB-connected device
+ * Which transport currently carries a device. v1.3 adds `"espnow"`. A USB-connected device
  * is shown with a wired indicator; while plugged in, USB always wins (the same MAC seen on
  * both WiFi and USB appears once, as `"usb"`).
  */
 export type DeviceTransport = "wifi" | "usb" | "espnow";
+
+/**
+ * What a device does when unplugged, as provisioned over USB (the wire `Transport` byte):
+ * `"wifi"` joins a network, `"notx"` stays dark, `"espnow"` takes tally from a bridge.
+ */
+export type TransportMode = "wifi" | "notx" | "espnow";
+
+/** Severity of a notice or a device-log line (the wire LOG level byte, named). */
+export type { LogLevelName };
 
 /** WiFi join progress, surfaced while provisioning a device over USB. */
 export type DeviceWifiState = "idle" | "joining" | "connected" | "failed";
@@ -109,7 +123,7 @@ export interface Device {
    * while it's plugged in). Optional so pre-v1.2 sidecar builds (which never populate
    * it) stay valid.
    */
-  provisionedMode?: "wifi" | "notx" | "espnow" | null;
+  provisionedMode?: TransportMode | null;
   /**
    * SSID the device is provisioned to join, or null if none. Adopted from the device's
    * STATUS (read from its NVS), so it's accurate even for a device this host never
@@ -160,7 +174,7 @@ export interface StateEvent {
 /** An out-of-band message for the UI, e.g. the "update firmware" warning. */
 export interface NoticeEvent {
   type: "notice";
-  level: "info" | "warn" | "error";
+  level: LogLevelName;
   message: string;
 }
 
@@ -191,7 +205,7 @@ export interface SourceScanEvent {
 export interface DeviceLogEvent {
   type: "deviceLog";
   mac: string;
-  level: "info" | "warn" | "error";
+  level: LogLevelName;
   text: string;
 }
 
@@ -288,7 +302,7 @@ export interface ProvisionWifiCommand {
 export interface SetTransportCommand {
   type: "setTransport";
   mac: string;
-  mode: "notx" | "wifi" | "espnow";
+  mode: TransportMode;
 }
 
 /**

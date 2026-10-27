@@ -24,7 +24,7 @@ import {
 } from "./engine.ts";
 import type { DeviceTransportEvents } from "./device-events.ts";
 import type { DeviceConfig } from "./store.ts";
-import type { DeviceFirmware, DeviceTransport, DeviceWifiState, SidecarEvent, SourceScanHit, UiCommand } from "./ipc.ts";
+import type { DeviceFirmware, DeviceTransport, DeviceWifiState, LogLevelName, SidecarEvent, SourceScanHit, UiCommand } from "./ipc.ts";
 import { type Color, DEFAULT_BRIGHTNESS, macTail, supportsEspNow } from "./protocol.ts";
 import { provisionedModeName, transportModeValue } from "./usb-transport.ts";
 
@@ -69,7 +69,7 @@ export interface ProvisioningPort {
       bridge: boolean;
     }) => void,
   ): unknown;
-  on(event: "log", listener: (entry: { mac: string; level: "info" | "warn" | "error"; text: string }) => void): unknown;
+  on(event: "log", listener: (...args: DeviceTransportEvents["log"]) => void): unknown;
 }
 
 /**
@@ -110,7 +110,7 @@ export interface StorePort {
 
 export interface IpcPort {
   send(event: SidecarEvent): void;
-  notice(level: "info" | "warn" | "error", message: string): void;
+  notice(level: LogLevelName, message: string): void;
   on(event: "command", listener: (command: UiCommand) => void): unknown;
   close(): void;
 }

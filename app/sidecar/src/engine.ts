@@ -27,6 +27,7 @@ import type {
   ProgramGate,
   SourceConnection,
   Tally,
+  TransportMode,
 } from "./ipc.ts";
 import { type Color, COLORS, DEFAULT_BRIGHTNESS, SETUP_COLOR } from "./protocol.ts";
 
@@ -78,7 +79,7 @@ export interface DeviceRecord {
    * or null when never provisioned / not on USB. Optional so existing record literals (and the
    * pure-engine tests) need no change; the orchestrator always supplies it.
    */
-  provisionedMode?: "wifi" | "notx" | "espnow" | null;
+  provisionedMode?: TransportMode | null;
   /** SSID the device is provisioned to join when unplugged, or null. Optional (see above). */
   ssid?: string | null;
   /**

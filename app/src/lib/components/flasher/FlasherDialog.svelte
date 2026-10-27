@@ -1,4 +1,6 @@
 <script lang="ts" module>
+	import type { TransportMode } from "$ipc";
+
 	/**
 	 * One flash the operator asked for, resolved by the page from live state so it updates as
 	 * things change (a wireless light gains a `port` once it's plugged in).
@@ -26,7 +28,7 @@
 	 * MAC, which the bootloader reports even for a blank board): input and brightness.
 	 */
 	export interface LightSettings {
-		transport: "wifi" | "notx" | "espnow";
+		transport: TransportMode;
 		ssid: string;
 		password: string;
 		bridge: boolean;
@@ -72,7 +74,7 @@
 	import * as Select from "$lib/components/ui/select";
 	import * as RadioGroup from "$lib/components/ui/radio-group";
 	import BrightnessBar, { toLevel, LEVELS } from "$lib/components/board/BrightnessBar.svelte";
-	import { TRANSPORT_MODES, BRIDGE_LABEL, BRIDGE_DESC, type TransportMode } from "$lib/components/board/transportModes";
+	import { TRANSPORT_MODES, BRIDGE_LABEL, BRIDGE_DESC } from "$lib/components/board/transportModes";
 	import type { Flasher, FlashStage, FlashTarget } from "$lib/flasher/flasher";
 	import { FLASH_STAGES, leavesBlank } from "$lib/flasher/flasher";
 	import type { AppUpdate } from "$lib/updater/updater";

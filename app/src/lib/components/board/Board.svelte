@@ -17,6 +17,7 @@
 	// Trace rules: PCB-authentic — segments are vertical / horizontal / 45° only,
 	// bends are 45° chamfers, and every run stops short of its endpoint by GAPT so
 	// a small gap reads between a trace and the thing it connects to.
+	import type { TransportMode } from "$ipc";
 	import SourceChip from "$lib/components/board/SourceChip.svelte";
 	import type { SourceStatus } from "$lib/components/board/SourceChip.svelte";
 	import InputKey from "$lib/components/board/InputKey.svelte";
@@ -55,7 +56,7 @@
 		/** Provision a device's Wi-Fi (persist creds; save-only — no live join). */
 		onprovisionwifi?: (mac: string, ssid: string, pass: string) => void;
 		/** Set a device's unplugged transport mode. */
-		onsettransport?: (mac: string, mode: "wifi" | "notx" | "espnow") => void;
+		onsettransport?: (mac: string, mode: TransportMode) => void;
 		/** Designate (mac) / un-designate (null) the ESP-NOW bridge device. */
 		onsetbridge?: (mac: string | null) => void;
 		/** Open the firmware updater for this light (the flasher drawer). */

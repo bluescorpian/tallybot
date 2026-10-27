@@ -6,12 +6,9 @@
 // (unknown→idle on keys, unknown→fault on lights, override, offline/setup) lives.
 import type { InputState } from "./InputKey.svelte";
 import type { LightState } from "./TallyLightPcb.svelte";
-import type { DeviceTransport, DeviceWifiState } from "$ipc";
+import type { DeviceTransport, DeviceWifiState, TransportMode } from "$ipc";
 
 export type { InputState, LightState };
-
-/** Persisted "when unplugged" behaviour of a device (see `Device.provisionedMode`). */
-export type ProvisionedMode = "wifi" | "notx" | "espnow" | null;
 
 /** An input column header — already resolved to a key state by the mapper. */
 export interface BoardInput {
@@ -40,7 +37,7 @@ export interface BoardLight {
 	/** Transport currently carrying the device — `"usb"` shows the wired indicator. */
 	transport: DeviceTransport;
 	/** Persisted "when unplugged" mode; null until the device is provisioned. */
-	provisionedMode: ProvisionedMode;
+	provisionedMode: TransportMode | null;
 	/** SSID the device is provisioned to join, or null. */
 	ssid: string | null;
 	/** Live WiFi join progress while provisioning over USB, or null. */

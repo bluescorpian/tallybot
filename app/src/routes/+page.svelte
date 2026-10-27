@@ -8,7 +8,7 @@
 	// there's no sidecar, so the page falls back to the Phase-4 MOCK below — same
 	// shape, local data — so the board still renders and design iteration works.
 	import { onMount, onDestroy, untrack } from "svelte";
-	import type { AppState, Device, DeviceFirmware, Input, Tally } from "$ipc";
+	import type { AppState, Device, DeviceFirmware, Input, LogLevelName, Tally, TransportMode } from "$ipc";
 	import Board from "$lib/components/board/Board.svelte";
 	import { sidecarLost, toBoardProps } from "$lib/boardState";
 	import { autostart, sidecar, isTauri } from "$lib/ipc.svelte";
@@ -296,7 +296,7 @@
 		d.provisionedMode = "wifi";
 		d.ssid = ssid;
 	}
-	function setTransport(mac: string, mode: "wifi" | "notx" | "espnow") {
+	function setTransport(mac: string, mode: TransportMode) {
 		if (isTauri) return sidecar.setTransport(mac, mode);
 		const d = devices.find((x) => x.mac === mac || x.macTail === mac);
 		if (!d) return;
@@ -654,7 +654,7 @@
 	// An unflashed board (shell health) points at the web flasher until it's unplugged.
 	interface Banner {
 		key: string;
-		level: "info" | "warn" | "error";
+		level: LogLevelName;
 		message: string;
 		dismissible: boolean;
 		/** The banner's next step, as a button after the message. */

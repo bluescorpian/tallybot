@@ -6,6 +6,7 @@
 	// this tray (the tray just fills its positioned wrapper).
 	import LightPicker from "$lib/components/board/LightPicker.svelte";
 	import type { BoardLight } from "$lib/components/board/types";
+	import type { TransportMode } from "$ipc";
 	import type { PickerInput } from "$lib/components/board/LightPicker.svelte";
 
 	interface Props {
@@ -22,7 +23,7 @@
 		/** Provision a device's Wi-Fi (persist creds; save-only — no live join). */
 		onprovisionwifi?: (mac: string, ssid: string, pass: string) => void;
 		/** Set a device's unplugged transport mode. */
-		onsettransport?: (mac: string, mode: "wifi" | "notx" | "espnow") => void;
+		onsettransport?: (mac: string, mode: TransportMode) => void;
 		/** Designate (mac) / un-designate (null) the ESP-NOW bridge device. */
 		onsetbridge?: (mac: string | null) => void;
 		/** Open the firmware updater for this light (the flasher drawer). */
