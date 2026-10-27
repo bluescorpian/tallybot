@@ -510,9 +510,20 @@ test("an unsupported-firmware device raises a warning notice", async () => {
   const { app, server, ipc } = setup();
   await app.start();
 
-  server.emit("deviceUnsupported", { mac: MAC, version: 0 });
+  server.emit("deviceUnsupported", { mac: MAC, version: 0, reason: "device-too-old" });
   assert.equal(ipc.notices.at(-1)?.level, "warn");
   assert.match(ipc.notices.at(-1)!.message, /firmware/i);
+});
+
+test("a device newer than this app is told to update TallyBot, not its firmware", async () => {
+  const { app, server, ipc } = setup();
+  await app.start();
+
+  server.emit("deviceUnsupported", { mac: MAC, version: 9, reason: "app-too-old" });
+  const notice = ipc.notices.at(-1)!;
+  assert.equal(notice.level, "warn");
+  assert.match(notice.message, /update TallyBot/);
+  assert.doesNotMatch(notice.message, /old firmware/i);
 });
 
 test("on startup with a saved IP, the ATEM is connected automatically", async () => {
@@ -641,6 +652,32 @@ test("setTransport(notx) sets the mode and clears any remembered SSID", async ()
 
   assert.deepEqual(provisioning.transports, [{ mac: MAC, mode: Transport.NOTX }]);
   assert.equal(store.device(MAC)?.ssid, undefined); // SSID dropped — No-TX has no network
+});
+
+test("setTransport(espnow) is refused for a light below protocol v3, with a notice and no frame", async () => {
+  const { app, server, ipc, provisioning } = setup();
+  await app.start();
+  provisioning.wired.add(MAC);
+  server.connectDevice(MAC, 2);
+
+  ipc.command({ type: "setTransport", mac: MAC, mode: "espnow" });
+  await tick();
+
+  assert.deepEqual(provisioning.transports, [], "nothing sent to the device");
+  assert.equal(ipc.notices.at(-1)?.level, "info");
+  assert.match(ipc.notices.at(-1)!.message, /ESP-NOW/);
+});
+
+test("setTransport(espnow) reaches a v3 light", async () => {
+  const { app, server, ipc, provisioning } = setup();
+  await app.start();
+  provisioning.wired.add(MAC);
+  server.connectDevice(MAC, 3);
+
+  ipc.command({ type: "setTransport", mac: MAC, mode: "espnow" });
+  await tick();
+
+  assert.deepEqual(provisioning.transports, [{ mac: MAC, mode: Transport.ESPNOW }]);
 });
 
 test("a connecting USB device is asked for a fresh STATUS at once", async () => {

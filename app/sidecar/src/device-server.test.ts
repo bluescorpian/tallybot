@@ -110,8 +110,8 @@ test("a HELLO below the minimum version also fires deviceUnsupported", async () 
   try {
     const unsupported = once(server, "deviceUnsupported");
     socket.write(helloFrame("aa:bb:cc:dd:ee:ff", 0)); // below MIN_SUPPORTED (1)
-    const [info] = (await unsupported) as [{ mac: string; version: number }];
-    assert.deepEqual(info, { mac: "aa:bb:cc:dd:ee:ff", version: 0 });
+    const [info] = (await unsupported) as [{ mac: string; version: number; reason: string }];
+    assert.deepEqual(info, { mac: "aa:bb:cc:dd:ee:ff", version: 0, reason: "device-too-old" });
     assert.deepEqual(server.connectedMacs(), ["aa:bb:cc:dd:ee:ff"], "it's still tracked, just flagged");
   } finally {
     socket.destroy();

@@ -39,10 +39,10 @@ test("usbDeviceConnected → deviceConnected; disconnect → deviceDisconnected"
 test("an old firmware version raises deviceUnsupported", () => {
   const bridge = new FakeBridge();
   const usb = new UsbTransport(bridge);
-  const unsupported: Array<{ mac: string; version: number }> = [];
+  const unsupported: Array<{ mac: string; version: number; reason: string }> = [];
   usb.on("deviceUnsupported", (i) => unsupported.push(i));
   bridge.feed({ type: "usbDeviceConnected", mac: MAC, version: 0 }); // below MIN_SUPPORTED
-  assert.deepEqual(unsupported, [{ mac: MAC, version: 0 }]);
+  assert.deepEqual(unsupported, [{ mac: MAC, version: 0, reason: "device-too-old" }]);
 });
 
 test("sendColor emits a byte-identical SET_COLOR payload over the bridge", () => {

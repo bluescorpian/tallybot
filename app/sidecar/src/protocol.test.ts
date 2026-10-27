@@ -14,13 +14,13 @@ import {
   Transport,
   WifiState,
   decodeDeviceMessage,
+  deviceCompatibility,
   encodeDiscoveryResponse,
   encodeSetColor,
   formatMac,
   frame,
   getStatusPayload,
   isDiscoveryRequest,
-  isSupportedVersion,
   macTail,
   parseDiscoveryResponse,
   parseMac,
@@ -29,6 +29,7 @@ import {
   setColorPayload,
   setTransportPayload,
   setWifiPayload,
+  supportsEspNow,
 } from "./protocol.ts";
 
 // ── Framing ───────────────────────────────────────────────────────────────────
@@ -337,9 +338,14 @@ test("discovery request/response build and parse", () => {
 
 // ── Versioning ────────────────────────────────────────────────────────────────────
 
-test("isSupportedVersion accepts the current version and rejects others", () => {
-  assert.ok(isSupportedVersion(PROTOCOL_VERSION.CURRENT));
-  assert.ok(isSupportedVersion(PROTOCOL_VERSION.MIN_SUPPORTED));
-  assert.ok(!isSupportedVersion(PROTOCOL_VERSION.MIN_SUPPORTED - 1));
-  assert.ok(!isSupportedVersion(PROTOCOL_VERSION.CURRENT + 1));
+test("deviceCompatibility supports the range and names the stale side outside it", () => {
+  assert.equal(deviceCompatibility(PROTOCOL_VERSION.CURRENT), "supported");
+  assert.equal(deviceCompatibility(PROTOCOL_VERSION.MIN_SUPPORTED), "supported");
+  assert.equal(deviceCompatibility(PROTOCOL_VERSION.MIN_SUPPORTED - 1), "device-too-old");
+  assert.equal(deviceCompatibility(PROTOCOL_VERSION.CURRENT + 1), "app-too-old");
+});
+
+test("supportsEspNow starts at protocol v3", () => {
+  assert.equal(supportsEspNow(2), false);
+  assert.equal(supportsEspNow(3), true);
 });

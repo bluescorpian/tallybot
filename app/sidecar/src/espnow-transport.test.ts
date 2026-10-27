@@ -66,11 +66,11 @@ test("a relayed HELLO surfaces as deviceConnected with the light's MAC and versi
 test("an unsupported relayed version raises deviceUnsupported (still connects)", () => {
   const usb = new FakeUsb();
   const espnow = new EspNowTransport(usb.asUsb());
-  const unsupported: Array<{ mac: string; version: number }> = [];
+  const unsupported: Array<{ mac: string; version: number; reason: string }> = [];
   espnow.on("deviceUnsupported", (i) => unsupported.push(i));
 
   usb.relay(BRIDGE, LIGHT, helloInner(0)); // below MIN_SUPPORTED
-  assert.deepEqual(unsupported, [{ mac: LIGHT, version: 0 }]);
+  assert.deepEqual(unsupported, [{ mac: LIGHT, version: 0, reason: "device-too-old" }]);
 });
 
 test("heartbeats keep a relayed light alive past the timeout; silence expires it", async () => {
