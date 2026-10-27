@@ -1,8 +1,8 @@
 // AppState → board view-model. The single home for the board's "all states"
 // interpretation: it turns the sidecar snapshot (sidecar/src/ipc.ts, imported
 // type-only via the $ipc alias so it's erased from the bundle) into the props
-// the locked <Board> renders. Phase 5 feeds it the real snapshot; for now the
-// main route builds a mock AppState and runs it through here.
+// the locked <Board> renders. The page feeds it the live snapshot under Tauri, or the
+// mock board's ($lib/mock/board.svelte.ts) in a plain browser.
 import type { AppState, Device, Input } from "$ipc";
 import type {
 	BoardInput,
