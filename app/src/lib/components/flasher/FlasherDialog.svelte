@@ -289,6 +289,14 @@
 		if (job?.port == null) replug = true;
 		else start(pending);
 	}
+	/** Past a `settings-layout` failure: write the whole image, resetting the light's saved settings. */
+	function startFresh() {
+		const t = target();
+		if (!t) return;
+		flasher.reset();
+		fromAtStart = job?.fromVersion ?? null;
+		flasher.start(t, { keepSettings: false });
+	}
 	const leanUpdateFirst = $derived(!!newerUpdate && job?.kind === "light" && !current);
 	function finish(pick: boolean) {
 		const mac = newMac;
@@ -687,6 +695,15 @@
 									The new firmware {fw} is on the board, but it didn't reconnect over USB. Unplug it and
 									plug it back in; it should show up by itself.
 								</p>
+							{:else if st.failure === "settings-layout"}
+								<!-- nothing was written: the board stores its settings where this firmware doesn't -->
+								<h3>{name ?? "This light"}'s settings can't be kept</h3>
+								<p>
+									This firmware keeps a light's settings in a different place than the firmware on the
+									board, so installing it would lose them anyway. Nothing was installed. You can install
+									it and set {name ?? "the light"} up again afterwards: its Wi-Fi network and how it runs
+									unplugged are reset, while its input and brightness stay.
+								</p>
 							{:else if st.failure === "error"}
 								<h3>The install didn't finish</h3>
 								<p>
@@ -819,6 +836,10 @@
 					{#if st.status === "failed" && (st.failure === "rejoin" || st.failure === "wrong-chip")}
 						<!-- installing again can't fix either: the firmware is in place, or the board is the wrong kind -->
 						<Button onclick={() => (open = false)}>Close</Button>
+					{:else if st.status === "failed" && st.failure === "settings-layout"}
+						<!-- a plain retry would stop the same way: the way on is a full write -->
+						<Button variant="ghost" onclick={() => (open = false)}>Close</Button>
+						<Button onclick={startFresh}>Install and reset its settings</Button>
 					{:else}
 						<Button variant="ghost" onclick={() => (open = false)}>Close</Button>
 						<Button onclick={retry}>

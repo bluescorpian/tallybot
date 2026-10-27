@@ -262,8 +262,9 @@ export class MockBoard implements Backend {
 					unplugged: "unplugged",
 					wrongchip: "wrong-chip",
 					rejoin: "rejoin",
+					nvslayout: "settings-layout",
 				} as const
-			)[fail as "noresponse" | "busy" | "unplugged" | "wrongchip" | "rejoin"] as FlashFailure | undefined,
+			)[fail as "noresponse" | "busy" | "unplugged" | "wrongchip" | "rejoin" | "nvslayout"] as FlashFailure | undefined,
 			bundled: () => this.updater.bundledFirmware,
 			boardMac: (port) => this.#unflashed.find((b) => b.port === port)?.mac ?? null,
 		});

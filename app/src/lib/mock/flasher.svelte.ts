@@ -5,6 +5,7 @@ import {
 	canStart,
 	FLASH_STAGES,
 	type FlashFailure,
+	type FlashOptions,
 	type FlashStage,
 	type FlashState,
 	type FlashTarget,
@@ -43,6 +44,8 @@ const DETAIL: Record<FlashFailure, string> = {
 	"wrong-light": "The board on COM7 is 30:ae:a4:00:77:88",
 	"wrong-chip": "espflash: Chip provided with `-c/--chip` (esp32c3) does not match the detected chip (esp32)",
 	rejoin: "The firmware was installed, but 30:ae:a4:00:11:22 didn't reconnect over USB within 30 s.",
+	"settings-layout":
+		"The board keeps its settings at 0x9000-0xf000, but this firmware keeps them at 0x9000-0xe000; writing around them would lose them.",
 	error: "espflash: Flash command failed",
 };
 
@@ -76,10 +79,11 @@ export class MockFlasher implements Flasher {
 		return this.#bundled();
 	}
 
-	start(target: FlashTarget): void {
+	start(target: FlashTarget, options: FlashOptions = {}): void {
 		if (!canStart(this.state)) return;
 		this.#clear();
-		const fail = this.#failOnce;
+		// a full write has no layout to disagree with
+		const fail = this.#failOnce === "settings-layout" && options.keepSettings === false ? null : this.#failOnce;
 		this.#failOnce = null;
 		const enter = (stage: FlashStage) => {
 			this.state = { status: "running", target, stage, progress: 0, leavesBlank: leavesBlank(stage) };

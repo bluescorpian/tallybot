@@ -28,9 +28,28 @@ export type FlashStage = (typeof FLASH_STAGES)[number];
  *   wrong-light — the board on the port isn't the light being updated (nothing was written)
  *   wrong-chip  — the board isn't an ESP32-C3 TallyBot can install on (nothing was written)
  *   rejoin      — installed, but the light didn't come back over USB (its firmware is fine)
+ *   settings-layout — keeping the light's settings was asked for, but the board stores them where
+ *                 this firmware doesn't (nothing was written); a full write, which resets them, works
  *   error       — anything else; `detail` says what
  */
-export type FlashFailure = "no-response" | "port-busy" | "unplugged" | "wrong-light" | "wrong-chip" | "rejoin" | "error";
+export type FlashFailure =
+	| "no-response"
+	| "port-busy"
+	| "unplugged"
+	| "wrong-light"
+	| "wrong-chip"
+	| "rejoin"
+	| "settings-layout"
+	| "error";
+
+/** How to write the image. */
+export interface FlashOptions {
+	/**
+	 * Write around the light's saved settings (its NVS), the default. False writes the whole image,
+	 * which resets them: the way past a `settings-layout` failure.
+	 */
+	keepSettings?: boolean;
+}
 
 export type FlashState =
 	| { status: "idle" }
@@ -55,7 +74,7 @@ export interface Flasher {
 	 */
 	readonly firmwareVersion: string | null;
 	readonly state: FlashState;
-	start(target: FlashTarget): void;
+	start(target: FlashTarget, options?: FlashOptions): void;
 	/**
 	 * Stop a running flash. Mid-write it leaves the board blank (recoverable by flashing again);
 	 * the state's `leavesBlank` says when.

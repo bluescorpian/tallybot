@@ -10,7 +10,10 @@
 //! into the new firmware, its USB port re-enumerates, and the job waits for its HELLO.
 //!
 //! The light's settings survive a reflash: the merged image spans the NVS partition (as 0xFF
-//! padding), so the image is written around it, using the image's own partition table.
+//! padding), so the image is written around it, using the image's own partition table. That only
+//! keeps them if the board's NVS is where the image's is, so the board's own table is read first;
+//! when the two disagree the job stops before writing ([`Failure::SettingsLayout`]) and the UI
+//! offers a full write, which resets the settings.
 //!
 //! The job is state, not just a stream: [`FlashState`] holds the current or last job
 //! ([`FlashStatus`]), pushed as `"flash"` events on every change and pulled with `flash_status`,
@@ -52,11 +55,27 @@ pub struct FirmwareInfo {
 }
 
 /// The firmware this build installs, or null when it carries none (a dev build without
-/// `pnpm firmware:stage`).
+/// `pnpm firmware:stage`). A manifest that's there but unreadable also reads as none to the UI
+/// (it offers no flasher either way), but is logged as damaged rather than passed off as absent.
 #[tauri::command]
 pub fn firmware_info(app: AppHandle) -> Option<FirmwareInfo> {
-    let path = resource(&app, MANIFEST)?;
-    serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
+    match read_firmware_info(&app) {
+        Ok(info) => info,
+        Err(e) => {
+            crate::log::diag!("[flash] {e}");
+            None
+        }
+    }
+}
+
+/// The bundled manifest: `Ok(None)` when this build carries none, `Err` when it's damaged.
+fn read_firmware_info(app: &AppHandle) -> Result<Option<FirmwareInfo>, String> {
+    let Some(path) = resource(app, MANIFEST) else { return Ok(None) };
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| format!("The bundled firmware manifest {} can't be read: {e}", path.display()))?;
+    serde_json::from_str(&text)
+        .map(Some)
+        .map_err(|e| format!("The bundled firmware manifest {} is damaged: {e}", path.display()))
 }
 
 /// One flash job's progress, as the UI sees it. `stage` names follow the dialog's stages.
@@ -108,6 +127,10 @@ pub enum Failure {
     /// The firmware was written and the board reset, but the light never came back over USB. Its
     /// firmware is fine, so the fix is a replug, not another install.
     Rejoin,
+    /// Keeping the light's settings was asked for, but the board keeps them somewhere other than
+    /// the new firmware does: writing around them would orphan them. Nothing was written; a full
+    /// write (which resets the settings) is the way on.
+    SettingsLayout,
     Error,
 }
 
@@ -218,9 +241,11 @@ impl Drop for Job {
 
 /// Start flashing the board on `port`. `mac` is the light the user picked, if any: the flash
 /// stops before writing anything when the board on the port turns out to be another one.
-/// Progress arrives as `"flash"` events; this returns once the job has started.
+/// `keep_settings` (default true) writes around the light's NVS; false writes the whole image,
+/// resetting its settings. Progress arrives as `"flash"` events; this returns once the job has started.
 #[tauri::command]
-pub fn flash_start(app: AppHandle, port: String, mac: Option<String>) -> Result<(), String> {
+pub fn flash_start(app: AppHandle, port: String, mac: Option<String>, keep_settings: Option<bool>) -> Result<(), String> {
+    let keep_settings = keep_settings.unwrap_or(true);
     let state = app.state::<FlashState>();
     if state.running.swap(true, Ordering::SeqCst) {
         return Err("A firmware install is already running".into());
@@ -233,7 +258,7 @@ pub fn flash_start(app: AppHandle, port: String, mac: Option<String>) -> Result<
     thread::spawn(move || {
         let mut job =
             Job { app: job_app.clone(), port: port.clone(), target_mac: mac.clone(), released: false, reported: false };
-        let outcome = run(&job_app, &port, mac.as_deref(), &cancel);
+        let outcome = run(&job_app, &port, mac.as_deref(), keep_settings, &cancel);
         job.release_port();
         let event = match outcome {
             Ok(mac) => match wait_for_rejoin(&job_app, &mac) {
@@ -263,7 +288,13 @@ pub fn flash_cancel(app: AppHandle) {
 }
 
 /// The flash itself, up to and including the reset. Returns the board's MAC.
-fn run(app: &AppHandle, port: &str, expected: Option<&str>, cancel: &AtomicBool) -> Result<String, FlashEvent> {
+fn run(
+    app: &AppHandle,
+    port: &str,
+    expected: Option<&str>,
+    keep_settings: bool,
+    cancel: &AtomicBool,
+) -> Result<String, FlashEvent> {
     let failed = |stage, failure, detail: String| FlashEvent::Failed { stage, failure, detail };
     let emit = |stage, progress| publish(app, port, expected, FlashEvent::Running { stage, progress });
 
@@ -287,7 +318,20 @@ fn run(app: &AppHandle, port: &str, expected: Option<&str>, cancel: &AtomicBool)
         return give_up(&mut flasher, FlashEvent::Cancelled { stage: Stage::Connect });
     }
 
-    let segments = segments_around_nvs(&image);
+    let segments = if keep_settings {
+        let board = match read_partition_table(&mut flasher) {
+            Ok(table) => table,
+            Err(e) => {
+                return give_up(&mut flasher, failed(Stage::Connect, Failure::Error, format!("Couldn't read the board's partition table: {e}")));
+            }
+        };
+        if let Err(detail) = check_settings_layout(&image, &board) {
+            return give_up(&mut flasher, failed(Stage::Connect, Failure::SettingsLayout, detail));
+        }
+        segments_around_nvs(&image)
+    } else {
+        vec![Segment::new(0, &image)]
+    };
     let mut progress = Progress::new(app, port, expected, &segments, cancel);
     // espflash has no cancel hook, so a stop unwinds out of its progress callback (`Progress`).
     // Then, or on an error, reset the chip out of the loader: a stop before the first write boots
@@ -563,16 +607,67 @@ fn segments_around_nvs(image: &[u8]) -> Vec<Segment<'_>> {
     segments
 }
 
-/// ESP-IDF partition table: 32-byte entries at 0x8000, each `[0xAA 0x50][type][subtype]
+/// Where the partition table sits in flash, and its size (ESP-IDF's fixed layout).
+const TABLE_OFFSET: usize = 0x8000;
+const TABLE_LEN: usize = 0xC00;
+
+/// The partition table currently on the board, read through the flasher stub. espflash only
+/// reads into a file, so it goes through a temporary one.
+fn read_partition_table(flasher: &mut Flasher) -> Result<Vec<u8>, String> {
+    let path = std::env::temp_dir().join(format!("tallybot-partitions-{}.bin", std::process::id()));
+    let read = flasher.read_flash(TABLE_OFFSET as u32, TABLE_LEN as u32, 0x1000, 64, path.clone());
+    let bytes = read.map_err(|e| format!("espflash: {e}")).and_then(|()| std::fs::read(&path).map_err(|e| e.to_string()));
+    let _ = std::fs::remove_file(&path);
+    bytes
+}
+
+/// Whether writing around the image's NVS keeps the board's settings: true when the board has no
+/// partition table (nothing to keep) or keeps NVS exactly where the image does. Otherwise the
+/// reason, in words for the dialog's technical details.
+fn check_settings_layout(image: &[u8], board_table: &[u8]) -> Result<(), String> {
+    if !table_present(board_table) {
+        return Ok(());
+    }
+    let mut want = nvs_ranges(image);
+    let mut have = nvs_entries(board_table);
+    want.sort();
+    have.sort();
+    if want == have {
+        return Ok(());
+    }
+    let list = |r: &[(usize, usize)]| {
+        if r.is_empty() {
+            "none".to_string()
+        } else {
+            r.iter().map(|(s, e)| format!("{s:#x}-{e:#x}")).collect::<Vec<_>>().join(", ")
+        }
+    };
+    Err(format!(
+        "The board keeps its settings at {}, but this firmware keeps them at {}; writing around them would lose them.",
+        list(&have),
+        list(&want)
+    ))
+}
+
+/// Whether a partition table starts with a valid entry (erased or foreign flash doesn't).
+fn table_present(table: &[u8]) -> bool {
+    table.len() >= 2 && table[0] == 0xAA && table[1] == 0x50
+}
+
+/// The NVS partitions in a merged image's partition table (at 0x8000).
+fn nvs_ranges(image: &[u8]) -> Vec<(usize, usize)> {
+    image.get(TABLE_OFFSET..).map_or_else(Vec::new, |rest| nvs_entries(&rest[..rest.len().min(TABLE_LEN)]))
+}
+
+/// ESP-IDF partition table: 32-byte entries, each `[0xAA 0x50][type][subtype]
 /// [offset u32 LE][size u32 LE][label 16][flags u32]`, ended by an MD5 entry or erased flash.
 /// NVS is type 0x01 (data), subtype 0x02.
-fn nvs_ranges(image: &[u8]) -> Vec<(usize, usize)> {
-    const TABLE: usize = 0x8000;
+fn nvs_entries(table: &[u8]) -> Vec<(usize, usize)> {
     const ENTRY: usize = 32;
     let mut ranges = Vec::new();
-    for i in 0..(0xC00 / ENTRY) {
-        let at = TABLE + i * ENTRY;
-        let Some(e) = image.get(at..at + ENTRY) else { break };
+    for i in 0..(TABLE_LEN / ENTRY) {
+        let at = i * ENTRY;
+        let Some(e) = table.get(at..at + ENTRY) else { break };
         if e[0] != 0xAA || e[1] != 0x50 {
             break;
         }

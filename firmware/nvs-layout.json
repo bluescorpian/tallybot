@@ -1,0 +1,4 @@
+{
+  "//": "Where every light that shipped keeps its settings (the NVS partitions of huge_app.csv). The in-app flasher writes around these, so an image that moves them would orphan every light's Wi-Fi and transport on its next update: app/scripts/stage-firmware.mjs refuses to stage one. Change this only together with a plan for the lights already in the field.",
+  "nvs": [{ "offset": "0x9000", "size": "0x5000" }]
+}

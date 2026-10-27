@@ -4,7 +4,16 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { shortMac } from "$lib/boardState";
-import { canReset, canStart, type FlashFailure, type FlashStage, type FlashState, type FlashTarget, type Flasher } from "./flasher";
+import {
+	canReset,
+	canStart,
+	type FlashFailure,
+	type FlashOptions,
+	type FlashStage,
+	type FlashState,
+	type FlashTarget,
+	type Flasher,
+} from "./flasher";
 
 /** `flash.rs` `FlashEvent`. */
 type FlashEvent =
@@ -36,10 +45,14 @@ export class TauriFlasher implements Flasher {
 		if (status) this.#onStatus(status, true);
 	}
 
-	start(target: FlashTarget): void {
+	start(target: FlashTarget, options: FlashOptions = {}): void {
 		if (!canStart(this.state)) return;
 		this.state = { status: "running", target, stage: "connect", progress: 0, leavesBlank: false };
-		invoke("flash_start", { port: target.port, mac: target.kind === "light" ? target.mac : null }).catch(
+		invoke("flash_start", {
+			port: target.port,
+			mac: target.kind === "light" ? target.mac : null,
+			keepSettings: options.keepSettings ?? true,
+		}).catch(
 			(err) => {
 				this.state = { status: "failed", target, stage: "connect", failure: "error", detail: String(err), leavesBlank: false };
 			},

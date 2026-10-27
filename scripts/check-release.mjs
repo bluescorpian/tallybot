@@ -82,11 +82,19 @@ if (tag) {
     notes.push("no earlier v* tag: firmware/VERSION not compared");
   }
   if (previous) {
-    // What ends up in the image: everything under firmware/ but its docs, the unused test dir and
-    // legacy/ (the retired firmware, never built).
+    // What ends up in the image: everything under firmware/ but its docs, the test dir, legacy/
+    // (the retired firmware, never built) and nvs-layout.json (what staging checks the image against).
     const changed = git("diff", "--name-only", previous, tag, "--", "firmware")
       .split("\n")
-      .filter((f) => f && !/(^|\/)README(\.md)?$/.test(f) && !f.startsWith("firmware/test/") && !f.startsWith("firmware/legacy/") && f !== "firmware/.gitignore");
+      .filter(
+        (f) =>
+          f &&
+          !/(^|\/)README(\.md)?$/.test(f) &&
+          !f.startsWith("firmware/test/") &&
+          !f.startsWith("firmware/legacy/") &&
+          f !== "firmware/.gitignore" &&
+          f !== "firmware/nvs-layout.json",
+      );
     let previousVersion = null;
     try {
       previousVersion = git("show", `${previous}:firmware/VERSION`);

@@ -71,6 +71,13 @@ jobs:
       - name: Build dev + release envs
         working-directory: firmware
         run: pio run -e esp32-c3-devkitm-1 -e esp32-c3-release
+      # The in-app flasher writes around NVS, so an image that moves it (a core bump, a partition
+      # CSV edit) would orphan every shipped light's settings. stage-firmware.mjs refuses one, and
+      # one whose protocol version differs from the app's, here on the PR rather than at release.
+      - name: Release image keeps the shipped NVS layout
+        run: |
+          pio run -d firmware -e esp32-c3-release -t mergebin
+          node app/scripts/stage-firmware.mjs firmware/.pio/build/esp32-c3-release/tallybot-merged.bin "$RUNNER_TEMP/firmware"
       # The release env is what both flashers ship; the dev env's plain-text USB logs would
       # corrupt the host's COBS stream, so its flag must never reach the release env.
       - name: Release env frames every byte
