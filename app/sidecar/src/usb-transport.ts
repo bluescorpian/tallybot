@@ -101,15 +101,6 @@ export class UsbTransport extends EventEmitter {
   async start(): Promise<void> {}
   async stop(): Promise<void> {}
 
-  /** MACs of devices currently reachable over USB. */
-  connectedMacs(): string[] {
-    return [...this.#online.keys()];
-  }
-
-  has(mac: string): boolean {
-    return this.#online.has(mac);
-  }
-
   // ── Outbound (host → device) ───────────────────────────────────────────────────
 
   sendColor(mac: string, color: Color, brightness: number): boolean {

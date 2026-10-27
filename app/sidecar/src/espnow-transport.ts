@@ -126,11 +126,6 @@ export class EspNowTransport extends EventEmitter {
     this.#lights.clear();
   }
 
-  /** MACs of all lights currently linked through the bridge. */
-  connectedMacs(): string[] {
-    return [...this.#lights.keys()];
-  }
-
   // ── Outbound (host → light, via the bridge) ───────────────────────────────────────
 
   /**

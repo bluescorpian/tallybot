@@ -116,11 +116,6 @@ export class DeviceServer extends EventEmitter {
     return address ? address.port : this.#wantedDiscoveryPort;
   }
 
-  /** MACs of all currently-identified, connected devices. */
-  connectedMacs(): string[] {
-    return [...this.#byMac.keys()];
-  }
-
   /** Bind the TCP server and the UDP discovery socket, and start announcing. */
   async start(): Promise<void> {
     await Promise.all([this.#startTcp(), this.#startDiscovery()]);
