@@ -3,8 +3,9 @@
  *
  * This is the only file that touches the real `atem-connection` library; everything
  * downstream depends on the {@link AtemLike} seam, so the heavy dependency lives at
- * the very edge. It loads the saved config, constructs the four pieces, hands them
- * to the orchestrator, and manages start-up / shutdown. Hardware-free runs use the
+ * the very edge. It loads the saved config, picks the real ATEM, the log sink and the
+ * state path, hands them to {@link createSidecar} (`src/wiring.ts`, the composition root
+ * every entry shares), and manages start-up / shutdown. Hardware-free runs use the
  * `FakeAtem` instead (see `tools/`), which is why this file is deliberately
  * thin: there is almost nothing here that the orchestrator's tests don't already cover.
  *
@@ -20,16 +21,13 @@ import { format } from "node:util";
 
 import { Atem } from "atem-connection";
 
-import { SidecarApp } from "./app.ts";
 import { type AtemLike, AtemSource } from "./atem.ts";
-import { CompositeDeviceServer } from "./composite-device-server.ts";
-import { DeviceServer } from "./device-server.ts";
-import { EspNowTransport } from "./espnow-transport.ts";
 import { IpcBridge } from "./ipc-bridge.ts";
 import { RotatingLogFile } from "./log-file.ts";
 import { macTail } from "./protocol.ts";
+import { scanNetwork } from "./scanner.ts";
 import { ConfigStore } from "./store.ts";
-import { UsbTransport } from "./usb-transport.ts";
+import { createSidecar, runUntilClosed } from "./wiring.ts";
 
 /**
  * Where the persisted config lives. `TALLYBOT_STATE_FILE` wins (the Tauri shell sets it
@@ -94,50 +92,23 @@ async function main(): Promise<void> {
   const atem = new AtemSource(new Atem() as unknown as AtemLike);
   const ipc = new IpcBridge();
 
-  // The device server fans out over three transports, in priority order — USB wins when a MAC is
-  // on more than one (a light cabled for re-provisioning dedupes to its USB presence). The USB
-  // transport rides the same shell↔sidecar bridge `ipc` owns; the shell owns the port. The
-  // ESP-NOW transport rides *on top of* USB: relayed lights reach the host through the bridge's
-  // cable (see `docs/architecture.md`, "ESP-NOW transport").
-  const tcp = new DeviceServer();
-  const usb = new UsbTransport(ipc);
-  const espnow = new EspNowTransport(usb);
-  const deviceServer = new CompositeDeviceServer(
-    [
-      { transport: "usb", port: usb },
-      { transport: "wifi", port: tcp },
-      { transport: "espnow", port: espnow },
-    ],
-    usb,
-  );
+  const { app, deviceServer } = createSidecar({ atem, ipc, store, log: diag, scanNetwork });
 
   // Every device line, INFO included (a bridge's 1 s summary is what shows a relay outage), goes
   // to the file only: the UI already gets them as `deviceLog`, and at one a second they would
   // drown everything else on stderr.
   deviceServer.on("log", ({ mac, level, text }) => logFile.write(`[device ${macTail(mac)}] ${level}: ${text}`));
 
-  const app = new SidecarApp({ atem, deviceServer, provisioning: deviceServer, espnow, store, ipc, log: diag });
   await app.start();
   diag("tallybot sidecar started");
 
-  let shuttingDown = false;
-  const shutdown = (): void => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    void app
-      .stop()
-      .catch((err: unknown) => diag(`shutdown error: ${(err as Error).message}`))
-      .finally(() => {
-        diag("tallybot sidecar stopped");
-        exitAfterFlush(0);
-      });
-  };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
-  // The shell owns our stdin: EOF means it died or was killed without running its
-  // exit hook. Exit too, or the orphan keeps TCP 7000 / UDP 7001 bound and the next
-  // launch can't start.
-  process.stdin.on("end", shutdown);
+  runUntilClosed(app, {
+    log: diag,
+    onExit: () => {
+      diag("tallybot sidecar stopped");
+      exitAfterFlush(0);
+    },
+  });
 }
 
 main().catch((err: unknown) => {

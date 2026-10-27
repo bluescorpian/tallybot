@@ -1,8 +1,9 @@
 /**
  * Development entry point — the production sidecar wired to the fake ATEM.
  *
- * This is the dev-mode counterpart of `app/sidecar/src/main.ts`. It constructs the
- * exact same brain (orchestrator, engine, device server, store) and speaks the exact
+ * This is the dev-mode counterpart of `app/sidecar/src/main.ts`. It builds the brain
+ * through the same composition root (`createSidecar`, `app/sidecar/src/wiring.ts`), so
+ * the transports and orchestrator are wired identically by construction, and speaks the exact
  * same NDJSON-over-stdio protocol via the real {@link IpcBridge}, so the Tauri shell
  * can spawn it transparently in place of `main.ts`. The only differences: it drives a
  * Phase-1 {@link FakeAtem} instead of the real `atem-connection` library, marks every
@@ -24,14 +25,11 @@ import { join } from "node:path";
 
 import { FakeAtem } from "./atem-sim.ts";
 
-import { SidecarApp } from "../../app/sidecar/src/app.ts";
 import { AtemSource } from "../../app/sidecar/src/atem.ts";
-import { CompositeDeviceServer } from "../../app/sidecar/src/composite-device-server.ts";
-import { DeviceServer } from "../../app/sidecar/src/device-server.ts";
-import { EspNowTransport } from "../../app/sidecar/src/espnow-transport.ts";
 import { IpcBridge } from "../../app/sidecar/src/ipc-bridge.ts";
+import { scanNetwork } from "../../app/sidecar/src/scanner.ts";
 import { ConfigStore } from "../../app/sidecar/src/store.ts";
-import { UsbTransport } from "../../app/sidecar/src/usb-transport.ts";
+import { createSidecar, runUntilClosed } from "../../app/sidecar/src/wiring.ts";
 
 // stdout is the NDJSON IPC channel the Tauri shell parses; one stray library log line
 // on it corrupts the stream. Route console.log/info/debug to stderr (warn/error already
@@ -58,20 +56,10 @@ async function main(): Promise<void> {
   const atem = new AtemSource(fakeAtem);
   const ipc = new IpcBridge();
 
-  // Mirror production wiring so `cargo tauri dev` exercises USB provisioning too: a real
-  // ESP32-C3 on USB (relayed by the Rust shell) shows up alongside LAN devices — and the
-  // ESP-NOW transport, so a bridge + relayed lights work in dev exactly as in production.
-  const tcp = new DeviceServer();
-  const usb = new UsbTransport(ipc);
-  const espnow = new EspNowTransport(usb);
-  const deviceServer = new CompositeDeviceServer(
-    [
-      { transport: "usb", port: usb },
-      { transport: "wifi", port: tcp },
-      { transport: "espnow", port: espnow },
-    ],
-    usb,
-  );
+  // The same composition root as production (`wiring.ts`): USB provisioning, a real ESP32-C3 on
+  // USB (relayed by the Rust shell) alongside LAN devices, and the ESP-NOW transport, so a bridge
+  // + relayed lights work in dev exactly as in production.
+  const { app, deviceServer } = createSidecar({ atem, ipc, store, log: logToStderr, scanNetwork, dev: true });
 
   // Dev-only: mirror device TLOG lines (USB LOG frames) to stderr, so firmware-side events
   // (bridge enter/exit, session loss, every SET_COLOR rendered) show in the `cargo tauri dev`
@@ -79,8 +67,6 @@ async function main(): Promise<void> {
   deviceServer.on("log", ({ mac, level, text }) => {
     process.stderr.write(`[device ${mac.slice(-5)}] ${level}: ${text.endsWith("\n") ? text : `${text}\n`}`);
   });
-
-  const app = new SidecarApp({ atem, deviceServer, provisioning: deviceServer, espnow, store, ipc, dev: true });
 
   // Dev-only: drive the fake ATEM's program from the UI. Clicking an input takes it to
   // air; the previously-live input drops to preview (a swap, as on a real ME cut). This
@@ -98,21 +84,7 @@ async function main(): Promise<void> {
   atem.connect("simulated");
   process.stderr.write("tallybot sidecar (dev/fake-ATEM) started\n");
 
-  let shuttingDown = false;
-  const shutdown = (): void => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    void app
-      .stop()
-      .catch((err: unknown) => process.stderr.write(`shutdown error: ${(err as Error).message}\n`))
-      .finally(() => process.exit(0));
-  };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
-  // The shell owns our stdin: EOF means it died or was killed without running its
-  // exit hook. Exit too, or the orphan keeps TCP 7000 / UDP 7001 bound and the next
-  // launch can't start.
-  process.stdin.on("end", shutdown);
+  runUntilClosed(app, { log: logToStderr, onExit: () => process.exit(0) });
 }
 
 main().catch((err: unknown) => {
