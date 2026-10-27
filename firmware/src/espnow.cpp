@@ -16,6 +16,7 @@
 namespace {
 const uint8_t kBroadcast[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 constexpr unsigned long kHelloIntervalMs = 1000;  // HELLO cadence: awaiting the first frame, or relinking
+constexpr unsigned long kRadioRetryMs = 5000;     // a light whose radio failed to come up tries again this often
 
 // Which role owns the radio right now. The single RX callback dispatches on this — a frame
 // means "discovery/colour from the bridge" to a light, "discovery/relay-up" to a bridge.
@@ -99,6 +100,7 @@ void recvCb(const uint8_t* mac, const uint8_t* data, int len) { enqueue(mac, dat
 constexpr unsigned long kBridgeStatsMs = 1000;
 std::atomic<uint32_t> g_relayIn{0};    // RELAYs received from the host
 std::atomic<uint32_t> g_noPeer{0};     // RELAYs dropped: target isn't a registered peer
+std::atomic<uint32_t> g_peerFull{0};   // TALLY_FINDs dropped: the peer table is full (that light never links)
 std::atomic<uint32_t> g_txOk{0};       // esp_now_send accepted the frame
 std::atomic<uint32_t> g_txNoMem{0};    // ESP_ERR_ESPNOW_NO_MEM: the send queue is full
 std::atomic<uint32_t> g_txNotFound{0}; // ESP_ERR_ESPNOW_NOT_FOUND
@@ -137,10 +139,10 @@ uint32_t take(std::atomic<uint32_t>& counter) { return counter.exchange(0, std::
 
 // One line per window, zeros included: a window with no RELAYs in is itself the signal.
 void logBridgeStats() {
-  uint32_t in = take(g_relayIn), noPeer = take(g_noPeer), ok = take(g_txOk), noMem = take(g_txNoMem),
-           notFound = take(g_txNotFound), ifErr = take(g_txIfErr), other = take(g_txOther),
-           ackOk = take(g_ackOk), ackFail = take(g_ackFail);
-  bool trouble = noPeer || noMem || notFound || ifErr || other || ackFail;
+  uint32_t in = take(g_relayIn), noPeer = take(g_noPeer), peerFull = take(g_peerFull), ok = take(g_txOk),
+           noMem = take(g_txNoMem), notFound = take(g_txNotFound), ifErr = take(g_txIfErr),
+           other = take(g_txOther), ackOk = take(g_ackOk), ackFail = take(g_ackFail);
+  bool trouble = noPeer || peerFull || noMem || notFound || ifErr || other || ackFail;
   char lastFail[40] = "";
   if (ackFail)
     snprintf(lastFail, sizeof(lastFail), " last_ack_fail=%02x:%02x:%02x:%02x:%02x:%02x", g_ackFailMac[0],
@@ -148,15 +150,15 @@ void logBridgeStats() {
   char otherCode[24] = "";
   if (other) snprintf(otherCode, sizeof(otherCode), " (last 0x%lx)", (long)g_txOtherCode.load());
   TLOG(trouble ? LOG_LEVEL_WARN : LOG_LEVEL_INFO,
-       "bridge 1s: relay_in=%lu no_peer=%lu tx_ok=%lu no_mem=%lu not_found=%lu if_err=%lu other=%lu%s "
-       "ack_ok=%lu ack_fail=%lu%s\n",
-       (unsigned long)in, (unsigned long)noPeer, (unsigned long)ok, (unsigned long)noMem,
+       "bridge 1s: relay_in=%lu no_peer=%lu peer_full=%lu tx_ok=%lu no_mem=%lu not_found=%lu if_err=%lu "
+       "other=%lu%s ack_ok=%lu ack_fail=%lu%s\n",
+       (unsigned long)in, (unsigned long)noPeer, (unsigned long)peerFull, (unsigned long)ok, (unsigned long)noMem,
        (unsigned long)notFound, (unsigned long)ifErr, (unsigned long)other, otherCode,
        (unsigned long)ackOk, (unsigned long)ackFail, lastFail);
 }
 
 void resetBridgeStats(unsigned long now) {
-  for (auto* c : {&g_relayIn, &g_noPeer, &g_txOk, &g_txNoMem, &g_txNotFound, &g_txIfErr, &g_txOther,
+  for (auto* c : {&g_relayIn, &g_noPeer, &g_peerFull, &g_txOk, &g_txNoMem, &g_txNotFound, &g_txIfErr, &g_txOther,
                   &g_ackOk, &g_ackFail})
     c->store(0, std::memory_order_relaxed);
   g_lastBridgeStats = now;
@@ -180,20 +182,29 @@ unsigned long g_lastHeartbeat = 0;
 unsigned long g_lastRx = 0;   // the last frame from the bridge; across an outage, its start
 uint32_t g_linkTimeouts = 0;  // link timeouts since boot, reported with each relink
 bool g_inOutage = false;      // a link timed out and hasn't been restored yet (a relink reports it)
+bool g_radioFailed = false;   // the light's radio didn't come up; retried every kRadioRetryMs
+unsigned long g_lastRadioTry = 0;
 
 void sendRaw(const uint8_t* peer, const uint8_t* payload, size_t len) {
   // Fire-and-forget; the keyframe covers loss. The result only feeds the bridge's diagnostics.
   countSendResult(esp_now_send(peer, payload, len));
 }
 
-void radioUp() {
-  wifi::espnowRadioUp(g_channel);
-  if (esp_now_init() != ESP_OK) {
-    TLOG(LOG_LEVEL_ERROR, "esp_now_init failed\n");
-    return;
+// False if any step failed, with ESP-NOW left uninitialised: a caller must not take a role on a radio
+// that can't send or receive (a light would hunt forever, a bridge would report itself active).
+bool radioUp() {
+  if (!wifi::espnowRadioUp(g_channel)) return false;
+  esp_err_t err = esp_now_init();
+  if (err != ESP_OK) {
+    TLOG(LOG_LEVEL_ERROR, "esp_now_init failed: 0x%x\n", (unsigned)err);
+    return false;
   }
-  esp_now_register_recv_cb(recvCb);
-  esp_now_register_send_cb(sendCb);
+  if (esp_now_register_recv_cb(recvCb) != ESP_OK || esp_now_register_send_cb(sendCb) != ESP_OK) {
+    TLOG(LOG_LEVEL_ERROR, "esp_now callback registration failed\n");
+    esp_now_deinit();
+    return false;
+  }
+  return true;
 }
 
 void radioDown() {
@@ -239,6 +250,23 @@ bool adoptBridge(const uint8_t* mac) {
   return true;
 }
 
+// Put the radio back the way the device's own NVS transport mode needs it. main.cpp's per-tick
+// service then resumes the matching client (WiFi tally / ESP-NOW light) as needed.
+void restoreRadio() {
+  switch (settings::transportMode()) {
+    case TRANSPORT_WIFI:
+      wifi::enableRadio();
+      wifi::beginAssociation();  // resume the warm association
+      break;
+    case TRANSPORT_ESPNOW:
+      // main.cpp's startTransportClient restarts the light role; nothing to do here.
+      break;
+    default:  // TRANSPORT_NOTX
+      wifi::disableRadio();
+      break;
+  }
+}
+
 void sendHello() {
   uint8_t hello[32];
   sendRaw(g_bridge, hello, encodeHelloPayload(hello, g_mac));
@@ -255,22 +283,35 @@ void espnow::init(const uint8_t mac[6], MessageHandler onMessage) {
 
 void espnow::startLight() {
   g_channel = settings::espnowChannel();  // the persisted channel (default ESPNOW_CHANNEL)
-  radioUp();
   g_role = Role::LIGHT;
-  g_lastBroadcast = millis() - DISCOVERY_INTERVAL_MS;  // broadcast on the next tick
   g_haveBridge = false;  // radioUp() starts with an empty peer table
   g_inOutage = false;
+  g_lastRadioTry = millis();
+  if (!radioUp()) {
+    // No host can hear this light, so the LED is the only report: magenta blink ("check the
+    // device"), not the cyan hunt, which would look healthy. loopLight retries.
+    g_radioFailed = true;
+    ind::radioFailed();
+    return;
+  }
+  g_radioFailed = false;
+  g_lastBroadcast = millis() - DISCOVERY_INTERVAL_MS;  // broadcast on the next tick
   unlink();
   TLOG(LOG_LEVEL_INFO, "ESP-NOW light: searching for a bridge\n");
 }
 
 void espnow::stopLight() {
   if (g_role != Role::LIGHT) return;
-  radioDown();
+  if (!g_radioFailed) radioDown();
+  g_radioFailed = false;
   g_role = Role::NONE;
 }
 
 void espnow::loopLight(unsigned long now) {
+  if (g_radioFailed) {
+    if (millis() - g_lastRadioTry >= kRadioRetryMs) startLight();  // millis(): startLight stamps it, maybe after `now`
+    return;
+  }
   // Drain inbound frames first — any frame from the bridge is liveness + (usually) a SET_COLOR.
   Frame f;
   while (dequeue(&f)) {
@@ -355,7 +396,14 @@ void espnow::enterBridge(uint8_t channel) {
   if (g_role == Role::LIGHT) radioDown();  // a cabled ESPNOW light becomes a bridge — rebuild fresh
   g_channel = channel;      // pin to the SET_BRIDGE channel (runtime-only — not persisted)
   wifi::dropAssociation();  // a warm STA association would drag the radio off the pinned channel
-  radioUp();
+  if (!radioUp()) {
+    // Stay out of the bridge role so STATUS reports bridging=0 and the host doesn't count it as
+    // confirmed, and put the radio back the way the device's own mode needs it.
+    g_role = Role::NONE;
+    restoreRadio();
+    TLOG(LOG_LEVEL_ERROR, "Bridge mode failed: radio didn't come up on channel %u\n", channel);
+    return;
+  }
   resetBridgeStats(millis());  // the light role's sends also bumped the counters
   g_role = Role::BRIDGE;
   TLOG(LOG_LEVEL_INFO, "Bridge mode on (channel %u)\n", channel);
@@ -368,18 +416,7 @@ void espnow::exitBridge() {
   TLOG(LOG_LEVEL_INFO, "Bridge mode off; restoring radio per transport mode\n");
   // Restore the radio to what the device's own NVS transport mode dictates. main.cpp's
   // startTransportClient(..., Resume::RADIO_RESTORED) then resumes the matching client.
-  switch (settings::transportMode()) {
-    case TRANSPORT_WIFI:
-      wifi::enableRadio();
-      wifi::beginAssociation();  // resume the warm association
-      break;
-    case TRANSPORT_ESPNOW:
-      // main.cpp's startTransportClient restarts the light role; nothing to do here.
-      break;
-    default:  // TRANSPORT_NOTX
-      wifi::disableRadio();
-      break;
-  }
+  restoreRadio();
 }
 
 bool espnow::bridgeActive() { return g_role == Role::BRIDGE; }
@@ -397,7 +434,7 @@ void espnow::loopBridge(unsigned long now) {
   while (dequeue(&f)) {
     if (isDiscovery(f.data, f.len, DISCOVERY_REQUEST)) {  // a light is hunting — adopt + answer
       if (!addPeer(f.src)) {  // table full (ESP-NOW caps at 20) — no eviction in v1.3
-        TLOG(LOG_LEVEL_WARN, "Peer table full; dropping TALLY_FIND\n");
+        g_peerFull.fetch_add(1, std::memory_order_relaxed);  // reported in the 1 s stats line
         continue;
       }
       // Reply with the very same "TALLY_HERE:<port>" the UDP server sends (one format on both

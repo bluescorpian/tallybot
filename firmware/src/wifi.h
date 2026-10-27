@@ -14,7 +14,7 @@ void disableRadio();             // radio off (a No-TX device)
 
 // ESP-NOW radio helpers (v1.3). ESP-NOW runs on the STA interface (peer == HELLO MAC), so the
 // espnow module borrows these to bring the radio up the same way the WiFi path does.
-void espnowRadioUp(uint8_t channel);  // STA + country + full TX power, then pin the given ESP-NOW channel, no association
+bool espnowRadioUp(uint8_t channel);  // STA + country + full TX power, then pin the given ESP-NOW channel, no association; false if the channel didn't take
 void dropAssociation();  // disconnect STA (a warm association would drag the radio off the pinned channel)
 
 bool connected();

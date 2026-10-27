@@ -14,5 +14,6 @@ inline void searching() { led::setLocal(0, 255, 255, LOCAL_BRIGHTNESS, led::SLOW
 inline void unassigned() { led::setLocal(255, 255, 255, LOCAL_BRIGHTNESS, led::BREATHE); }     // white breathe
 inline void lostServer() { led::setLocal(COLOR_DISCONNECTED, LOCAL_BRIGHTNESS, led::STEADY); } // steady blue
 inline void setup() { led::setLocal(COLOR_SETUP, LOCAL_BRIGHTNESS, led::STEADY); }             // magenta
+inline void radioFailed() { led::setLocal(COLOR_SETUP, LOCAL_BRIGHTNESS, led::FAST_BLINK); } // magenta blink
 
 }  // namespace ind

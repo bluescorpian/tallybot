@@ -183,7 +183,7 @@ void wifi::enableRadio() {
 
 void wifi::disableRadio() { WiFi.mode(WIFI_OFF); }
 
-void wifi::espnowRadioUp(uint8_t channel) {
+bool wifi::espnowRadioUp(uint8_t channel) {
   WiFi.mode(WIFI_STA);
   // No association — ESP-NOW must own a pinned channel, not chase an AP. Auto-reconnect must be
   // off too: a device with saved creds would otherwise silently re-associate behind our back and
@@ -192,7 +192,12 @@ void wifi::espnowRadioUp(uint8_t channel) {
   WiFi.disconnect();
   setCountry();
   WiFi.setTxPower(WIFI_POWER_19_5dBm);  // full power, matching the WiFi path
-  esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+  esp_err_t err = esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+  if (err != ESP_OK) {
+    TLOG(LOG_LEVEL_ERROR, "esp_wifi_set_channel(%u) failed: 0x%x\n", channel, (unsigned)err);
+    return false;
+  }
+  return true;
 }
 
 void wifi::dropAssociation() {
