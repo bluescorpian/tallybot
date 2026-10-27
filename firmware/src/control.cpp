@@ -14,17 +14,46 @@ namespace {
 constexpr unsigned long kEmitIntervalMs = 500;  // change-detector tick while a host is cabled
 constexpr int kRssiDeltaDbm = 5;                 // RSSI move that counts as a reportable change
 
+// Everything STATUS reports. A new field goes here, in statusSnapshot(), in sameStatus() and in the
+// encoder call in emit().
 struct Snapshot {
-  bool valid = false;
   uint8_t transport = 0;
   uint8_t wifiState = 0;
   int8_t rssi = 0;
   char ssid[33] = {0};
-  uint8_t channel = 0;
+  uint8_t channel = 0;  // the device's stored ESP-NOW channel (default 1)
   bool bridge = false;
 };
-Snapshot g_last;
+
+Snapshot statusSnapshot() {
+  Snapshot s;
+  s.transport = settings::transportMode();
+  s.wifiState = wifi::state();
+  s.rssi = wifi::rssi();
+  strncpy(s.ssid, wifi::ssid(), sizeof(s.ssid) - 1);
+  s.channel = settings::espnowChannel();
+  s.bridge = espnow::bridgeActive();
+  return s;
+}
+
+// Equal for reporting purposes: RSSI jitter under kRssiDeltaDbm is not a change.
+bool sameStatus(const Snapshot& a, const Snapshot& b) {
+  return a.transport == b.transport && a.wifiState == b.wifiState &&
+         abs((int)a.rssi - (int)b.rssi) < kRssiDeltaDbm && strcmp(a.ssid, b.ssid) == 0 &&
+         a.channel == b.channel && a.bridge == b.bridge;
+}
+
+bool g_haveLast = false;
+Snapshot g_last;  // the last STATUS sent, for the change detector
 unsigned long g_lastEmit = 0;
+
+void emit(const Snapshot& s) {
+  uint8_t payload[39];  // 4-byte head + 1-byte len + up to 32 SSID bytes + channel + bridging
+  usb::send(payload, encodeStatusPayload(payload, s.transport, s.wifiState, s.rssi, s.ssid,
+                                         (uint8_t)strlen(s.ssid), s.channel, s.bridge ? 1 : 0));
+  g_last = s;
+  g_haveLast = true;
+}
 
 // The last SET_COLOR colour logged. The server re-asserts the current colour every keyframe (4 Hz)
 // and streams breathe frames at 10 Hz with a new brightness each, so only an RGB change is logged:
@@ -89,39 +118,13 @@ void control::dispatch(const ServerMessage& msg) {
   }
 }
 
-void control::emitStatus() {
-  uint8_t transport = settings::transportMode();
-  uint8_t ws = wifi::state();
-  int8_t rssi = wifi::rssi();
-  const char* ssid = wifi::ssid();
-  uint8_t channel = settings::espnowChannel();  // the device's stored ESP-NOW channel (default 1)
-  bool bridge = espnow::bridgeActive();
-  uint8_t payload[39];  // 4-byte head + 1-byte len + up to 32 SSID bytes + channel + bridging
-  usb::send(payload, encodeStatusPayload(payload, transport, ws, rssi, ssid,
-                                         (uint8_t)strlen(ssid), channel, bridge ? 1 : 0));
-  g_last.valid = true;
-  g_last.transport = transport;
-  g_last.wifiState = ws;
-  g_last.rssi = rssi;
-  strncpy(g_last.ssid, ssid, sizeof(g_last.ssid) - 1);
-  g_last.ssid[sizeof(g_last.ssid) - 1] = '\0';
-  g_last.channel = channel;
-  g_last.bridge = bridge;
-}
+void control::emitStatus() { emit(statusSnapshot()); }
 
 void control::maybeEmitStatus(unsigned long now) {
   if (now - g_lastEmit < kEmitIntervalMs) return;
   g_lastEmit = now;
   if (!usb::hostPresent()) return;  // no host listening — don't stream into the void
-  uint8_t transport = settings::transportMode();
-  uint8_t ws = wifi::state();
-  int8_t rssi = wifi::rssi();
-  const char* ssid = wifi::ssid();
-  uint8_t channel = settings::espnowChannel();
-  bool bridge = espnow::bridgeActive();
-  if (g_last.valid && ws == g_last.wifiState && transport == g_last.transport &&
-      abs((int)rssi - (int)g_last.rssi) < kRssiDeltaDbm && strcmp(g_last.ssid, ssid) == 0 &&
-      channel == g_last.channel && bridge == g_last.bridge)
-    return;
-  emitStatus();
+  Snapshot current = statusSnapshot();
+  if (g_haveLast && sameStatus(current, g_last)) return;
+  emit(current);
 }
