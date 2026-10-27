@@ -23,7 +23,8 @@ import {
   Transport,
   WifiState,
   getStatusPayload,
-  isSupportedVersion,
+  type UnsupportedReason,
+  deviceCompatibility,
   logLevelName,
   setBridgePayload,
   setColorPayload,
@@ -73,7 +74,7 @@ const WIFI_STATE_NAME: Record<number, DeviceWifiState> = {
 export interface UsbTransport {
   on(event: "deviceConnected", listener: (info: { mac: string; version: number }) => void): this;
   on(event: "deviceDisconnected", listener: (info: { mac: string }) => void): this;
-  on(event: "deviceUnsupported", listener: (info: { mac: string; version: number }) => void): this;
+  on(event: "deviceUnsupported", listener: (info: { mac: string; version: number; reason: UnsupportedReason }) => void): this;
   on(event: "firmware", listener: (info: { mac: string; version: string }) => void): this;
   on(event: "status", listener: (status: UsbStatus) => void): this;
   on(event: "log", listener: (entry: { mac: string; level: "info" | "warn" | "error"; text: string }) => void): this;
@@ -165,8 +166,9 @@ export class UsbTransport extends EventEmitter {
     switch (message.type) {
       case "usbDeviceConnected": {
         this.#online.set(message.mac, message.version);
-        if (!isSupportedVersion(message.version)) {
-          this.emit("deviceUnsupported", { mac: message.mac, version: message.version });
+        const compatibility = deviceCompatibility(message.version);
+        if (compatibility !== "supported") {
+          this.emit("deviceUnsupported", { mac: message.mac, version: message.version, reason: compatibility });
         }
         this.emit("deviceConnected", { mac: message.mac, version: message.version });
         break;

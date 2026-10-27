@@ -23,7 +23,7 @@ import { EventEmitter } from "node:events";
 
 import type { DeviceServerPort, ProvisioningPort } from "./app.ts";
 import type { DeviceTransport } from "./ipc.ts";
-import type { Color } from "./protocol.ts";
+import type { Color, UnsupportedReason } from "./protocol.ts";
 import type { UsbStatus, UsbTransport } from "./usb-transport.ts";
 
 /** One transport plugged into the composite, with the tag devices on it carry. */
@@ -36,7 +36,7 @@ export interface CompositeMember {
 export interface CompositeDeviceServer {
   on(event: "deviceConnected", listener: (info: { mac: string; version: number }) => void): this;
   on(event: "deviceDisconnected", listener: (info: { mac: string }) => void): this;
-  on(event: "deviceUnsupported", listener: (info: { mac: string; version: number }) => void): this;
+  on(event: "deviceUnsupported", listener: (info: { mac: string; version: number; reason: UnsupportedReason }) => void): this;
   on(event: "firmware", listener: (info: { mac: string; version: string }) => void): this;
   on(event: "status", listener: (status: UsbStatus) => void): this;
   on(event: "log", listener: (entry: { mac: string; level: "info" | "warn" | "error"; text: string }) => void): this;

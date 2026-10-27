@@ -26,7 +26,8 @@ import {
   encodeDiscoveryResponse,
   encodeSetColor,
   isDiscoveryRequest,
-  isSupportedVersion,
+  type UnsupportedReason,
+  deviceCompatibility,
   decodeDeviceMessage,
 } from "./protocol.ts";
 
@@ -65,7 +66,7 @@ export interface DeviceServer {
   on(event: "listening", listener: () => void): this;
   on(event: "deviceConnected", listener: (info: { mac: string; version: number }) => void): this;
   on(event: "deviceDisconnected", listener: (info: { mac: string }) => void): this;
-  on(event: "deviceUnsupported", listener: (info: { mac: string; version: number }) => void): this;
+  on(event: "deviceUnsupported", listener: (info: { mac: string; version: number; reason: UnsupportedReason }) => void): this;
   on(event: "firmware", listener: (info: { mac: string; version: string }) => void): this;
   /** Part of the {@link DeviceServerPort} contract; never emitted — a TCP device has no log channel. */
   on(event: "log", listener: (entry: { mac: string; level: "info" | "warn" | "error"; text: string }) => void): this;
@@ -73,7 +74,7 @@ export interface DeviceServer {
   emit(event: "listening"): boolean;
   emit(event: "deviceConnected", info: { mac: string; version: number }): boolean;
   emit(event: "deviceDisconnected", info: { mac: string }): boolean;
-  emit(event: "deviceUnsupported", info: { mac: string; version: number }): boolean;
+  emit(event: "deviceUnsupported", info: { mac: string; version: number; reason: UnsupportedReason }): boolean;
   emit(event: "firmware", info: { mac: string; version: string }): boolean;
   emit(event: "error", err: Error): boolean;
 }
@@ -222,7 +223,8 @@ export class DeviceServer extends EventEmitter {
     connection.mac = mac;
     this.#byMac.set(mac, connection);
 
-    if (!isSupportedVersion(version)) this.emit("deviceUnsupported", { mac, version });
+    const compatibility = deviceCompatibility(version);
+    if (compatibility !== "supported") this.emit("deviceUnsupported", { mac, version, reason: compatibility });
     this.emit("deviceConnected", { mac, version });
   }
 

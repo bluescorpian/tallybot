@@ -11,6 +11,7 @@
 	// `--signal` is activity (the wired chip), never a tally state.
 	import { Switch } from "$lib/components/ui/switch/index.js";
 	import type { DeviceTransport } from "$ipc";
+	import { supportsEspNow } from "$protocol";
 	import type { ProvisionedMode } from "$lib/components/board/types";
 	import PopoverPageHeader from "$lib/components/board/PopoverPageHeader.svelte";
 	import ChevronRight from "@lucide/svelte/icons/chevron-right";
@@ -21,12 +22,6 @@
 	import Check from "@lucide/svelte/icons/check";
 	import Network from "@lucide/svelte/icons/network";
 	import { TRANSPORT_MODES, BRIDGE_LABEL, BRIDGE_DESC } from "./transportModes";
-
-	// Devices reporting this protocol version (HELLO) understand the v1.3 ESP-NOW
-	// affordances (SET_TRANSPORT 2, SET_BRIDGE). Below it, the ESP-NOW row stays
-	// disabled ("Soon") and the bridge section is hidden — the wizard is filtered by
-	// device capability (spec → Versioning).
-	const ESPNOW_MIN_VERSION = 3;
 
 	interface Props {
 		label: string;
@@ -60,10 +55,11 @@
 	}: Props = $props();
 
 	const wired = $derived(transport === "usb");
-	// v1.3 lives behind a firmware-capability gate: a device that's never connected
-	// (null version) is treated as too old, matching the sidecar's "never send the
-	// new frames to older devices" rule.
-	const espnowCapable = $derived((protocolVersion ?? 0) >= ESPNOW_MIN_VERSION);
+	// v1.3 lives behind a firmware-capability gate (`supportsEspNow`, the same rule the
+	// sidecar applies before sending the ESP-NOW frames): below it the ESP-NOW row stays
+	// disabled ("Soon") and the bridge section is hidden. A device that's never connected
+	// (null version) is treated as too old.
+	const espnowCapable = $derived(protocolVersion !== null && supportsEspNow(protocolVersion));
 
 	// Mode list — data-driven so v1.3 appends a row, not a button. Each row leads with the
 	// situation it's for (the reader knows their venue, not the radio protocol) and names

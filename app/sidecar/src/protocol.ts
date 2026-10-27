@@ -146,16 +146,33 @@ export const PROTOCOL_VERSION = {
   CURRENT: 3,
   /** The oldest device version the server still handles; below this it warns. */
   MIN_SUPPORTED: 1,
+  /**
+   * The first version that understands the ESP-NOW frames (SET_TRANSPORT(ESPNOW), SET_BRIDGE,
+   * RELAY). The app never sends them to, or offers ESP-NOW for, an older device.
+   */
+  ESPNOW: 3,
 } as const;
 
 /**
- * True when the server can speak this device's dialect. Devices in
- * [MIN_SUPPORTED, CURRENT] are handled (the server adapts down to older ones);
- * below MIN_SUPPORTED the server surfaces an "update firmware" warning, and a
- * version newer than CURRENT needs a server update before it's understood.
+ * Whether the server can speak this device's dialect, and if not, which side is stale.
+ * Devices in [MIN_SUPPORTED, CURRENT] are handled (the server adapts down to older ones);
+ * below MIN_SUPPORTED the light needs a firmware update, and a version newer than CURRENT
+ * needs this app updated before it's understood.
  */
-export function isSupportedVersion(version: number): boolean {
-  return version >= PROTOCOL_VERSION.MIN_SUPPORTED && version <= PROTOCOL_VERSION.CURRENT;
+export type DeviceCompatibility = "supported" | "device-too-old" | "app-too-old";
+
+export function deviceCompatibility(version: number): DeviceCompatibility {
+  if (version < PROTOCOL_VERSION.MIN_SUPPORTED) return "device-too-old";
+  if (version > PROTOCOL_VERSION.CURRENT) return "app-too-old";
+  return "supported";
+}
+
+/** Why a device is unsupported: the {@link DeviceCompatibility} values other than "supported". */
+export type UnsupportedReason = Exclude<DeviceCompatibility, "supported">;
+
+/** True when a device at this protocol version understands the ESP-NOW frames. */
+export function supportsEspNow(version: number): boolean {
+  return version >= PROTOCOL_VERSION.ESPNOW;
 }
 
 // ── Colours ──────────────────────────────────────────────────────────────────

@@ -24,7 +24,7 @@ import {
 } from "./engine.ts";
 import type { DeviceConfig } from "./store.ts";
 import type { DeviceTransport, DeviceWifiState, SidecarEvent, SourceScanHit, UiCommand } from "./ipc.ts";
-import { type Color, DEFAULT_BRIGHTNESS, macTail } from "./protocol.ts";
+import { type Color, DEFAULT_BRIGHTNESS, type UnsupportedReason, macTail, supportsEspNow } from "./protocol.ts";
 import { provisionedModeName, transportModeValue } from "./usb-transport.ts";
 
 // ── Collaborator ports (the concrete classes satisfy these structurally) ─────────
@@ -35,7 +35,7 @@ export interface DeviceServerPort {
   sendColor(mac: string, color: Color, brightness: number): boolean;
   on(event: "deviceConnected", listener: (info: { mac: string; version: number }) => void): unknown;
   on(event: "deviceDisconnected", listener: (info: { mac: string }) => void): unknown;
-  on(event: "deviceUnsupported", listener: (info: { mac: string; version: number }) => void): unknown;
+  on(event: "deviceUnsupported", listener: (info: { mac: string; version: number; reason: UnsupportedReason }) => void): unknown;
   /** The firmware version a device reports right after its HELLO (firmware that predates this never does). */
   on(event: "firmware", listener: (info: { mac: string; version: string }) => void): unknown;
   /** Device-keyed diagnostic lines: a USB device's own LOG frames, or a transport's notes on a device. */
@@ -323,8 +323,14 @@ export class SidecarApp {
       this.#log(`device disconnected: ${mac}`);
       this.#sync();
     });
-    this.#server.on("deviceUnsupported", ({ mac, version }) => {
-      this.#ipc.notice("warn", `Tally ${macTail(mac)} runs old firmware (protocol v${version}); update it.`);
+    this.#server.on("deviceUnsupported", ({ mac, version, reason }) => {
+      // The stale side is the one to update: a light behind this app gets reflashed, but a light
+      // ahead of it (flashed by a newer TallyBot) can only be understood once the app catches up.
+      const message =
+        reason === "app-too-old"
+          ? `Tally ${macTail(mac)} runs newer firmware (protocol v${version}) than this TallyBot; update TallyBot in Settings → About → Updates.`
+          : `Tally ${macTail(mac)} runs old firmware (protocol v${version}); update it.`;
+      this.#ipc.notice("warn", message);
     });
     this.#server.on("firmware", ({ mac, version }) => {
       if (this.#firmware.get(mac) === version) return;
@@ -420,7 +426,15 @@ export class SidecarApp {
           this.#ipc.notice("info", `Tally ${macTail(command.mac, 2)} isn't on USB — can't provision WiFi.`);
         }
         break;
-      case "setTransport":
+      case "setTransport": {
+        // The sidecar's backstop for the UI's ESP-NOW gate: never send SET_TRANSPORT(ESPNOW) to a
+        // light whose firmware predates it. (An unknown version means it isn't connected, which
+        // the USB send below already refuses.)
+        const version = this.#online.get(command.mac);
+        if (command.mode === "espnow" && version !== undefined && !supportsEspNow(version)) {
+          this.#ipc.notice("info", `Tally ${macTail(command.mac, 2)} runs firmware too old for ESP-NOW — can't switch it.`);
+          break;
+        }
         if (this.#provisioning.setTransport(command.mac, transportModeValue(command.mode))) {
           // No-TX has no network — drop any remembered SSID so a re-plug doesn't show a stale one.
           if (command.mode === "notx") await this.#store.setSsid(command.mac, null);
@@ -429,6 +443,7 @@ export class SidecarApp {
           this.#ipc.notice("info", `Tally ${macTail(command.mac, 2)} isn't on USB — can't set its transport.`);
         }
         break;
+      }
       case "setBridge":
         await this.#designateBridge(command.mac);
         break;
@@ -443,9 +458,6 @@ export class SidecarApp {
         break;
     }
   }
-
-  /** Minimum protocol version that understands SET_BRIDGE / RELAY (the v1.3 frames). */
-  static readonly #BRIDGE_MIN_VERSION = 3;
 
   /**
    * Apply a new bridge designation (or clear it, with null): persist it, leave the previous
@@ -479,12 +491,12 @@ export class SidecarApp {
   }
 
   /**
-   * Send SET_BRIDGE to a device, but only when it's USB-connected and reports version ≥ 3 (the
-   * floor for the v1.3 frames). A no-op otherwise — an offline or old device simply can't be a
+   * Send SET_BRIDGE to a device, but only when it's USB-connected and its version
+   * {@link supportsEspNow}. A no-op otherwise — an offline or old device simply can't be a
    * bridge, and the designation is re-asserted when it next connects with a new-enough version.
    */
   #sendBridge(mac: string, enabled: boolean, version: number | undefined): void {
-    if (version === undefined || version < SidecarApp.#BRIDGE_MIN_VERSION) return;
+    if (version === undefined || !supportsEspNow(version)) return;
     this.#provisioning.setBridge(mac, enabled);
   }
 

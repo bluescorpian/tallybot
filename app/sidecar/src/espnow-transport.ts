@@ -29,8 +29,9 @@ import { HEARTBEAT_TIMEOUT_MS } from "./device-server.ts";
 import {
   type Color,
   type LogLevelName,
+  type UnsupportedReason,
+  deviceCompatibility,
   decodeDeviceMessage,
-  isSupportedVersion,
   logLevelName,
   relayPayload,
   setColorPayload,
@@ -66,7 +67,7 @@ interface RelayedLight {
 export interface EspNowTransport {
   on(event: "deviceConnected", listener: (info: { mac: string; version: number }) => void): this;
   on(event: "deviceDisconnected", listener: (info: { mac: string }) => void): this;
-  on(event: "deviceUnsupported", listener: (info: { mac: string; version: number }) => void): this;
+  on(event: "deviceUnsupported", listener: (info: { mac: string; version: number; reason: UnsupportedReason }) => void): this;
   on(event: "firmware", listener: (info: { mac: string; version: string }) => void): this;
   on(event: "log", listener: (entry: { mac: string; level: LogLevelName; text: string }) => void): this;
   on(event: "error", listener: (err: Error) => void): this;
@@ -184,8 +185,9 @@ export class EspNowTransport extends EventEmitter {
     if (message.kind === "hello") {
       this.#unknownHeartbeats.delete(srcMac); // known now; a later orphan HEARTBEAT is news again
       this.#lights.set(srcMac, { version: message.version, lastSeen: this.#now() });
-      if (!isSupportedVersion(message.version)) {
-        this.emit("deviceUnsupported", { mac: srcMac, version: message.version });
+      const compatibility = deviceCompatibility(message.version);
+      if (compatibility !== "supported") {
+        this.emit("deviceUnsupported", { mac: srcMac, version: message.version, reason: compatibility });
       }
       // Re-announce on every HELLO (including a re-link), matching the TCP server — the
       // orchestrator re-pushes colour on a reconnect.
