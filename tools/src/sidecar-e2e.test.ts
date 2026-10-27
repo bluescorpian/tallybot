@@ -3,9 +3,9 @@
  * in sight.
  *
  * The actual orchestrator, tally engine, device server, ATEM adapter, store and IPC bridge are
- * wired together exactly as `main.ts` wires them — only the real `Atem` is swapped
- * for the `FakeAtem`, and real `TallyClient`s stand in for ESP32 devices over genuine
- * TCP/UDP. We drive program/preview on the fake switcher and assign devices through
+ * built by the same `createSidecar` composition root `main.ts` uses — only the real `Atem`
+ * is swapped for the `FakeAtem`, the stack runs the TCP transport alone (on ephemeral
+ * ports), and real `TallyClient`s stand in for ESP32 devices over genuine TCP/UDP. We drive program/preview on the fake switcher and assign devices through
  * the IPC bridge, then assert the right colours actually reach the right clients on
  * the wire — and that assignments survive a restart.
  */
@@ -21,11 +21,12 @@ import { PassThrough } from "node:stream";
 import { FakeAtem } from "./atem-sim.ts";
 import { TallyClient, discoverServer } from "./tally-client.ts";
 
-import { SidecarApp } from "../../app/sidecar/src/app.ts";
+import type { SidecarApp } from "../../app/sidecar/src/app.ts";
 import { AtemSource } from "../../app/sidecar/src/atem.ts";
-import { DeviceServer } from "../../app/sidecar/src/device-server.ts";
+import type { DeviceServer } from "../../app/sidecar/src/device-server.ts";
 import { ConfigStore } from "../../app/sidecar/src/store.ts";
 import { IpcBridge } from "../../app/sidecar/src/ipc-bridge.ts";
+import { createSidecar } from "../../app/sidecar/src/wiring.ts";
 import { type AppState, type UiCommand, parseEvent, serializeMessage } from "../../app/sidecar/src/ipc.ts";
 import { type Color, COLORS, SETUP_COLOR } from "../../app/sidecar/src/protocol.ts";
 
@@ -42,12 +43,11 @@ interface Stack {
   stop: () => Promise<void>;
 }
 
-/** Wire the whole sidecar exactly as main.ts does, but with the FakeAtem and ephemeral ports. */
+/** Build the sidecar through main.ts's `createSidecar`, TCP-only, with the FakeAtem and ephemeral ports. */
 async function buildStack(stateFile: string): Promise<Stack> {
   const store = await ConfigStore.load(stateFile);
   const atem = new FakeAtem({ inputCount: 4, programInput: 1, previewInput: 2 });
   const source = new AtemSource(atem);
-  const server = new DeviceServer({ tcpPort: 0, discoveryPort: 0, host: LOCAL });
 
   const input = new PassThrough();
   const output = new PassThrough();
@@ -66,7 +66,16 @@ async function buildStack(stateFile: string): Promise<Stack> {
     }
   });
 
-  const app = new SidecarApp({ atem: source, deviceServer: server, store, ipc, log: () => {} });
+  const { app, tcp: server } = createSidecar({
+    atem: source,
+    ipc,
+    store,
+    log: () => {},
+    scanNetwork: () => Promise.resolve([]), // no test scans; never open sockets on the LAN
+    transports: ["wifi"],
+    tcp: { tcpPort: 0, discoveryPort: 0, host: LOCAL },
+  });
+  if (!server) throw new Error("the wifi transport is selected, so the TCP server exists");
   await app.start();
 
   return {

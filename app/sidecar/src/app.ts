@@ -24,7 +24,6 @@ import {
 } from "./engine.ts";
 import type { DeviceConfig } from "./store.ts";
 import type { DeviceTransport, DeviceWifiState, SidecarEvent, SourceScanHit, UiCommand } from "./ipc.ts";
-import { scanNetwork } from "./scanner.ts";
 import { type Color, DEFAULT_BRIGHTNESS, macTail } from "./protocol.ts";
 import { provisionedModeName, transportModeValue } from "./usb-transport.ts";
 
@@ -47,7 +46,7 @@ export interface DeviceServerPort {
 /**
  * The USB-only provisioning + diagnostics surface, kept separate from the
  * transport-agnostic {@link DeviceServerPort} so the tally path stays clean. The
- * {@link CompositeDeviceServer} implements both; tests that don't exercise USB omit it.
+ * {@link CompositeDeviceServer} implements both (its methods return false for a MAC not on USB).
  */
 export interface ProvisioningPort {
   /** Which transport currently serves a connected MAC (drives the wired indicator). */
@@ -80,8 +79,8 @@ export interface ProvisioningPort {
 
 /**
  * The seam the orchestrator uses to tell the ESP-NOW transport which bridge MAC to route relayed
- * colours through. Kept narrow + optional so tests that don't exercise ESP-NOW omit it; the
- * production {@link EspNowTransport} satisfies it.
+ * colours through. Kept narrow so tests fake it in one line; the production
+ * {@link EspNowTransport} satisfies it.
  */
 export interface EspNowBridgePort {
   /** Point outbound RELAY frames at this bridge MAC (null = no bridge designated). */
@@ -193,13 +192,13 @@ function breatheBrightness(elapsedMs: number, base: number): number {
 export interface SidecarAppDeps {
   atem: AtemSourcePort;
   deviceServer: DeviceServerPort;
-  /** USB provisioning + diagnostics (optional; the composite server supplies it in production). */
-  provisioning?: ProvisioningPort;
+  /** USB provisioning + diagnostics (the composite server supplies it; see `wiring.ts`). */
+  provisioning: ProvisioningPort;
   /**
-   * The ESP-NOW transport's bridge-designation seam (optional; production supplies the
-   * {@link EspNowTransport}). Told which bridge MAC to route relayed colours through.
+   * The ESP-NOW transport's bridge-designation seam (the {@link EspNowTransport}, or a no-op
+   * when it isn't running). Told which bridge MAC to route relayed colours through.
    */
-  espnow?: EspNowBridgePort;
+  espnow: EspNowBridgePort;
   store: StorePort;
   ipc: IpcPort;
   /** Where to log diagnostics (defaults to stderr; stdout is protocol-only). */
@@ -216,8 +215,8 @@ export interface SidecarAppDeps {
   refreshClock?: AnimationClock;
   /** Override the refresh period in ms (default {@link REFRESH_PERIOD_MS}). */
   refreshMs?: number;
-  /** The subnet sweep behind the settings "Scan" (injectable so tests don't open sockets). */
-  scanNetwork?: (log: (message: string) => void) => Promise<SourceScanHit[]>;
+  /** The subnet sweep behind the settings "Scan" (injected so tests don't open sockets). */
+  scanNetwork: (log: (message: string) => void) => Promise<SourceScanHit[]>;
   /**
    * Mark every snapshot as dev mode (running against the fake ATEM). The UI reads this
    * to make the board's input keys clickable. Set only by the fake-ATEM dev entry;
@@ -238,8 +237,8 @@ function colorsEqual(a: { color: Color; brightness: number }, b: { color: Color;
 export class SidecarApp {
   readonly #atem: AtemSourcePort;
   readonly #server: DeviceServerPort;
-  readonly #provisioning: ProvisioningPort | null;
-  readonly #espnow: EspNowBridgePort | null;
+  readonly #provisioning: ProvisioningPort;
+  readonly #espnow: EspNowBridgePort;
   readonly #store: StorePort;
   readonly #ipc: IpcPort;
   readonly #log: (message: string) => void;
@@ -289,8 +288,8 @@ export class SidecarApp {
   constructor(deps: SidecarAppDeps) {
     this.#atem = deps.atem;
     this.#server = deps.deviceServer;
-    this.#provisioning = deps.provisioning ?? null;
-    this.#espnow = deps.espnow ?? null;
+    this.#provisioning = deps.provisioning;
+    this.#espnow = deps.espnow;
     this.#store = deps.store;
     this.#ipc = deps.ipc;
     this.#log = deps.log ?? ((message) => process.stderr.write(`${message}\n`));
@@ -298,7 +297,7 @@ export class SidecarApp {
     this.#animTickMs = deps.animTickMs ?? ANIM_TICK_MS;
     this.#refreshClock = deps.refreshClock ?? realAnimationClock;
     this.#refreshMs = deps.refreshMs ?? REFRESH_PERIOD_MS;
-    this.#scanNetwork = deps.scanNetwork ?? scanNetwork;
+    this.#scanNetwork = deps.scanNetwork;
     this.#dev = deps.dev ?? false;
     this.#source = deps.atem.snapshot();
 
@@ -309,7 +308,7 @@ export class SidecarApp {
       this.#lastColor.delete(mac); // reconnect may skip the disconnect event; always re-push
       // Pull a fresh STATUS so an already-provisioned device reports its mode/ssid-state at once,
       // rather than waiting for a spontaneous frame (no-op for non-USB devices).
-      this.#provisioning?.requestStatus(mac);
+      this.#provisioning.requestStatus(mac);
       // SET_BRIDGE is runtime-only on the device, so the host re-asserts it on every (re)connect of
       // the designated bridge — a replug or reboot re-enters bridge mode without operator action.
       this.#assertBridgeIfDesignated(mac, version);
@@ -335,26 +334,24 @@ export class SidecarApp {
     });
     this.#server.on("error", (err) => this.#log(`device server error: ${err.message}`));
 
-    // USB provisioning + diagnostics (present only when a USB-capable server is wired in).
-    if (this.#provisioning) {
-      this.#provisioning.on("status", ({ mac, mode, wifiState, rssi, ssid, bridge }) => {
-        this.#usbStatus.set(mac, { mode, wifiState, rssi });
-        // Track the device-confirmed bridge flag so the snapshot's `Device.bridge` reflects the
-        // device's own STATUS, not just our designation intent (the two can briefly disagree).
-        if (bridge) this.#bridgeConfirmed.add(mac);
-        else this.#bridgeConfirmed.delete(mac);
-        // The device reports its NVS SSID, so adopt it as the source of truth — this keeps the
-        // stored name accurate even for a device this host never provisioned. `""` means no creds
-        // (clear any stale entry); only write on a change, since STATUS now streams. setSsid mutates
-        // the in-memory config synchronously, so the #sync() below already reflects it.
-        const stored = this.#store.device(mac)?.ssid ?? "";
-        if (ssid !== stored) void this.#store.setSsid(mac, ssid === "" ? null : ssid);
-        this.#sync(); // the wizard reads mode/wifiState/rssi off the snapshot
-      });
-      this.#provisioning.on("log", ({ mac, level, text }) => {
-        this.#ipc.send({ type: "deviceLog", mac, level, text });
-      });
-    }
+    // USB provisioning + diagnostics.
+    this.#provisioning.on("status", ({ mac, mode, wifiState, rssi, ssid, bridge }) => {
+      this.#usbStatus.set(mac, { mode, wifiState, rssi });
+      // Track the device-confirmed bridge flag so the snapshot's `Device.bridge` reflects the
+      // device's own STATUS, not just our designation intent (the two can briefly disagree).
+      if (bridge) this.#bridgeConfirmed.add(mac);
+      else this.#bridgeConfirmed.delete(mac);
+      // The device reports its NVS SSID, so adopt it as the source of truth — this keeps the
+      // stored name accurate even for a device this host never provisioned. `""` means no creds
+      // (clear any stale entry); only write on a change, since STATUS now streams. setSsid mutates
+      // the in-memory config synchronously, so the #sync() below already reflects it.
+      const stored = this.#store.device(mac)?.ssid ?? "";
+      if (ssid !== stored) void this.#store.setSsid(mac, ssid === "" ? null : ssid);
+      this.#sync(); // the wizard reads mode/wifiState/rssi off the snapshot
+    });
+    this.#provisioning.on("log", ({ mac, level, text }) => {
+      this.#ipc.send({ type: "deviceLog", mac, level, text });
+    });
 
     this.#atem.on("change", (snapshot) => {
       this.#source = snapshot;
@@ -370,7 +367,7 @@ export class SidecarApp {
     if (ip) this.#atem.connect(ip); // emits a `change` that will publish; #sync below covers the no-ip case
     // Route relayed colours to the persisted bridge MAC from the off (re-asserting SET_BRIDGE waits
     // for the device to (re)connect over USB, handled in the deviceConnected listener).
-    this.#espnow?.setBridgeMac(this.#store.bridgeMac);
+    this.#espnow.setBridgeMac(this.#store.bridgeMac);
     this.#sync();
     // Begin the periodic keyframe re-send (runs for the app's whole life — see REFRESH_PERIOD_MS).
     this.#stopRefresh = this.#refreshClock.start(this.#refreshMs, () => this.#refresh());
@@ -412,7 +409,7 @@ export class SidecarApp {
         this.#atem.connect(command.ip); // change event publishes the new connecting state
         break;
       case "provisionWifi":
-        if (this.#provisioning?.provisionWifi(command.mac, command.ssid, command.password)) {
+        if (this.#provisioning.provisionWifi(command.mac, command.ssid, command.password)) {
           // Record the attempted SSID immediately so the wizard shows it without waiting for the
           // device's confirming STATUS. (That STATUS now echoes the NVS SSID too and reconciles to
           // the same value.) A failed join still renders its own `failed` view, and the stored SSID
@@ -424,7 +421,7 @@ export class SidecarApp {
         }
         break;
       case "setTransport":
-        if (this.#provisioning?.setTransport(command.mac, transportModeValue(command.mode))) {
+        if (this.#provisioning.setTransport(command.mac, transportModeValue(command.mode))) {
           // No-TX has no network — drop any remembered SSID so a re-plug doesn't show a stale one.
           if (command.mode === "notx") await this.#store.setSsid(command.mac, null);
           this.#sync();
@@ -472,7 +469,7 @@ export class SidecarApp {
     }
     // Bring the new one up, and route relayed colours through it from now on.
     if (mac !== null) this.#sendBridge(mac, true, this.#online.get(mac));
-    this.#espnow?.setBridgeMac(mac);
+    this.#espnow.setBridgeMac(mac);
     this.#sync();
   }
 
@@ -488,7 +485,7 @@ export class SidecarApp {
    */
   #sendBridge(mac: string, enabled: boolean, version: number | undefined): void {
     if (version === undefined || version < SidecarApp.#BRIDGE_MIN_VERSION) return;
-    this.#provisioning?.setBridge(mac, enabled);
+    this.#provisioning.setBridge(mac, enabled);
   }
 
   /**
@@ -529,7 +526,7 @@ export class SidecarApp {
         inputId: config?.inputId ?? null,
         brightness: config?.brightness ?? DEFAULT_BRIGHTNESS,
         // Offline/unknown devices default to WiFi; the indicator only flips to "usb" while cabled.
-        transport: (online ? this.#provisioning?.transportOf(mac) : null) ?? "wifi",
+        transport: (online ? this.#provisioning.transportOf(mac) : null) ?? "wifi",
         wifiState: status?.wifiState ?? null,
         rssi: status?.rssi ?? null,
         // Mode comes from the live USB STATUS (null off-USB); the SSID is the host's memory

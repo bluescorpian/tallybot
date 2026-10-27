@@ -53,9 +53,10 @@ firmware implements in C++.)
 
 ## Sidecar dev runner
 
-`sidecar-dev-cli.ts` wires the **real sidecar** — orchestrator, tally engine, TCP device
-server, ATEM adapter, store, and IPC — but swaps the real `Atem` for the `FakeAtem` above and replaces the NDJSON-over-stdio UI
-with a terminal REPL. So you can drive the switcher and assign devices by hand and watch the
+`sidecar-dev-cli.ts` builds the **real sidecar** — orchestrator, tally engine, TCP device
+server, ATEM adapter, store — through the same `createSidecar` (`app/sidecar/src/wiring.ts`)
+that production uses, TCP transport only, with the `FakeAtem` above in place of the real
+`Atem` and a terminal REPL in place of the NDJSON-over-stdio UI. So you can drive the switcher and assign devices by hand and watch the
 colours land on real `tally-client` simulators: the whole `ATEM → sidecar → device` flow
 with nothing plugged in. It binds the real ports (TCP 7000 / UDP 7001), so the simulators
 (or actual ESP32s on the LAN) connect to it normally.
@@ -69,15 +70,15 @@ pnpm tally-client -- --count 2    # two fake devices discover + connect
 REPL commands: `pgm <n>` / `pvw <n>` / `cut` / `name <id> <text>` drive the switcher;
 `assign <mac> <n>` / `unassign <mac>` / `flash <mac>` / `bright <mac> <n>` are the UI
 actions (the `<mac>` may be a short tail); `ls` reprints the board, `q` quits. The same
-wiring is asserted automatically in `sidecar-e2e.test.ts`. It has no USB or ESP-NOW
+TCP-only stack is asserted automatically in `sidecar-e2e.test.ts`. It has no USB or ESP-NOW
 transport (those need the Rust shell); for real hardware use `cargo tauri dev`, below.
 
 ## `cargo tauri dev` entry
 
-`sidecar-fake-main.ts` is the sidecar `cargo tauri dev` spawns: the production wiring,
-USB and ESP-NOW included, against a `FakeAtem`, so real devices can be tested without a
-switcher. Wiring added to `app/sidecar/src/main.ts` must be added here too, or it silently
-does nothing in dev.
+`sidecar-fake-main.ts` is the sidecar `cargo tauri dev` spawns: the production stack from
+`createSidecar`, USB and ESP-NOW included, against a `FakeAtem`, so real devices can be
+tested without a switcher. It adds only the dev-only parts: `dev: true` snapshots, the
+`setProgram` command that drives the fake switcher, and device logs mirrored to stderr.
 
 ## Develop
 

@@ -277,6 +277,7 @@ function setup(
     animTickMs: FLASH_HALF_MS, // one step == one flash half-cycle, so flash tests read as toggles
     refreshClock: refresh, // steppable so the keyframe re-send is deterministic (no real timer)
     log: () => {},
+    scanNetwork: () => Promise.resolve([]),
     ...overrides,
   });
   return { app, server, atem, ipc, store, provisioning, espnow, anim, refresh };

@@ -1,8 +1,9 @@
 /**
  * Entry point — the production wiring.
  *
- * This is the only file that touches the real `atem-connection` library; everything
- * downstream depends on the {@link AtemLike} seam, so the heavy dependency lives at
+ * The real `atem-connection` library is reached only from the entries: here directly,
+ * and through the `scanner.ts` sweep they inject. Everything downstream depends on the
+ * {@link AtemLike} seam and an injected `scanNetwork`, so the heavy dependency lives at
  * the very edge. It loads the saved config, picks the real ATEM, the log sink and the
  * state path, hands them to {@link createSidecar} (`src/wiring.ts`, the composition root
  * every entry shares), and manages start-up / shutdown. Hardware-free runs use the

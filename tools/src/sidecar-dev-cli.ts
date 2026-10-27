@@ -1,9 +1,10 @@
 /**
  * Hardware-free sidecar runner — the whole sidecar brain, driven by hand.
  *
- * It wires the real sidecar (orchestrator, engine, device server, ATEM adapter,
- * store, IPC) exactly as `app/sidecar/src/main.ts` does, but swaps the real `Atem`
- * for the `FakeAtem` and replaces the NDJSON-over-stdio UI with a terminal
+ * It builds the real sidecar (orchestrator, engine, device server, ATEM adapter,
+ * store) through the same `createSidecar` composition root `app/sidecar/src/main.ts`
+ * uses, but swaps the real `Atem` for the `FakeAtem`, runs only the TCP transport (there
+ * is no shell here to relay USB), and replaces the NDJSON-over-stdio UI with a terminal
  * REPL. So you can drive program/preview and assign devices here and watch the
  * colours land on `tally-client` simulators — the full `ATEM → sidecar → device`
  * data flow with nothing plugged in.
@@ -23,17 +24,22 @@ import { EventEmitter } from "node:events";
 
 import { FakeAtem } from "./atem-sim.ts";
 
-import { type IpcPort, SidecarApp } from "../../app/sidecar/src/app.ts";
+import type { IpcPort } from "../../app/sidecar/src/app.ts";
 import { AtemSource } from "../../app/sidecar/src/atem.ts";
-import { DeviceServer } from "../../app/sidecar/src/device-server.ts";
+import { scanNetwork } from "../../app/sidecar/src/scanner.ts";
 import { ConfigStore } from "../../app/sidecar/src/store.ts";
+import type { UsbBridgePort } from "../../app/sidecar/src/usb-transport.ts";
+import { createSidecar } from "../../app/sidecar/src/wiring.ts";
 import { type AppState, type SidecarEvent, type UiCommand } from "../../app/sidecar/src/ipc.ts";
 import { type Color, COLORS, SETUP_COLOR } from "../../app/sidecar/src/protocol.ts";
 
 // ── A REPL standing in for the UI's IPC channel ──────────────────────────────────
 
-/** The IpcPort the UI normally fills, here backed by the terminal. */
-class ReplIpc extends EventEmitter implements IpcPort {
+/**
+ * The IpcPort the UI normally fills, here backed by the terminal. It never carries USB (no
+ * shell relays a serial port to it), so the bridge half is inert.
+ */
+class ReplIpc extends EventEmitter implements IpcPort, UsbBridgePort {
   latest: AppState | undefined;
   send(event: SidecarEvent): void {
     if (event.type === "state") {
@@ -54,6 +60,7 @@ class ReplIpc extends EventEmitter implements IpcPort {
     console.log(`${stamp()} ${level.toUpperCase()}: ${message}`);
   }
   close(): void {}
+  sendUsb(): void {}
   /** Push a command into the sidecar, as the UI would. */
   dispatch(command: UiCommand): void {
     this.emit("command", command);
@@ -125,9 +132,10 @@ async function main(): Promise<void> {
   const store = await ConfigStore.load(stateFile);
   const fakeAtem = new FakeAtem({ inputCount: 4, programInput: 1, previewInput: 2 });
   const atem = new AtemSource(fakeAtem);
-  const server = new DeviceServer();
   const ipc = new ReplIpc();
-  const app = new SidecarApp({ atem, deviceServer: server, store, ipc });
+  const log = (message: string): void => void process.stderr.write(`${message}\n`);
+  const { app, tcp: server } = createSidecar({ atem, ipc, store, log, scanNetwork, transports: ["wifi"] });
+  if (!server) throw new Error("the wifi transport is selected, so the TCP server exists");
 
   await app.start();
   // Bring the fake ATEM online (its IP is irrelevant — the sim has no network).
