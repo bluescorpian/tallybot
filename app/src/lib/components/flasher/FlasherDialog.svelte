@@ -66,13 +66,13 @@
 	import * as Dialog from "$lib/components/ui/dialog";
 	import { Button } from "$lib/components/ui/button";
 	import { Progress } from "$lib/components/ui/progress";
-	import { Input } from "$lib/components/ui/input";
 	import { Label } from "$lib/components/ui/label";
 	import { Switch } from "$lib/components/ui/switch";
 	import * as Select from "$lib/components/ui/select";
 	import * as RadioGroup from "$lib/components/ui/radio-group";
 	import BrightnessBar, { toLevel, LEVELS } from "$lib/components/board/BrightnessBar.svelte";
 	import { TRANSPORT_MODES, BRIDGE_LABEL, BRIDGE_DESC } from "$lib/components/board/transportModes";
+	import WifiCredentials, { cleanSsid } from "$lib/components/board/WifiCredentials.svelte";
 	import type { Flasher, FlashStage, FlashTarget } from "$lib/flasher/flasher";
 	import { FLASH_STAGES, leavesBlank } from "$lib/flasher/flasher";
 	import type { AppUpdate } from "$lib/updater/updater";
@@ -527,10 +527,7 @@
 							</RadioGroup.Root>
 							{#if form.transport === "wifi"}
 								<div class="wifi">
-									<Label for="fl-ssid">Network (SSID)</Label>
-									<Input id="fl-ssid" placeholder="Network name" bind:value={form.ssid} autocomplete="off" />
-									<Label for="fl-pass">Password</Label>
-									<Input id="fl-pass" type="password" placeholder="Password" bind:value={form.password} />
+									<WifiCredentials id="fl-wifi" bind:ssid={form.ssid} bind:password={form.password} />
 								</div>
 							{/if}
 						</fieldset>
@@ -766,7 +763,10 @@
 						<Button variant="ghost" onclick={() => toSummary(null)}>Later</Button>
 					{/if}
 					<Button
-						onclick={() => toSummary(job?.kind === "light" && keep ? currentSettings : $state.snapshot(form))}
+						onclick={() =>
+							toSummary(
+								job?.kind === "light" && keep ? currentSettings : { ...$state.snapshot(form), ssid: cleanSsid(form.ssid) },
+							)}
 						>Next</Button
 					>
 				</div>
@@ -941,8 +941,6 @@
 		color: var(--muted-foreground);
 	}
 	.wifi {
-		display: grid;
-		gap: 6px;
 		padding-left: 22px;
 	}
 	.bright-label {

@@ -16,8 +16,7 @@
 	import { untrack } from "svelte";
 	import type { DeviceWifiState } from "$ipc";
 	import PopoverPageHeader from "$lib/components/board/PopoverPageHeader.svelte";
-	import Eye from "@lucide/svelte/icons/eye";
-	import EyeOff from "@lucide/svelte/icons/eye-off";
+	import WifiCredentials, { cleanSsid } from "$lib/components/board/WifiCredentials.svelte";
 	import Check from "@lucide/svelte/icons/check";
 
 	interface Props {
@@ -62,13 +61,14 @@
 	// the summary the instant we save, without waiting on the snapshot's `ssid` to round-trip.
 	let ssidInput = $state(untrack(() => ssid) ?? "");
 	let password = $state("");
-	let reveal = $state(false);
 	let editing = $state(untrack(() => !ssid));
 
+	const newSsid = $derived(cleanSsid(ssidInput));
+
 	function save() {
-		if (!ssidInput.trim()) return;
+		if (!newSsid) return;
 		editing = false;
-		onprovisionwifi?.(ssidInput.trim(), password);
+		onprovisionwifi?.(newSsid, password);
 	}
 </script>
 
@@ -88,7 +88,7 @@
 			<div class="min-w-0 flex-1">
 				<p class="font-medium">Saved</p>
 				<p class="text-muted-foreground mt-0.5 truncate text-[0.72rem]">
-					Joins “{ssidInput}” when unplugged.
+					Joins “{newSsid}” when unplugged.
 				</p>
 				<p class="text-muted-foreground mt-0.5 text-[0.72rem]">Safe to unplug.</p>
 			</div>
@@ -129,39 +129,11 @@
 			Change network
 		</button>
 	{:else}
-		<label class="text-muted-foreground block text-[0.7rem]" for="wifi-ssid-{mac}">Network (SSID)</label>
-		<input
-			id="wifi-ssid-{mac}"
-			class="cfg-input mt-1 font-mono"
-			type="text"
-			autocomplete="off"
-			spellcheck="false"
-			placeholder="Network name"
-			bind:value={ssidInput}
-		/>
-		<label class="text-muted-foreground mt-2.5 block text-[0.7rem]" for="wifi-pass-{mac}">Password</label>
-		<div class="relative mt-1">
-			<input
-				id="wifi-pass-{mac}"
-				class="cfg-input pr-8"
-				type={reveal ? "text" : "password"}
-				autocomplete="off"
-				placeholder="Password"
-				bind:value={password}
-			/>
-			<button
-				type="button"
-				class="text-muted-foreground hover:text-foreground absolute inset-y-0 right-1.5 inline-flex items-center"
-				aria-label={reveal ? "Hide password" : "Show password"}
-				onclick={() => (reveal = !reveal)}
-			>
-				{#if reveal}<EyeOff class="size-3.5" />{:else}<Eye class="size-3.5" />{/if}
-			</button>
-		</div>
+		<WifiCredentials id="wifi-{mac}" bind:ssid={ssidInput} bind:password />
 		<p class="text-muted-foreground mt-2 text-[0.68rem] leading-snug">
 			Stored on the device — it joins this network when unplugged. No need to be in range now.
 		</p>
-		<button type="button" class="btn-primary mt-3 w-full" disabled={!ssidInput.trim()} onclick={save}>
+		<button type="button" class="btn-primary mt-3 w-full" disabled={!newSsid} onclick={save}>
 			Save network
 		</button>
 	{/if}
@@ -186,23 +158,7 @@
 		}
 	}
 
-	/* flat inputs/buttons matching the picker's existing affordances. */
-	.cfg-input {
-		width: 100%;
-		height: 1.95rem;
-		padding: 0 0.5rem;
-		font-size: 0.8rem;
-		border: 1px solid var(--border);
-		border-radius: 0.5rem;
-		background: var(--background);
-		color: var(--foreground);
-		outline: none;
-		transition: border-color 0.12s ease, box-shadow 0.12s ease;
-	}
-	.cfg-input:focus-visible {
-		border-color: var(--ring);
-		box-shadow: 0 0 0 2px color-mix(in oklch, var(--ring), transparent 70%);
-	}
+	/* flat buttons matching the picker's existing affordances (the inputs are WifiCredentials'). */
 	.btn-primary {
 		display: inline-flex;
 		align-items: center;
