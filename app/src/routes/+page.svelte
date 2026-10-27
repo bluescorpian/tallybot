@@ -21,24 +21,16 @@
 	import SettingsSheet from "$lib/components/settings/SettingsSheet.svelte";
 	import TitleBar from "$lib/components/chrome/TitleBar.svelte";
 	import Credit from "$lib/components/chrome/Credit.svelte";
-	import FlasherDialog, {
-		type FlashCandidate,
-		type FlashJob,
-		type LightSettings,
-	} from "$lib/components/flasher/FlasherDialog.svelte";
+	import FlasherDialog from "$lib/components/flasher/FlasherDialog.svelte";
 	import UpdateDialog from "$lib/components/updates/UpdateDialog.svelte";
-	import type { InstallPill, UpdatePill } from "$lib/components/chrome/TitleBar.svelte";
+	import type { UpdatePill } from "$lib/components/chrome/TitleBar.svelte";
 	import { MockFlasher } from "$lib/mock/flasher.svelte";
 	import { TauriFlasher } from "$lib/flasher/tauri.svelte";
-	import {
-		firmwareOutdated,
-		leavesBlank,
-		type FlashFailure,
-		type Flasher,
-	} from "$lib/flasher/flasher";
+	import { leavesBlank, type FlashFailure, type Flasher } from "$lib/flasher/flasher";
+	import { FlashSession } from "$lib/flasher/session.svelte";
 	import { MockUpdater } from "$lib/mock/updater.svelte";
 	import { TauriUpdater } from "$lib/updater/tauri.svelte";
-	import { downloadProgress, isNewer, newerFirmwareUpdate, type Updater } from "$lib/updater/updater";
+	import { downloadProgress, type Updater } from "$lib/updater/updater";
 	import LoaderCircle from "@lucide/svelte/icons/loader-circle";
 
 	// ── Live wiring (Tauri) ────────────────────────────────────────────────────
@@ -244,11 +236,10 @@
 		props.lights.map((l) => {
 			const d = appState.devices.find((x) => x.mac === l.mac);
 			if (!d) return l;
-			const f = lightFirmware(d);
 			return {
 				...l,
-				firmwareVersion: f.version,
-				firmwareOutdated: isOutdated(f),
+				firmwareVersion: session.firmware(d).version,
+				firmwareOutdated: session.outdated(d),
 				firmwareAvailable: flasher.firmwareVersion,
 			};
 		}),
@@ -358,21 +349,46 @@
 				boardMac: (port) => mockUnflashed.find((b) => b.port === port)?.mac ?? null,
 			});
 	if (flasher instanceof TauriFlasher) void flasher.init();
-	// A build that bundles no firmware (a dev build without `pnpm firmware:stage`) offers no
-	// flasher: blank boards point at the web flasher, as before the in-app one existed.
-	const flasherReady = $derived(flasher.firmwareVersion !== null);
-
-	/** What firmware a light runs, and the version it reported, if any. */
-	function lightFirmware(d: Device): { firmware: DeviceFirmware; version: string | null } {
-		return { firmware: d.firmware, version: d.firmware.kind === "reported" ? d.firmware.version : null };
-	}
-	const isOutdated = (f: { firmware: DeviceFirmware }) => firmwareOutdated(flasher.firmwareVersion, f.firmware);
 	/** The USB port a light is on, or null when it isn't plugged in. */
-	function portOf(d: Device): string | null {
-		if (isTauri) return health.lightPorts.find((l) => l.mac === d.mac)?.port ?? null;
-		return d.transport === "usb" ? mockPort(d.mac) : null;
+	function portOf(mac: string): string | null {
+		if (isTauri) return health.lightPorts.find((l) => l.mac === mac)?.port ?? null;
+		return devices.find((d) => d.mac === mac)?.transport === "usb" ? mockPort(mac) : null;
 	}
 	let updateOpen = $state(false);
+	// Apply the Settings step: mock, it takes a moment, and `?fail=bridge` makes the bridge role
+	// not take once (the light never reports `bridging`); a retry succeeds.
+	let bridgeFailOnce = mockOnly && fail === "bridge";
+	const session = new FlashSession(
+		flasher,
+		updater,
+		{
+			get state() {
+				return appState;
+			},
+			get unflashedPorts() {
+				return health.unflashedPorts;
+			},
+			portOf,
+			get wrongLight() {
+				return mockWrong;
+			},
+			assign: (mac, inputId) => assign(mac, String(inputId)),
+			unassign,
+			setBrightness,
+			provisionWifi,
+			setTransport,
+			setBridge,
+			prepareSettings: mockOnly
+				? async (s) => {
+						await new Promise((r) => setTimeout(r, 1600));
+						if (!s.bridge || !bridgeFailOnce) return { bridgeTakes: true };
+						bridgeFailOnce = false;
+						return { bridgeTakes: false };
+					}
+				: undefined,
+		},
+		() => (updateOpen = true),
+	);
 
 	// Mock lights with no version given run the bundled firmware.
 	for (const d of devices) {
@@ -405,84 +421,14 @@
 				},
 	);
 
-	// What the flasher drawer is working on. Resolved from live state each time, so a wireless
-	// light gains its port the moment it's plugged in.
-	// "any" = opened from the titlebar: the dialog lists what's on USB (or waits for a board).
-	type FlashRequest = { kind: "any" } | { kind: "blank"; port: string } | { kind: "light"; mac: string };
-	let flashRequest = $state<FlashRequest | null>(null);
-	let flashOpen = $state(false);
-	const flashJob = $derived.by<FlashJob | null>(() => {
-		const r = flashRequest;
-		if (!r || r.kind === "any") return null;
-		if (r.kind === "blank")
-			return {
-				kind: "blank",
-				port: health.unflashedPorts.includes(r.port) ? r.port : null,
-				mac: null,
-				label: null,
-				fromVersion: null,
-				wrongLight: null,
-				input: null,
-			};
-		const d = appState.devices.find((x) => x.mac === r.mac);
-		if (!d) return null;
-		const input = appState.inputs.find((i) => i.id === d.inputId);
-		const f = lightFirmware(d);
-		return {
-			kind: "light",
-			port: portOf(d),
-			mac: d.mac,
-			// the board labels a light by the last two octets of its MAC
-			label: d.mac.split(":").slice(-2).join(":"),
-			fromVersion: f.version,
-			wrongLight: mockWrong,
-			input: input ? { label: input.label, live: input.tally === "live" } : null,
-		};
-	});
-	// While an install runs its target is fixed: every entry point just reopens its progress.
-	function openFlasher(r: FlashRequest) {
-		if (flasher.state.status !== "running") flashRequest = r;
-		flashOpen = true;
-	}
-	const newerUpdate = $derived(newerFirmwareUpdate(updater.state, flasher.firmwareVersion));
-
 	// The shell would know each cabled light's port; the mock numbers them from COM7.
 	function mockPort(mac: string): string {
 		const wired = devices.filter((d) => d.transport === "usb");
 		return `COM${7 + Math.max(0, wired.findIndex((d) => d.mac === mac))}`;
 	}
-	// What's on USB for the titlebar entry to choose from: blank boards, then cabled lights.
-	const flashCandidates = $derived<FlashCandidate[]>([
-		...health.unflashedPorts.map((port) => ({
-			kind: "blank" as const,
-			port,
-			mac: null,
-			label: null,
-			version: null,
-			outdated: false,
-		})),
-		...appState.devices.flatMap((d) => {
-			const port = portOf(d);
-			if (port === null) return [];
-			const f = lightFirmware(d);
-			return [
-				{
-					kind: "light" as const,
-					port,
-					mac: d.mac,
-					label: d.mac.split(":").slice(-2).join(":"),
-					version: f.version,
-					outdated: isOutdated(f),
-				},
-			];
-		}),
-	]);
-	function pickCandidate(c: FlashCandidate) {
-		openFlasher(c.kind === "blank" || !c.mac ? { kind: "blank", port: c.port } : { kind: "light", mac: c.mac });
-	}
 	// Mock: opened with nothing plugged in, a blank board "arrives" after a few seconds.
 	$effect(() => {
-		if (!mockOnly || !flashOpen || flashRequest?.kind !== "any" || flashCandidates.length) return;
+		if (!mockOnly || !session.open || session.request?.kind !== "any" || session.candidates.length) return;
 		const t = setTimeout(() => (mockUnflashed = [...mockUnflashed, { port: "COM6", mac: null }]), 3500);
 		return () => clearTimeout(t);
 	});
@@ -490,9 +436,9 @@
 	// Mock: a board the user was asked to plug in (a wireless light, or one whose cable came
 	// out) "arrives" over USB after a moment.
 	$effect(() => {
-		const job = flashJob;
+		const job = session.job;
 		// only while the drawer is asking for it, not on the failure screen
-		if (!mockOnly || !flashOpen || !job || job.port !== null || flasher.state.status !== "idle") return;
+		if (!mockOnly || !session.open || !job || job.port !== null || flasher.state.status !== "idle") return;
 		const mac = job.mac;
 		const plugIn = () => {
 			mockWrong = null;
@@ -571,49 +517,6 @@
 		});
 	});
 
-	// The Settings step's prefill: the light's settings as they are now (null for a blank board).
-	const flashCurrentSettings = $derived.by<LightSettings | null>(() => {
-		const r = flashRequest;
-		const d = r?.kind === "light" ? appState.devices.find((x) => x.mac === r.mac) : undefined;
-		if (!d) return null;
-		return {
-			transport: d.provisionedMode ?? "notx",
-			ssid: d.ssid ?? "",
-			password: "",
-			bridge: d.bridge ?? false,
-			inputId: d.inputId === null ? null : String(d.inputId),
-			brightness: d.brightness,
-		};
-	});
-	// Apply the Settings step once the light is back, through the same handlers its Configure
-	// pane uses. Mock: it takes a moment, and `?fail=bridge` makes the bridge role not take
-	// once (the light never reports `bridging`); a retry succeeds.
-	let bridgeFailOnce = mockOnly && fail === "bridge";
-	async function applySettings(mac: string, s: LightSettings): Promise<string | null> {
-		if (mockOnly) await new Promise((r) => setTimeout(r, 1600));
-		if (s.inputId === null) unassign(mac);
-		else assign(mac, s.inputId);
-		setBrightness(mac, s.brightness);
-		if (s.transport === "wifi" && s.ssid) provisionWifi(mac, s.ssid, s.password);
-		else setTransport(mac, s.transport);
-		if (s.bridge && bridgeFailOnce) {
-			bridgeFailOnce = false;
-			const tail = mac.split(":").slice(-2).join(":").toUpperCase();
-			return `${tail} didn't start bridging, so no-Wi-Fi lights have no bridge. Its other settings are applied.`;
-		}
-		if (s.bridge) setBridge(mac);
-		return null;
-	}
-
-	// "Update TallyBot first" parks the job; the "updated" notice offers to pick it back up.
-	let resumeFlash = $state<FlashRequest | null>(null);
-	function updateAppFirst() {
-		resumeFlash = flashRequest;
-		flashOpen = false;
-		if (updater.state.status === "ready") updater.restart();
-		else updateOpen = true;
-	}
-
 	// Titlebar pill: only once there's something to act on, and never as a popup.
 	const updatePill = $derived.by<UpdatePill | null>(() => {
 		const s = updater.state;
@@ -626,27 +529,10 @@
 	});
 	const restarting = $derived(updater.state.status === "restarting");
 
-	// An install keeps going with its drawer hidden: a titlebar pill shows its progress and
-	// reopens the drawer. While one runs, anything that restarts the engine is refused, since
-	// that would cut the install off mid-write.
-	const STAGE_WEIGHT = { connect: 0.05, erase: 0.1, write: 0.65, verify: 0.07, restart: 0.05, rejoin: 0.08 };
-	const installRunning = $derived(flasher.state.status === "running");
-	const installPill = $derived.by<InstallPill | null>(() => {
-		const s = flasher.state;
-		if (s.status !== "running" || flashOpen) return null;
-		let progress = 0;
-		for (const [stage, w] of Object.entries(STAGE_WEIGHT)) {
-			if (stage === s.stage) {
-				progress += stage === "write" ? w * s.progress : 0;
-				break;
-			}
-			progress += w;
-		}
-		const label = s.target.kind === "blank" ? "Setting up light" : `Updating ${s.target.label}`;
-		return { label, progress };
-	});
+	// While an install runs, anything that restarts the engine is refused, since that would cut
+	// the install off mid-write.
 	const installBlocked = $derived(
-		installRunning ? "A light's firmware is being installed. Restart once it's finished." : null,
+		session.running ? "A light's firmware is being installed. Restart once it's finished." : null,
 	);
 
 	// Bring a light into view on the board with a one-off highlight; `pick` opens its picker.
@@ -726,11 +612,11 @@
 			list.push({ key: `usb:${e.port}`, level: "warn", message: e.message, dismissible: true });
 		}
 		for (const port of health.unflashedPorts) {
-			if (flasherReady) {
+			if (session.ready) {
 				// the drawer already says everything while it's working on this board
 				// one install at a time: no other board is offered while one runs
-				if (installRunning) continue;
-				if (flashOpen && flashRequest?.kind === "blank" && flashRequest.port === port) continue;
+				if (session.running) continue;
+				if (session.open && session.request?.kind === "blank" && session.request.port === port) continue;
 				// Dismissible: the titlebar's firmware button is always a way back in. A dismissal
 				// lasts while the board stays plugged in (cleared when its port goes away).
 				list.push({
@@ -738,7 +624,7 @@
 					level: "info",
 					message: "A new tally light is plugged in but isn't set up yet.",
 					dismissible: true,
-					action: { label: "Set up as a light", run: () => openFlasher({ kind: "blank", port }) },
+					action: { label: "Set up as a light", run: () => session.openFlasher({ kind: "blank", port }) },
 				});
 				continue;
 			}
@@ -753,7 +639,7 @@
 		const justUpdated = updater.state.status === "current" ? updater.state.justUpdated : undefined;
 		if (justUpdated) {
 			const n = lights.filter((l) => l.firmwareOutdated).length;
-			const resume = resumeFlash;
+			const resume = session.resume;
 			list.push({
 				key: "updated",
 				level: "info",
@@ -766,10 +652,7 @@
 				action: resume
 					? {
 							label: resume.kind === "blank" ? "Continue setting up the new light" : "Continue updating the light",
-							run: () => {
-								resumeFlash = null;
-								openFlasher(resume);
-							},
+							run: session.resumeParked,
 						}
 					: undefined,
 			});
@@ -804,9 +687,9 @@
 		onsettings={() => (settingsOpen = true)}
 		update={updatePill}
 		onupdate={() => (updateOpen = true)}
-		install={installPill}
-		oninstall={() => (flashOpen = true)}
-		onfirmware={flasherReady ? () => openFlasher({ kind: "any" }) : undefined}
+		install={session.installPill}
+		oninstall={() => (session.open = true)}
+		onfirmware={session.ready ? () => session.openFlasher({ kind: "any" }) : undefined}
 	/>
 
 	<SettingsSheet
@@ -826,17 +709,17 @@
 	/>
 
 	<FlasherDialog
-		candidates={flashCandidates}
-		onpick={pickCandidate}
-		bind:open={flashOpen}
-		job={flashJob}
+		candidates={session.candidates}
+		onpick={session.pick}
+		bind:open={session.open}
+		job={session.job}
 		{flasher}
-		{newerUpdate}
+		newerUpdate={session.newerUpdate}
 		newerReady={updater.state.status === "ready"}
-		onupdateapp={updateAppFirst}
+		onupdateapp={session.updateAppFirst}
 		inputs={inputs.map((i) => ({ id: String(i.id), label: i.label }))}
-		currentSettings={flashCurrentSettings}
-		onapply={applySettings}
+		currentSettings={session.currentSettings}
+		onapply={session.applySettings}
 		onreveal={revealLight}
 		onidentify={(mac) => {
 			flash(mac);
@@ -864,7 +747,7 @@
 				provisionWifi,
 				setTransport,
 				setBridge,
-				updateFirmware: flasherReady ? (mac) => openFlasher({ kind: "light", mac }) : undefined,
+				updateFirmware: session.ready ? (mac) => session.openFlasher({ kind: "light", mac }) : undefined,
 			}}
 			{reveal}
 			onsetup={setup}

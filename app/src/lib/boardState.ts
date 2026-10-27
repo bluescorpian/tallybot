@@ -24,7 +24,7 @@ function inputState(tally: Input["tally"]): InputState {
 }
 
 /** Concise on-board label: the last two octets of the full MAC (e.g. `dc:6c`). */
-function shortMac(mac: string): string {
+export function shortMac(mac: string): string {
 	return mac.split(":").slice(-2).join(":");
 }
 

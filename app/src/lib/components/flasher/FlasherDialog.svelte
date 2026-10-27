@@ -76,6 +76,7 @@
 	import type { Flasher, FlashStage, FlashTarget } from "$lib/flasher/flasher";
 	import { FLASH_STAGES, leavesBlank } from "$lib/flasher/flasher";
 	import type { AppUpdate } from "$lib/updater/updater";
+	import { shortMac } from "$lib/boardState";
 	import Cpu from "@lucide/svelte/icons/cpu";
 	import Cable from "@lucide/svelte/icons/cable";
 	import Usb from "@lucide/svelte/icons/usb";
@@ -330,8 +331,8 @@
 	);
 	const pct = $derived(st.status === "running" && st.stage === "write" ? Math.round(st.progress * 100) : 0);
 	const newMac = $derived(st.status === "done" ? st.mac : null);
-	// the board's own label for the light: the last two octets of its MAC
-	const newTail = $derived(st.status === "done" ? st.mac.split(":").slice(-2).join(":") : null);
+	// the board's own label for the light
+	const newTail = $derived(st.status === "done" ? shortMac(st.mac) : null);
 	// the input the light ended up on: the applied setting when there was one, else the one it kept
 	const landedOn = $derived(
 		pending && apply === "ok"
