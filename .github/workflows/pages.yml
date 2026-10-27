@@ -41,7 +41,11 @@ jobs:
           # fixed name would keep serving the previous release's firmware after a publish.
           bin="tallybot-firmware-esp32c3-${tag#v}.bin"
           gh release download "$tag" --pattern tallybot-firmware-esp32c3.bin --output "site/$bin"
-          jq -n --arg v "${tag#v}" --arg bin "$bin" '{
+          # The firmware's own version (firmware/VERSION, staged beside the image), not the app
+          # tag: a release that leaves the firmware alone keeps the version the lights report.
+          gh release download "$tag" --pattern tallybot-firmware-esp32c3.json --output firmware.json
+          fw=$(jq -er '.version' firmware.json)
+          jq -n --arg v "$fw" --arg bin "$bin" '{
             name: "TallyBot",
             version: $v,
             new_install_prompt_erase: true,
