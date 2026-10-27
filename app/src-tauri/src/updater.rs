@@ -12,16 +12,20 @@
 //! the installer build's entry and get `installable: false` (the UI links to the release).
 //! `latest.json` is written at publish time by `.github/workflows/update-manifest.yml`, with a
 //! `firmwareVersion` field the flasher uses to say a newer release has newer light firmware.
+//!
+//! The last failure is state ([`UpdateStatus`], pulled with `update_status`), not only a rejected
+//! command: the UI that asked may have reloaded since, and an install failure outlives the process.
 
 use std::sync::Mutex;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::utils::config::BundleType;
 use time::format_description::well_known::Rfc3339;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 use crate::log::diag;
+use crate::report_event;
 
 /// The release page for `version`, derived from the updater endpoint in tauri.conf.json
 /// (`<repo>/releases/latest/download/latest.json`) so the repo is named once.
@@ -39,11 +43,79 @@ fn release_url(app: &AppHandle, version: &str) -> String {
     }
 }
 
-/// The update found by the last check, and its installer once downloaded.
+/// The update found by the last check, its installer once downloaded, and the last failure.
 #[derive(Default)]
 pub struct UpdaterState {
     update: Mutex<Option<Update>>,
     bytes: Mutex<Option<Vec<u8>>>,
+    status: Mutex<UpdateStatus>,
+}
+
+/// Which step of an update failed: it decides the dialog's title and what "Try again" does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Phase {
+    Check,
+    Download,
+    Install,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateFailure {
+    pub phase: Phase,
+    /// The version being fetched or installed; None for a failed check.
+    pub version: Option<String>,
+    pub message: String,
+}
+
+/// The updater's last failure, cleared by the next step that succeeds.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateStatus {
+    /// Bumped on every change, so a late pull never overwrites a newer push.
+    revision: u64,
+    failure: Option<UpdateFailure>,
+}
+
+/// The updater's last failure, for a UI that (re)starts.
+#[tauri::command]
+pub fn update_status(app: AppHandle) -> UpdateStatus {
+    app.state::<UpdaterState>().status.lock().unwrap().clone()
+}
+
+/// Replace the recorded failure, when `replace` says so given the current one, and push the change.
+fn set_failure_if(app: &AppHandle, failure: Option<UpdateFailure>, replace: impl FnOnce(Option<&UpdateFailure>) -> bool) {
+    let status = {
+        let state = app.state::<UpdaterState>();
+        let mut status = state.status.lock().unwrap();
+        if !replace(status.failure.as_ref()) {
+            return;
+        }
+        status.revision += 1;
+        status.failure = failure;
+        status.clone()
+    };
+    report_event(app, "update-status", status);
+}
+
+/// A step succeeded: drop a recorded failure it supersedes. A check supersedes only a failed check,
+/// so the quiet launch check never hides why the last install failed; a download supersedes any.
+fn succeeded(app: &AppHandle, phase: Phase) {
+    set_failure_if(app, None, |current| match current {
+        None => false,
+        Some(f) => phase != Phase::Check || f.phase == Phase::Check,
+    });
+}
+
+/// Record a failed step and hand its message back for the command's `Err`.
+fn fail(app: &AppHandle, phase: Phase, version: Option<&str>, message: String) -> String {
+    diag!("[updater] {phase:?} failed: {message}");
+    let failure = UpdateFailure { phase, version: version.map(str::to_owned), message: message.clone() };
+    // A failed check (offline at launch) never replaces a failed download or install: that is the
+    // failure the operator still needs to hear about.
+    set_failure_if(app, Some(failure), |current| phase != Phase::Check || current.map_or(true, |f| f.phase == Phase::Check));
+    message
 }
 
 /// What the UI shows about an available update.
@@ -87,7 +159,12 @@ pub async fn update_check(app: AppHandle) -> Result<Option<UpdateInfo>, String> 
     if let Some(t) = target {
         builder = builder.target(t);
     }
-    let found = builder.build().map_err(err)?.check().await.map_err(err)?;
+    let checked = match builder.build() {
+        Ok(updater) => updater.check().await,
+        Err(e) => Err(e),
+    };
+    let found = checked.map_err(|e| fail(&app, Phase::Check, None, err(e)))?;
+    succeeded(&app, Phase::Check);
     let state = app.state::<UpdaterState>();
     *state.bytes.lock().unwrap() = None;
     let info = found.as_ref().map(|u| UpdateInfo {
@@ -113,12 +190,13 @@ pub async fn update_download(app: AppHandle) -> Result<(), String> {
         .download(
             move |chunk, total| {
                 received += chunk;
-                let _ = progress_app.emit("update-progress", Progress { received, total });
+                report_event(&progress_app, "update-progress", Progress { received, total });
             },
             || {},
         )
         .await
-        .map_err(err)?;
+        .map_err(|e| fail(&app, Phase::Download, Some(&update.version), err(e)))?;
+    succeeded(&app, Phase::Download);
     *app.state::<UpdaterState>().bytes.lock().unwrap() = Some(bytes);
     Ok(())
 }
@@ -140,13 +218,14 @@ pub fn update_install(app: AppHandle) -> Result<(), String> {
     #[cfg(windows)]
     crate::shutdown(&app);
     if let Err(e) = update.install(bytes) {
+        let message = fail(&app, Phase::Install, Some(&update.version), err(e));
         if cfg!(windows) {
             // The engine is already stopped, so come back up on the old version rather than
             // leave the board dead; the update is offered again on the next check.
-            diag!("[updater] install failed: {e}; restarting");
+            diag!("[updater] restarting on the old version");
             app.restart();
         }
-        return Err(err(e));
+        return Err(message);
     }
     app.restart();
 }

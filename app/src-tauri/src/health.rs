@@ -12,7 +12,7 @@
 use std::sync::Mutex;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -148,5 +148,5 @@ fn update(app: &AppHandle, change: impl FnOnce(&mut Health) -> bool) {
         h.revision += 1;
         h.clone()
     };
-    let _ = app.emit("health", snapshot);
+    crate::report_event(app, "health", snapshot);
 }

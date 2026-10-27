@@ -12,13 +12,16 @@
 //! The light's settings survive a reflash: the merged image spans the NVS partition (as 0xFF
 //! padding), so the image is written around it, using the image's own partition table.
 //!
-//! Progress goes to the UI as `"flash"` events (`FlashEvent`); the UI's driver
-//! (`src/lib/flasher/tauri.svelte.ts`) turns them into the flasher dialog's state.
+//! The job is state, not just a stream: [`FlashState`] holds the current or last job
+//! ([`FlashStatus`]), pushed as `"flash"` events on every change and pulled with `flash_status`,
+//! with a revision so a late pull never overwrites a newer push (as `health.rs` does). So an
+//! outcome that lands while the dialog is hidden, or before the webview listens, isn't lost. The
+//! UI's driver (`src/lib/flasher/tauri.svelte.ts`) turns it into the flasher dialog's state.
 
 use std::panic::{self, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -28,9 +31,9 @@ use espflash::image_format::Segment;
 use espflash::target::{Chip, ProgressCallbacks};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 
-use crate::usb;
+use crate::{report_event, usb};
 
 const IMAGE: &str = "firmware/tallybot-firmware-esp32c3.bin";
 const MANIFEST: &str = "firmware/tallybot-firmware-esp32c3.json";
@@ -93,11 +96,44 @@ pub enum Failure {
     Error,
 }
 
-/// The one flash that may run at a time, and its stop request.
+/// The current or last flash job: where it is (or how it ended), on which port, for which light.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlashStatus {
+    /// Bumped on every change, across jobs.
+    revision: u64,
+    port: String,
+    /// The light the user picked, or None for a blank board.
+    target_mac: Option<String>,
+    #[serde(flatten)]
+    event: FlashEvent,
+}
+
+/// The one flash that may run at a time, its stop request, and its latest [`FlashStatus`].
 #[derive(Default)]
 pub struct FlashState {
     running: AtomicBool,
     cancel: Arc<AtomicBool>,
+    status: Mutex<Option<FlashStatus>>,
+}
+
+/// The current or last job, for a UI that (re)starts or missed a push. None until the first flash.
+#[tauri::command]
+pub fn flash_status(app: AppHandle) -> Option<FlashStatus> {
+    app.state::<FlashState>().status.lock().unwrap().clone()
+}
+
+/// Record the job's new state and push it to the UI.
+fn publish(app: &AppHandle, port: &str, target_mac: Option<&str>, event: FlashEvent) {
+    let status = {
+        let state = app.state::<FlashState>();
+        let mut slot = state.status.lock().unwrap();
+        let revision = slot.as_ref().map_or(0, |s| s.revision) + 1;
+        let status = FlashStatus { revision, port: port.to_string(), target_mac: target_mac.map(str::to_owned), event };
+        *slot = Some(status.clone());
+        status
+    };
+    report_event(app, "flash", status);
 }
 
 /// True while a flash is running (restarting the app now would leave the board half-written).
@@ -110,6 +146,7 @@ pub fn is_running(app: &AppHandle) -> bool {
 struct Job {
     app: AppHandle,
     port: String,
+    target_mac: Option<String>,
     released: bool,
     reported: bool,
 }
@@ -124,7 +161,7 @@ impl Job {
 
     fn report(&mut self, event: FlashEvent) {
         self.reported = true;
-        let _ = self.app.emit("flash", event);
+        publish(&self.app, &self.port, self.target_mac.as_deref(), event);
     }
 }
 
@@ -153,9 +190,12 @@ pub fn flash_start(app: AppHandle, port: String, mac: Option<String>) -> Result<
     }
     state.cancel.store(false, Ordering::SeqCst);
     let cancel = state.cancel.clone();
+    // Running from the moment it's accepted, so a pull right after this call already sees the job.
+    publish(&app, &port, mac.as_deref(), FlashEvent::Running { stage: Stage::Connect, progress: 0.0 });
     let job_app = app.clone();
     thread::spawn(move || {
-        let mut job = Job { app: job_app.clone(), port: port.clone(), released: false, reported: false };
+        let mut job =
+            Job { app: job_app.clone(), port: port.clone(), target_mac: mac.clone(), released: false, reported: false };
         let outcome = run(&job_app, &port, mac.as_deref(), &cancel);
         job.release_port();
         let event = match outcome {
@@ -185,10 +225,7 @@ pub fn flash_cancel(app: AppHandle) {
 /// The flash itself, up to and including the reset. Returns the board's MAC.
 fn run(app: &AppHandle, port: &str, expected: Option<&str>, cancel: &AtomicBool) -> Result<String, FlashEvent> {
     let failed = |stage, failure, detail: String| FlashEvent::Failed { stage, failure, detail };
-    let emit = |stage, progress| {
-        let _ = app.emit("flash", FlashEvent::Running { stage, progress });
-    };
-    emit(Stage::Connect, 0.0);
+    let emit = |stage, progress| publish(app, port, expected, FlashEvent::Running { stage, progress });
 
     let image = load_image(app).map_err(|e| failed(Stage::Connect, Failure::Error, e))?;
     if !usb::claim(app, port, CLAIM_TIMEOUT) {
@@ -211,7 +248,7 @@ fn run(app: &AppHandle, port: &str, expected: Option<&str>, cancel: &AtomicBool)
     }
 
     let segments = segments_around_nvs(&image);
-    let mut progress = Progress::new(app, &segments, cancel);
+    let mut progress = Progress::new(app, port, expected, &segments, cancel);
     // espflash has no cancel hook, so a stop unwinds out of its progress callback (`Progress`).
     // Then, or on an error, reset the chip out of the loader: a stop before the first write boots
     // the old firmware again; later the board is left half-written and stays blank.
@@ -361,6 +398,8 @@ impl WriteTally {
 /// request takes effect (see [`run`]).
 struct Progress<'a> {
     app: &'a AppHandle,
+    port: &'a str,
+    target_mac: Option<&'a str>,
     cancel: &'a AtomicBool,
     tally: WriteTally,
     stage: Stage,
@@ -368,14 +407,20 @@ struct Progress<'a> {
 }
 
 impl<'a> Progress<'a> {
-    fn new(app: &'a AppHandle, segments: &[Segment<'_>], cancel: &'a AtomicBool) -> Self {
+    fn new(
+        app: &'a AppHandle,
+        port: &'a str,
+        target_mac: Option<&'a str>,
+        segments: &[Segment<'_>],
+        cancel: &'a AtomicBool,
+    ) -> Self {
         let tally = WriteTally::new(segments.iter().map(|s| (s.addr, s.data.len())).collect());
-        Self { app, cancel, tally, stage: Stage::Erase, last_emit: Instant::now() }
+        Self { app, port, target_mac, cancel, tally, stage: Stage::Erase, last_emit: Instant::now() }
     }
 
     fn emit(&mut self, stage: Stage, progress: f64) {
         self.stage = stage;
-        let _ = self.app.emit("flash", FlashEvent::Running { stage, progress });
+        publish(self.app, self.port, self.target_mac, FlashEvent::Running { stage, progress });
         self.last_emit = Instant::now();
     }
 

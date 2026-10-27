@@ -48,6 +48,17 @@ fn restart_sidecar(app: tauri::AppHandle) {
     sidecar::restart(&app);
 }
 
+/// Push an event to the webview. Best effort by design: the state behind each push can also be
+/// pulled (`shell_health`, `flash_status`, `update_status`, the sidecar's `requestState`), so a
+/// lost push is recovered by the UI's next pull; only a sidecar `notice` is one-shot. A failure is
+/// logged, not dropped silently.
+pub(crate) fn report_event<S: serde::Serialize + Clone>(app: &tauri::AppHandle, event: &str, payload: S) {
+    use tauri::Emitter;
+    if let Err(e) = app.emit(event, payload) {
+        log::diag!("[shell] couldn't send the {event:?} event to the window: {e}");
+    }
+}
+
 /// Kill the sidecar (and stop respawning it), and signal the USB threads to wind down.
 /// Called on app exit so no orphan process or open serial port survives.
 pub(crate) fn shutdown(app: &tauri::AppHandle) {
@@ -113,9 +124,11 @@ pub fn run() {
             flash::firmware_info,
             flash::flash_start,
             flash::flash_cancel,
+            flash::flash_status,
             updater::update_check,
             updater::update_download,
             updater::update_install,
+            updater::update_status,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

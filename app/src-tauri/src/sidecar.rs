@@ -19,7 +19,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use tauri::async_runtime::Receiver;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent, TerminatedPayload};
 use tauri_plugin_shell::ShellExt;
 
@@ -265,7 +265,7 @@ fn pump(app: &AppHandle, mut rx: Receiver<CommandEvent>) -> String {
                 }
                 let text = String::from_utf8_lossy(&line).into_owned();
                 if !usb::handle_outbound(app, &text) {
-                    let _ = app.emit("sidecar", text);
+                    crate::report_event(app, "sidecar", text);
                 }
             }
             CommandEvent::Stderr(line) => {
