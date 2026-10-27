@@ -138,3 +138,66 @@ fn timestamp() -> String {
     let now = now.replace_nanosecond(now.millisecond() as u32 * 1_000_000).unwrap_or(now);
     now.format(&Rfc3339).unwrap_or_default()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    /// A fresh, empty directory under the system temp dir, unique to this test and process.
+    fn temp_dir(name: &str) -> PathBuf {
+        let unique = format!("tallybot-shell-log-{name}-{}", std::process::id());
+        let dir = std::env::temp_dir().join(unique);
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// The process-wide sink can be started once, so this is the only test that calls `init`.
+    #[test]
+    fn lines_reach_the_file_after_init_with_a_note_for_any_dropped() {
+        let dir = temp_dir("init");
+        let path = dir.join(FILE_NAME);
+        init(&dir);
+        line("before the drop");
+        // Stand in for lines a full queue turned away: the next write must say so.
+        DROPPED.fetch_add(3, Ordering::Relaxed);
+        line("after the drop");
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let text = loop {
+            let text = fs::read_to_string(&path).unwrap_or_default();
+            if text.contains("after the drop") || Instant::now() > deadline {
+                break text;
+            }
+            thread::sleep(Duration::from_millis(10));
+        };
+        assert!(text.contains("before the drop"), "{text}");
+        assert!(text.contains("after the drop"), "{text}");
+        assert!(text.contains("3 line(s) dropped"), "{text}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rotates_past_the_cap_keeping_three_old_files() {
+        let dir = temp_dir("rotate");
+        let path = dir.join(FILE_NAME);
+        const TWO_MB: u64 = 2 * 1024 * 1024;
+        let chunk = vec![b'x'; 512 * 1024];
+        let mut file = None;
+        // 2 MB fills the live file; each further 2 MB rotates once. Five rotations, so `.4`
+        // would exist if more than three old files were kept.
+        for _ in 0..(4 * 6) {
+            append(&path, &mut file, &chunk).unwrap();
+        }
+        let size = |p: &Path| fs::metadata(p).map(|m| m.len()).ok();
+        assert!(size(&path).unwrap() <= TWO_MB);
+        for n in 1..=3 {
+            let rotated = PathBuf::from(format!("{}.{n}", path.display()));
+            assert_eq!(size(&rotated), Some(TWO_MB), "{}", rotated.display());
+        }
+        assert_eq!(size(&PathBuf::from(format!("{}.4", path.display()))), None);
+        drop(file);
+        let _ = fs::remove_dir_all(&dir);
+    }
+}

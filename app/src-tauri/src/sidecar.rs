@@ -332,4 +332,25 @@ mod tests {
         assert_eq!(describe_exit(&p(None, Some(9))), "killed by signal 9");
         assert_eq!(describe_exit(&p(None, None)), "exited");
     }
+
+    #[test]
+    fn sidecar_mode_follows_the_build_and_refuses_what_it_cannot_run() {
+        use SidecarMode::{Fake, Packaged};
+        // Unset or empty: fake for `cargo tauri dev`, packaged for a release build.
+        assert_eq!(sidecar_mode(None, true), Ok(Fake));
+        assert_eq!(sidecar_mode(Some(""), true), Ok(Fake));
+        assert_eq!(sidecar_mode(None, false), Ok(Packaged));
+        assert_eq!(sidecar_mode(Some(""), false), Ok(Packaged));
+        // `0` forces packaged on either build.
+        assert_eq!(sidecar_mode(Some("0"), true), Ok(Packaged));
+        assert_eq!(sidecar_mode(Some("0"), false), Ok(Packaged));
+        // `1` is fake on a debug build only; a release build has no checkout to run it from.
+        assert_eq!(sidecar_mode(Some("1"), true), Ok(Fake));
+        assert!(sidecar_mode(Some("1"), false).is_err());
+        // Anything else is refused, never silently read as the default.
+        for value in ["true", "yes", " 1", "2"] {
+            assert!(sidecar_mode(Some(value), true).is_err(), "{value:?} on debug");
+            assert!(sidecar_mode(Some(value), false).is_err(), "{value:?} on release");
+        }
+    }
 }
