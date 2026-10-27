@@ -28,7 +28,7 @@ import type { DeviceFirmware, DeviceTransport, DeviceWifiState, LogLevelName, Si
 import {
   type Color,
   DEFAULT_BRIGHTNESS,
-  ESPNOW_LINK_TIMEOUT_MS,
+  HOST_SILENCE_TIMEOUT_MS,
   isIPv4,
   macTail,
   supportsEspNow,
@@ -165,7 +165,7 @@ const IDENTIFY_COLOR: Color = { r: 255, g: 255, b: 255 };
 const IDENTIFY_HALF_MS = 150;
 const IDENTIFY_DURATION_MS = IDENTIFY_HALF_MS * 6; // three white/off cycles (~0.9 s)
 
-/** Keyframes an ESP-NOW light can miss in a row before its link times out (250 ms at 5 s). */
+/** Keyframes a light can miss in a row before its link times out (250 ms at 5 s). */
 const KEYFRAMES_PER_LINK_TIMEOUT = 20;
 
 /**
@@ -177,7 +177,7 @@ const KEYFRAMES_PER_LINK_TIMEOUT = 20;
  * trustworthy — and it lets a light that power-cycles or drifts into range mid-show recover within
  * a tick, without waiting on a reconnect handshake. The keyframe is also every light's proof its
  * host is alive, on every transport: the firmware shows steady blue after 5 s without one
- * ({@link ESPNOW_LINK_TIMEOUT_MS}, `HOST_SILENCE_TIMEOUT_MS` in the firmware). 250 ms (not 1 s)
+ * ({@link HOST_SILENCE_TIMEOUT_MS}, mirrored in the firmware's `protocol.h`). 250 ms (not 1 s)
  * so that timeout takes {@link KEYFRAMES_PER_LINK_TIMEOUT} consecutive lost keyframes rather than
  * 5 on lossy ESP-NOW, and an ESP-NOW light that did lose the link relinks on the next keyframe to
  * reach it. So the period is derived from that timeout, not set beside it: shortening the
@@ -185,7 +185,7 @@ const KEYFRAMES_PER_LINK_TIMEOUT = 20;
  * every {@link ANIM_TICK_MS}; this keyframe is their redundant-but-harmless backstop and the only
  * resend a steady device gets.
  */
-const REFRESH_PERIOD_MS = ESPNOW_LINK_TIMEOUT_MS / KEYFRAMES_PER_LINK_TIMEOUT;
+const REFRESH_PERIOD_MS = HOST_SILENCE_TIMEOUT_MS / KEYFRAMES_PER_LINK_TIMEOUT;
 
 /**
  * The brightness to drive a breathing device this tick: its configured brightness modulated by

@@ -107,10 +107,11 @@ export const Transport = {
 export const ESPNOW_CHANNEL = 1;
 
 /**
- * An ESP-NOW light that hears nothing from its bridge this long treats the link as dead
- * (enforced by the firmware). The sidecar's keyframe period is derived from it (`app.ts`).
+ * A light that hears no frame from its host this long, on any transport (USB, TCP, the ESP-NOW
+ * bridge), treats the link as dead and shows steady blue (enforced by the firmware). The
+ * sidecar's keyframe period is derived from it (`app.ts`).
  */
-export const ESPNOW_LINK_TIMEOUT_MS = 5_000;
+export const HOST_SILENCE_TIMEOUT_MS = 5_000;
 
 // ── Timers ────────────────────────────────────────────────────────────────────
 // Firmware-side values mirror `protocol.h`; server-side ones are listed there for reference.
