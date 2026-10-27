@@ -114,8 +114,9 @@ invisible behind a stale board. The sidecar exits when its stdin reaches EOF, be
 shell killed without running its exit hook would otherwise leave an orphan holding TCP
 7000 / UDP 7001, and the next launch couldn't bind.
 
-On Linux with NVIDIA + Wayland, WebKitGTK needs `WEBKIT_DISABLE_DMABUF_RENDERER=1`. The dev
-shell sets it (`flake.nix`); `sidecar.rs` sets it on the spawned sidecar.
+On Linux with NVIDIA + Wayland, WebKitGTK needs `WEBKIT_DISABLE_DMABUF_RENDERER=1` on the
+shell process, which hosts the webview (the sidecar has none). The dev shell sets it
+(`flake.nix`); the app sets it on itself at start-up on the same setup (`src-tauri/src/lib.rs`).
 
 ## References
 

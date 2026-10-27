@@ -57,8 +57,25 @@ pub(crate) fn shutdown(app: &tauri::AppHandle) {
     sidecar::shutdown(app);
 }
 
+/// WebKitGTK's DMA-BUF renderer crashes the window on NVIDIA + Wayland ("Error 71 (Protocol
+/// error) dispatching to Wayland display", https://bugs.webkit.org/show_bug.cgi?id=280210).
+/// Disable it on that setup only, so accelerated rendering is untouched elsewhere, and let an
+/// explicit value win: the same gate the dev shell applies in `flake.nix`. It has to be set on
+/// this process, which hosts the webview, before the builder starts WebKit or any thread.
+#[cfg(target_os = "linux")]
+fn work_around_webkit_dmabuf() {
+    const VAR: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
+    let set = |name: &str| std::env::var_os(name).is_some_and(|v| !v.is_empty());
+    if !set(VAR) && set("WAYLAND_DISPLAY") && std::path::Path::new("/sys/module/nvidia").is_dir() {
+        std::env::set_var(VAR, "1");
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    work_around_webkit_dmabuf();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())

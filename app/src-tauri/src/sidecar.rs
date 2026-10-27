@@ -155,17 +155,39 @@ fn supervise(app: &AppHandle) {
     }
 }
 
+/// Which sidecar the shell runs, from `TALLYBOT_FAKE_ATEM` and the build profile.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SidecarMode {
+    /// The fake-ATEM dev entry, run by the host's `node` from this checkout's source.
+    Fake,
+    /// The production sidecar, bundled beside the exe as an `externalBin`.
+    Packaged,
+}
+
+/// The environment variable that picks the sidecar (`1` fake, `0` packaged; unset: by profile).
+const FAKE_ATEM_ENV: &str = "TALLYBOT_FAKE_ATEM";
+
+/// Parse `TALLYBOT_FAKE_ATEM`. Unset or empty follows the build: fake for a debug build
+/// (`cargo tauri dev`), packaged for release. Any other value than `1`/`0` is refused rather
+/// than silently ignored, and so is `1` on a release build: the fake entry is a path into the
+/// build machine's checkout (`CARGO_MANIFEST_DIR`), which doesn't exist on a user's machine.
+fn sidecar_mode(value: Option<&str>, debug_build: bool) -> Result<SidecarMode, String> {
+    match value {
+        None | Some("") if debug_build => Ok(SidecarMode::Fake),
+        None | Some("") => Ok(SidecarMode::Packaged),
+        Some("1") if debug_build => Ok(SidecarMode::Fake),
+        Some("1") => Err(format!("{FAKE_ATEM_ENV}=1 needs a debug build (cargo tauri dev)")),
+        Some("0") => Ok(SidecarMode::Packaged),
+        Some(other) => Err(format!("{FAKE_ATEM_ENV}={other:?} isn't 1 or 0")),
+    }
+}
+
 /// Spawn the sidecar and store its handle. Returns its event stream.
 fn spawn(app: &AppHandle) -> Result<Receiver<CommandEvent>, Box<dyn std::error::Error>> {
     // Development mode runs the sidecar against a fake ATEM (no switcher needed); the
-    // board's input keys then drive the simulated program live onto real devices. It's
-    // on by default for debug builds (`cargo tauri dev`) and off for release
-    // (`cargo tauri build`); `TALLYBOT_FAKE_ATEM=1`/`0` overrides either way.
-    let dev = match std::env::var("TALLYBOT_FAKE_ATEM").as_deref() {
-        Ok("1") => true,
-        Ok("0") => false,
-        _ => cfg!(debug_assertions),
-    };
+    // board's input keys then drive the simulated program live onto real devices.
+    let value = std::env::var(FAKE_ATEM_ENV).ok();
+    let mode = sidecar_mode(value.as_deref(), cfg!(debug_assertions))?;
 
     // Dev runs Node directly on the TypeScript source (fake-ATEM entry from `tools/`),
     // resolved relative to this crate. A shippable build instead spawns the production
@@ -173,40 +195,41 @@ fn spawn(app: &AppHandle) -> Result<Receiver<CommandEvent>, Box<dyn std::error::
     // `@yao-pkg/pkg` — see `binaries/` and `tauri.conf.json`). The pkg binary carries its
     // own Node runtime + `atem-connection` (incl. the `threadedclass`/`atemSocketChild`
     // worker), so no host Node is required on the user's machine.
-    let cmd = if dev {
-        let entry = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../tools/src/sidecar-fake-main.ts")
-            .to_string_lossy()
-            .into_owned();
-        diag!("[sidecar] spawning FAKE (dev) ATEM entry: {entry}");
-        app.shell()
-            .command("node")
-            .args(["--experimental-strip-types", &entry])
-    } else {
-        diag!("[sidecar] spawning packaged sidecar binary (externalBin)");
-        // Per Tauri docs: pass just the filename, not the configured `externalBin` path.
-        // The CLI places `binaries/tallybot-sidecar-<triple>` next to the exe as
-        // `tallybot-sidecar`; the resolver looks there (`<exe_dir>/tallybot-sidecar`).
-        let mut cmd = app.shell().sidecar("tallybot-sidecar")?;
-        // Persist config under the OS app-data dir (`%APPDATA%\com.tallybot.app` on
-        // Windows, `~/.config/com.tallybot.app` on Linux, `~/Library/Application
-        // Support/com.tallybot.app` on macOS) rather than next to the executable, so a
-        // portable-zip update that replaces the app folder doesn't wipe the user's saved
-        // ATEM/device config. The sidecar reads `TALLYBOT_STATE_FILE` first
-        // (`sidecar/src/main.ts` → `stateFilePath()`); if we can't resolve the dir we
-        // simply don't set it and the sidecar falls back to its own XDG-style default.
-        match app.path().app_config_dir() {
-            Ok(dir) => cmd = cmd.env("TALLYBOT_STATE_FILE", dir.join("state.json")),
-            Err(e) => diag!("[sidecar] no app config dir ({e}); using sidecar default state path"),
+    let cmd = match mode {
+        SidecarMode::Fake => {
+            let entry = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tools/src/sidecar-fake-main.ts")
+                .to_string_lossy()
+                .into_owned();
+            diag!("[sidecar] spawning FAKE (dev) ATEM entry: {entry}");
+            // No `TALLYBOT_STATE_FILE`: the dev entry keeps its state (and log) in the temp dir,
+            // so dev assignments never clobber the installed app's config.
+            app.shell()
+                .command("node")
+                .args(["--experimental-strip-types", &entry])
         }
-        cmd
+        SidecarMode::Packaged => {
+            diag!("[sidecar] spawning packaged sidecar binary (externalBin)");
+            // Per Tauri docs: pass just the filename, not the configured `externalBin` path.
+            // The CLI places `binaries/tallybot-sidecar-<triple>` next to the exe as
+            // `tallybot-sidecar`; the resolver looks there (`<exe_dir>/tallybot-sidecar`).
+            let mut cmd = app.shell().sidecar("tallybot-sidecar")?;
+            // Persist config under the OS app-config dir (`%APPDATA%\com.tallybot.app` on
+            // Windows, `~/.config/com.tallybot.app` on Linux, `~/Library/Application
+            // Support/com.tallybot.app` on macOS) rather than next to the executable, so a
+            // portable-zip update that replaces the app folder doesn't wipe the user's saved
+            // ATEM/device config. The sidecar reads `TALLYBOT_STATE_FILE` first
+            // (`app/sidecar/src/config.ts`); if we can't resolve the dir we don't set it and
+            // the sidecar falls back to its own XDG-style default.
+            match app.path().app_config_dir() {
+                Ok(dir) => cmd = cmd.env("TALLYBOT_STATE_FILE", dir.join("state.json")),
+                Err(e) => diag!("[sidecar] no app config dir ({e}); using sidecar default state path"),
+            }
+            cmd
+        }
     };
 
-    let (rx, child) = cmd
-        // NVIDIA + Wayland workaround for the shipped binary (CLAUDE.md). Harmless
-        // elsewhere; the dev shell already sets this for the parent.
-        .env("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
-        .spawn()?;
+    let (rx, child) = cmd.spawn()?;
 
     let state = app.state::<SidecarState>();
     // Checked under the lock `shutdown` takes, so an exit racing this spawn can't miss it.

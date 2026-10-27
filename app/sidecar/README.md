@@ -75,5 +75,11 @@ shell's own `shell.log` also lives. Without it, `pnpm start` uses
 or relative), and the dev entries in `tools/` (`cargo tauri dev`, `pnpm sidecar-dev`) use a
 `tallybot-dev/` directory in the OS temp dir, so dev assignments never touch a real config.
 
+The Tauri shell reads one more, to pick which sidecar it spawns (`src-tauri/src/sidecar.rs`):
+
+| Variable | Effect |
+|----------|--------|
+| `TALLYBOT_FAKE_ATEM` | `1`: the fake-ATEM dev entry from `tools/`, run by the host's `node` (debug builds only). `0`: the packaged binary. Unset or empty: fake for `cargo tauri dev`, packaged for a release build. Any other value, or `1` on a release build, is refused: the shell reports the sidecar down with the reason. |
+
 [tauri-sidecar]: https://v2.tauri.app/learn/sidecar-nodejs/
 [pkg]: https://github.com/yao-pkg/pkg

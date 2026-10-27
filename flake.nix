@@ -51,11 +51,12 @@
 
           # WebKitGTK's DMA-BUF renderer crashes the Tauri window on NVIDIA +
           # Wayland with "Error 71 (Protocol error) dispatching to Wayland
-          # display" — an unresolved upstream WebKit bug (CLAUDE.md has the
-          # details: https://bugs.webkit.org/show_bug.cgi?id=280210). Disabling
+          # display" — an unresolved upstream WebKit bug
+          # (https://bugs.webkit.org/show_bug.cgi?id=280210). Disabling
           # that renderer is the reliable fix. Gate it to the affected setup so
           # accelerated rendering is untouched on X11 / non-NVIDIA GPUs, and let
-          # an explicit override win.
+          # an explicit override win. The packaged app applies the same gate to
+          # itself (`app/src-tauri/src/lib.rs`).
           if [ -z "$WEBKIT_DISABLE_DMABUF_RENDERER" ] && [ -n "$WAYLAND_DISPLAY" ] && [ -d /sys/module/nvidia ]; then
             export WEBKIT_DISABLE_DMABUF_RENDERER=1
           fi
