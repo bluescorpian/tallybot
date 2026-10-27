@@ -6,7 +6,7 @@ import { isNewer, type AppUpdate, type Updater, type UpdaterState } from "$lib/u
 const MOCK_UPDATE: AppUpdate = {
 	version: "1.1.0",
 	firmwareVersion: "1.1.0",
-	date: "2026-10-20",
+	date: "2026-10-20T09:00:00Z",
 	notes: [
 		"Lights reconnect faster after a Wi-Fi drop",
 		"New lights can be set up from inside the app",

@@ -41,6 +41,7 @@
 	import { Switch } from "$lib/components/ui/switch";
 	import { Badge } from "$lib/components/ui/badge";
 	import { downloadProgress, type Updater } from "$lib/updater/updater";
+	import { formatClockTime } from "$lib/format/time";
 
 	// Host hooks:
 	//  • onsave  — fired after Save commits a *changed* IP, so a host can mirror the
@@ -220,9 +221,7 @@
 	}
 
 	// "checked 14:05" for the Updates row
-	const checkedAt = $derived(
-		updater?.lastChecked?.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }) ?? null,
-	);
+	const checkedAt = $derived(updater?.lastChecked ? formatClockTime(updater.lastChecked) : null);
 
 	// ── Restart (an action, not a saved value) ───────────────────────────────────
 	let restarting = $state(false);

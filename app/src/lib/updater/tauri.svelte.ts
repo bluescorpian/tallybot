@@ -92,7 +92,7 @@ function toAppUpdate(info: UpdateInfo): AppUpdate {
 		version: info.version,
 		// A release without the field predates firmware versioning: treat it as no newer firmware.
 		firmwareVersion: info.firmwareVersion ?? "0.0.0",
-		date: info.date ?? "",
+		date: info.date,
 		notes: releaseNotes(info.notes ?? ""),
 		sizeBytes: null,
 		installable: info.installable,

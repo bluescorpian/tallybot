@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-    "test": "node --experimental-strip-types --import ./scripts/test-resolve.mjs --test \"src/**/*.test.ts\"",
+    "test": "TZ=America/Los_Angeles node --experimental-strip-types --import ./scripts/test-resolve.mjs --test \"src/**/*.test.ts\"",
     "tauri": "tauri",
     "firmware:stage": "pio run -d ../firmware -e esp32-c3-release -t mergebin && node scripts/stage-firmware.mjs"
   },

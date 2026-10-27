@@ -15,6 +15,7 @@
 	import { Button } from "$lib/components/ui/button";
 	import { Progress } from "$lib/components/ui/progress";
 	import { downloadProgress, type Updater } from "$lib/updater/updater";
+	import { formatReleaseDate } from "$lib/format/time";
 	import { openUrl } from "@tauri-apps/plugin-opener";
 	import CircleArrowUp from "@lucide/svelte/icons/circle-arrow-up";
 	import CircleCheck from "@lucide/svelte/icons/circle-check";
@@ -39,11 +40,7 @@
 	const update = $derived("update" in st ? st.update : null);
 	const mb = (bytes: number) => (bytes / 1_000_000).toFixed(1);
 	const pct = $derived(st.status === "downloading" ? Math.round(downloadProgress(st.received, st.update) * 100) : 0);
-	const date = $derived(
-		update
-			? new Date(update.date).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" })
-			: "",
-	);
+	const date = $derived(update ? formatReleaseDate(update.date) : null);
 
 	// Restart once the dialog has closed: starting it first flips the status to "restarting",
 	// which this dialog doesn't render, so its body would blank out while it fades.
@@ -101,7 +98,7 @@
 								: `TallyBot ${update.version} is available`}
 					</Dialog.Title>
 					<Dialog.Description class="text-[0.8rem]">
-						You have {updater.currentVersion} · released {date}
+						You have {updater.currentVersion}{date ? ` · released ${date}` : ""}
 					</Dialog.Description>
 				</div>
 			</div>

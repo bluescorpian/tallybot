@@ -9,8 +9,11 @@ export interface AppUpdate {
 	version: string;
 	/** The light firmware that release bundles (what its flasher would install). */
 	firmwareVersion: string;
-	/** Release date, ISO yyyy-mm-dd. */
-	date: string;
+	/**
+	 * When the release was published: an RFC 3339 instant (latest.json `pub_date`), never a
+	 * date-only value. Null when the manifest carries none.
+	 */
+	date: string | null;
 	/** Short, user-facing release notes. */
 	notes: string[];
 	/** Download size; null until the download starts (latest.json doesn't carry it). */
