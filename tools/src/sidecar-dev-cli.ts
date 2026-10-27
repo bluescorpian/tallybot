@@ -118,6 +118,7 @@ const USAGE = `commands:
   pgm <n>            put input n on program        (alias: p, program)
   pvw <n>            put input n on preview         (alias: v, preview)
   cut                swap program and preview
+  auto               mix preview to air over ~1 s
   name <id> <text>   rename an input
   assign <mac> <n>   assign a device to input n     (mac = full or tail)
   unassign <mac>     return a device to the dock
@@ -178,6 +179,9 @@ async function main(): Promise<void> {
         break;
       case "cut":
         run(() => void fakeAtem.cut());
+        break;
+      case "auto":
+        run(() => void fakeAtem.auto());
         break;
       case "name":
         run(() => {

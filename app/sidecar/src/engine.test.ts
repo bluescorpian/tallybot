@@ -180,3 +180,66 @@ test("the device snapshot carries the USB provisioned mode and SSID through", ()
   assert.equal(state.devices[0]!.provisionedMode, "wifi");
   assert.equal(state.devices[0]!.ssid, "GreenRoom-5G");
 });
+
+// ── Mid-mix (AUTO / T-bar) ──────────────────────────────────────────────────────
+
+// During a mix the ATEM has already moved preview on to the source queued for after it,
+// so the incoming source is carried on the transition. Here: 1 → 2 is mixing, 3 is queued.
+const MIXING = connectedSource({ programInput: 1, previewInput: 3, transition: { incomingInput: 2, progress: 0.25 } });
+
+test("tallyFor: mid-mix both the outgoing and incoming sources are live, the queued one preview", () => {
+  assert.equal(tallyFor(MIXING, INACTIVE_GATE, 1), "live", "outgoing");
+  assert.equal(tallyFor(MIXING, INACTIVE_GATE, 2), "live", "incoming");
+  assert.equal(tallyFor(MIXING, INACTIVE_GATE, 3), "preview", "next queued");
+});
+
+test("mid-mix, the incoming light fades preview→live and the outgoing one live→idle", () => {
+  const devices = [
+    device({ mac: "00:00:00:00:00:01", inputId: 1 }), // outgoing, not on preview → settles idle
+    device({ mac: "00:00:00:00:00:02", inputId: 2 }), // incoming
+    device({ mac: "00:00:00:00:00:03", inputId: 3 }), // queued on preview, not in the mix
+    device({ mac: "00:00:00:00:00:04", inputId: 4 }), // not in the mix
+  ];
+  const { colors } = computeEngine(MIXING, INACTIVE_GATE, devices);
+  // 25% of the way: straight RGB blend, rounded.
+  assert.deepEqual(colors[0]!.color, { r: 199, g: 8, b: 8 }, "red 25% toward idle (30,30,30)");
+  assert.deepEqual(colors[1]!.color, { r: 64, g: 191, b: 0 }, "green 25% toward red");
+  assert.deepEqual(colors[2]!.color, COLORS.preview, "preview untouched by the mix");
+  assert.deepEqual(colors[3]!.color, COLORS.idle, "idle untouched by the mix");
+  assert.ok(colors.every((c) => c.anim === "none"));
+});
+
+test("mid-mix, an outgoing light that is now on preview fades live→preview", () => {
+  // The real AUTO case: preview moves to the outgoing source as the mix starts.
+  const source = connectedSource({ programInput: 1, previewInput: 1, transition: { incomingInput: 2, progress: 0.25 } });
+  const { colors } = computeEngine(source, INACTIVE_GATE, [device({ inputId: 1 })]);
+  assert.deepEqual(colors[0]!.color, { r: 191, g: 64, b: 0 }, "red 25% toward green");
+});
+
+test("the mix's end points are the plain tally colours", () => {
+  const devices = [device({ mac: "00:00:00:00:00:01", inputId: 1 }), device({ mac: "00:00:00:00:00:02", inputId: 2 })];
+  const start = computeEngine({ ...MIXING, transition: { incomingInput: 2, progress: 0 } }, INACTIVE_GATE, devices);
+  assert.deepEqual(start.colors[0]!.color, COLORS.live);
+  assert.deepEqual(start.colors[1]!.color, COLORS.preview);
+  const end = computeEngine({ ...MIXING, transition: { incomingInput: 2, progress: 1 } }, INACTIVE_GATE, devices);
+  assert.deepEqual(end.colors[0]!.color, COLORS.idle);
+  assert.deepEqual(end.colors[1]!.color, COLORS.live);
+});
+
+test("mixing a source onto itself shows plain live, no blend", () => {
+  const source = connectedSource({ programInput: 1, previewInput: 2, transition: { incomingInput: 1, progress: 0.5 } });
+  const { colors } = computeEngine(source, INACTIVE_GATE, [device({ inputId: 1 })]);
+  assert.deepEqual(colors[0]!.color, COLORS.live);
+});
+
+test("mid-mix, an active gate and an untrusted source still win over the blend", () => {
+  const devices = [device({ mac: "00:00:00:00:00:01", inputId: 1 }), device({ mac: "00:00:00:00:00:02", inputId: 2 })];
+  const gated = computeEngine(MIXING, ACTIVE_GATE, devices);
+  assert.deepEqual(gated.colors.map((c) => c.color), [COLORS.idle, COLORS.idle]);
+
+  const fault = computeEngine({ ...MIXING, connection: "connecting" }, INACTIVE_GATE, devices);
+  assert.deepEqual(fault.colors.map((c) => [c.color, c.anim]), [
+    [COLORS.disconnected, "flash"],
+    [COLORS.disconnected, "flash"],
+  ]);
+});

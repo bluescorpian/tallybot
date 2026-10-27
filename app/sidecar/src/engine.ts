@@ -42,8 +42,21 @@ export interface SourceSnapshot {
   programInput: number | null;
   /** Input on preview, or null when unknown. */
   previewInput: number | null;
+  /** The mix (AUTO or T-bar transition) in progress, or null/absent when none is. */
+  transition?: Transition | null;
   /** The source's camera inputs and their labels, in display order. */
   inputs: ReadonlyArray<{ id: number; label: string }>;
+}
+
+/**
+ * A mix in progress. `programInput` is the outgoing source throughout; `previewInput` has
+ * already moved on to the source queued for after the mix, so the incoming one is held here.
+ */
+export interface Transition {
+  /** The source being mixed onto program. */
+  incomingInput: number;
+  /** How far the mix has travelled, 0 (all outgoing) to 1 (all incoming). */
+  progress: number;
 }
 
 /**
@@ -133,12 +146,14 @@ export interface EngineResult {
  *    keepalive to turn a silently-dead link into a disconnect, rather than guessing
  *    staleness from the gap between state changes — a quiet but healthy switcher can
  *    legitimately send nothing for minutes.
- * 3. With a trustworthy source, the input is live/preview/idle as usual.
+ * 3. With a trustworthy source, the input is live/preview/idle as usual. Mid-mix both the
+ *    outgoing and the incoming source are on air, so both read live.
  */
 export function tallyFor(source: SourceSnapshot, gate: ProgramGate, inputId: number): Tally {
   if (gate.active) return "idle";
   if (source.connection !== "connected" || source.programInput === null) return "unknown";
   if (inputId === source.programInput) return "live";
+  if (inputId === source.transition?.incomingInput) return "live";
   if (inputId === source.previewInput) return "preview";
   return "idle";
 }
@@ -166,7 +181,30 @@ function colorFor(
   // confident idle. Same hue as the device's own disconnected-blue, but flashed — and
   // the device only rests on steady blue when it has lost the server entirely.
   if (tally === "unknown") return { color: COLORS.disconnected, anim: "flash" };
+  if (tally === "live") return { color: mixColor(source, device.inputId) ?? COLORS.live, anim: "none" };
   return { color: COLORS[tally], anim: "none" };
+}
+
+/**
+ * Mid-mix, a live source's light crossfades in step with the picture: the incoming one from
+ * preview to live, the outgoing one from live to the colour it settles on once the mix ends.
+ * The ATEM reports the mix position at its frame rate and each report re-derives this, so the
+ * fade is streamed frame by frame like the other server-driven motion (docs/led.md). Null when
+ * the input isn't part of a mix.
+ */
+function mixColor(source: SourceSnapshot, inputId: number): Color | null {
+  const mix = source.transition;
+  // Mixing a source onto itself changes nothing on air.
+  if (!mix || mix.incomingInput === source.programInput) return null;
+  if (inputId === mix.incomingInput) return lerpColor(COLORS.preview, COLORS.live, mix.progress);
+  const after = inputId === source.previewInput ? COLORS.preview : COLORS.idle;
+  return lerpColor(COLORS.live, after, mix.progress);
+}
+
+/** Straight per-channel RGB blend from `from` (t = 0) to `to` (t = 1). */
+function lerpColor(from: Color, to: Color, t: number): Color {
+  const mix = (a: number, b: number): number => Math.round(a + (b - a) * t);
+  return { r: mix(from.r, to.r), g: mix(from.g, to.g), b: mix(from.b, to.b) };
 }
 
 /**

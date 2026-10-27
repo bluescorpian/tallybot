@@ -9,7 +9,7 @@
  * Mirrored surface (verified against the library):
  *   - `connect(address?, port?)` / `disconnect()` returning promises
  *   - events `connected`, `disconnected`, `stateChanged(state, pathsChanged[])`, `error`
- *   - `state.video.mixEffects[me].programInput` / `.previewInput`
+ *   - `state.video.mixEffects[me].programInput` / `.previewInput` / `.transitionPosition`
  *   - `state.inputs[id].longName` / `.shortName`
  *   - `changeProgramInput(input, me?)` / `changePreviewInput(input, me?)`
  *
@@ -18,8 +18,8 @@
  * a network, and `state` is the minimal shape above rather than the full AtemState.
  * Input changes are applied immediately (no command→ack latency).
  *
- * `setInputName` and `cut` are convenience controls for driving the sim; they
- * stand in for an operator renaming an input or pressing CUT on the panel.
+ * `setInputName`, `cut` and `auto` are convenience controls for driving the sim; they
+ * stand in for an operator renaming an input or pressing CUT or AUTO on the panel.
  */
 
 import { EventEmitter } from "node:events";
@@ -30,10 +30,18 @@ export interface InputChannel {
   shortName: string;
 }
 
+export interface TransitionPosition {
+  inTransition: boolean;
+  remainingFrames: number;
+  /** 0–10000. */
+  handlePosition: number;
+}
+
 export interface MixEffect {
   index: number;
   programInput: number;
   previewInput: number;
+  transitionPosition: TransitionPosition;
 }
 
 /** The subset of `AtemState` the sidecar reads. */
@@ -57,6 +65,9 @@ export interface FakeAtemOptions {
 }
 
 const DEFAULT_INPUT_COUNT = 4;
+/** The ATEM Mini's default mix: 30 frames, reported once a frame at ~25 Hz (docs/atem-connection-notes.md §4). */
+const AUTO_FRAMES = 25;
+const AUTO_FRAME_MS = 40;
 
 function seedInputs(count: number, overrides: Record<number, string> = {}): Record<number, InputChannel> {
   const inputs: Record<number, InputChannel> = {};
@@ -95,6 +106,7 @@ export class FakeAtem extends EventEmitter {
             index: 0,
             programInput: options.programInput ?? 1,
             previewInput: options.previewInput ?? 2,
+            transitionPosition: { inTransition: false, remainingFrames: 0, handlePosition: 0 },
           },
         ],
       },
@@ -149,6 +161,38 @@ export class FakeAtem extends EventEmitter {
       `video.mixEffects.${me}.programInput`,
       `video.mixEffects.${me}.previewInput`,
     ]);
+  }
+
+  /**
+   * Mix preview to air, with the event sequence a real AUTO produces: the first packet starts
+   * the transition and moves preview on to the outgoing source, one packet per frame moves the
+   * handle, and the last swaps program over and ends the transition. Resolves when it ends.
+   */
+  async auto(me = 0): Promise<void> {
+    const mixEffect = this.#mixEffect(me);
+    if (mixEffect.transitionPosition.inTransition) return;
+    const outgoing = mixEffect.programInput;
+    const incoming = mixEffect.previewInput;
+    const positionPath = `video.mixEffects.${me}.transitionPosition`;
+
+    mixEffect.previewInput = outgoing;
+    mixEffect.transitionPosition = { inTransition: true, remainingFrames: AUTO_FRAMES, handlePosition: 0 };
+    this.#emitChange([`video.mixEffects.${me}.previewInput`, positionPath]);
+
+    for (let frame = 1; frame < AUTO_FRAMES; frame++) {
+      await new Promise((resolve) => setTimeout(resolve, AUTO_FRAME_MS));
+      mixEffect.transitionPosition = {
+        inTransition: true,
+        remainingFrames: AUTO_FRAMES - frame,
+        handlePosition: Math.round((frame / AUTO_FRAMES) * 10000),
+      };
+      this.#emitChange([positionPath]);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, AUTO_FRAME_MS));
+    mixEffect.programInput = incoming;
+    mixEffect.transitionPosition = { inTransition: false, remainingFrames: 0, handlePosition: 0 };
+    this.#emitChange([positionPath, `video.mixEffects.${me}.programInput`, `video.mixEffects.${me}.previewInput`]);
   }
 
   /** Sim-only control: rename an input, standing in for the ATEM's own input labels. */

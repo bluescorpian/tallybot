@@ -2,8 +2,8 @@
  * ATEM integration — turns the switcher's state into engine input.
  *
  * The sidecar reads only a thin slice of the `atem-connection` library: connect /
- * disconnect, the connection lifecycle events, and the program/preview inputs plus
- * input names off mix-effect 0. {@link AtemLike} captures exactly that slice, so
+ * disconnect, the connection lifecycle events, and the program/preview inputs, transition
+ * position and input names off mix-effect 0. {@link AtemLike} captures exactly that slice, so
  * `AtemSource` depends on the seam, not the library — which is what lets the
  * `FakeAtem` stand in unchanged for hardware-free tests (`tools/`), while production
  * passes a real `Atem` (`src/main.ts`).
@@ -18,7 +18,7 @@
 
 import { EventEmitter } from "node:events";
 
-import type { SourceSnapshot } from "./engine.ts";
+import type { SourceSnapshot, Transition } from "./engine.ts";
 import type { SourceConnection } from "./ipc.ts";
 
 // ── The slice of `atem-connection` the sidecar uses ──────────────────────────────
@@ -29,9 +29,15 @@ export interface AtemInputChannel {
   longName?: string;
   shortName?: string;
 }
+export interface AtemTransitionPosition {
+  inTransition?: boolean;
+  /** 0–10000: how far the mix has travelled from program to preview. */
+  handlePosition?: number;
+}
 export interface AtemMixEffect {
   programInput?: number;
   previewInput?: number;
+  transitionPosition?: AtemTransitionPosition;
 }
 export interface AtemStateSlice {
   video?: { mixEffects?: ReadonlyArray<AtemMixEffect | undefined> };
@@ -79,6 +85,9 @@ export class AtemSource extends EventEmitter {
   // Last-known scene, retained across a disconnect so the board keeps its layout.
   #programInput: number | null = null;
   #previewInput: number | null = null;
+  #inTransition = false;
+  /** The mix in progress, or null between mixes and for one whose incoming source is unknown. */
+  #transition: Transition | null = null;
   #inputs: Array<{ id: number; label: string }> = [];
 
   constructor(atem: AtemLike, options: AtemSourceOptions = {}) {
@@ -88,6 +97,10 @@ export class AtemSource extends EventEmitter {
 
     atem.on("connected", () => {
       this.#connection = "connected";
+      // A mix already under way when we (re)connect has an incoming source we never saw on
+      // preview, so it plays out as a plain cut rather than blending from a guess.
+      this.#inTransition = true;
+      this.#transition = null;
       this.#refresh();
       this.emit("change", this.snapshot());
     });
@@ -110,6 +123,7 @@ export class AtemSource extends EventEmitter {
       connection: this.#connection,
       programInput: this.#programInput,
       previewInput: this.#previewInput,
+      transition: this.#transition,
       inputs: this.#inputs,
     };
   }
@@ -138,12 +152,28 @@ export class AtemSource extends EventEmitter {
     this.emit("change", this.snapshot());
   }
 
-  /** Pull program/preview and input labels out of the library's current state. */
+  /** Pull program/preview, the transition and input labels out of the library's current state. */
   #refresh(): void {
     const state = this.#atem.state;
     const me = state?.video?.mixEffects?.[0];
+    const previousPreview = this.#previewInput;
     this.#programInput = me?.programInput ?? null;
     this.#previewInput = me?.previewInput ?? null;
+
+    // The packet that starts a mix also moves `previewInput` on to the source queued for
+    // *after* it, so the incoming camera is the preview from before that packet: capture it
+    // as the mix starts and hold it until it ends (docs/atem-connection-notes.md §4).
+    const position = me?.transitionPosition;
+    const inTransition = position?.inTransition ?? false;
+    const progress = Math.min(Math.max((position?.handlePosition ?? 0) / 10000, 0), 1);
+    if (!inTransition) {
+      this.#transition = null;
+    } else if (!this.#inTransition) {
+      this.#transition = previousPreview === null ? null : { incomingInput: previousPreview, progress };
+    } else if (this.#transition) {
+      this.#transition = { ...this.#transition, progress };
+    }
+    this.#inTransition = inTransition;
 
     const inputs = state?.inputs;
     if (inputs) {
