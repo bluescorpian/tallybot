@@ -173,9 +173,11 @@ test("sending to an unknown device returns false", async () => {
 
 // ── Heartbeat timeout ──────────────────────────────────────────────────────────
 
-test("a device that goes silent past the timeout is dropped", async () => {
+test("a device that goes silent past the timeout is dropped, with a warn line in its device log", async () => {
   const { server } = await startServer({ heartbeatTimeoutMs: 60 });
   const socket = connect(server);
+  const logs: Array<{ mac: string; level: string; text: string }> = [];
+  server.on("log", (entry) => logs.push(entry));
   try {
     const connected = once(server, "deviceConnected");
     socket.write(helloFrame("aa:bb:cc:dd:ee:ff"));
@@ -186,6 +188,11 @@ test("a device that goes silent past the timeout is dropped", async () => {
     const [info] = (await disconnected) as [{ mac: string }];
     assert.deepEqual(info, { mac: "aa:bb:cc:dd:ee:ff" });
     assert.deepEqual(server.connectedMacs(), []);
+    assert.deepEqual(
+      logs.map(({ mac, level }) => ({ mac, level })),
+      [{ mac: "aa:bb:cc:dd:ee:ff", level: "warn" }],
+    );
+    assert.ok(logs[0]!.text.length > 0);
   } finally {
     socket.destroy();
     await server.stop();

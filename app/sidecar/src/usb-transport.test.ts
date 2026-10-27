@@ -130,6 +130,20 @@ test("an inbound FIRMWARE frame becomes a firmware event for that device", () =>
   assert.deepEqual(reported, [{ mac: MAC, version: "1.1.0" }]);
 });
 
+test("a FIRMWARE frame from a device not currently connected is ignored", () => {
+  const bridge = new FakeBridge();
+  const usb = new UsbTransport(bridge);
+  const reported: unknown[] = [];
+  usb.on("firmware", (f) => reported.push(f));
+  const firmwareFrame = { type: "usbFrame", mac: MAC, payloadHex: toHex(Uint8Array.of(0x07, ...new TextEncoder().encode("1.1.0"))) } as const;
+
+  bridge.feed(firmwareFrame); // before its HELLO
+  bridge.feed({ type: "usbDeviceConnected", mac: MAC, version: 3 });
+  bridge.feed({ type: "usbDeviceDisconnected", mac: MAC });
+  bridge.feed(firmwareFrame); // a frame that outlived its disconnect
+  assert.deepEqual(reported, []);
+});
+
 // ── v1.3 ESP-NOW ─────────────────────────────────────────────────────────────────
 
 test("transportModeValue maps espnow to the ESPNOW wire byte", () => {
