@@ -4,8 +4,8 @@
  *
  * The actual orchestrator, tally engine, device server, ATEM adapter, store and IPC bridge are
  * built by the same `createSidecar` composition root `main.ts` uses — only the real `Atem`
- * is swapped for the `FakeAtem`, the stack runs the TCP transport alone (on ephemeral
- * ports), and real `TallyClient`s stand in for ESP32 devices over genuine TCP/UDP. We drive program/preview on the fake switcher and assign devices through
+ * is swapped for the `FakeAtem`, most tests run the TCP transport alone (on ephemeral
+ * ports; one runs main.ts's full transport set, playing the shell's USB messages), and real `TallyClient`s stand in for ESP32 devices over genuine TCP/UDP. We drive program/preview on the fake switcher and assign devices through
  * the IPC bridge, then assert the right colours actually reach the right clients on
  * the wire — and that assignments survive a restart.
  */
@@ -27,8 +27,26 @@ import type { DeviceServer } from "../../app/sidecar/src/device-server.ts";
 import { ConfigStore } from "../../app/sidecar/src/store.ts";
 import { IpcBridge } from "../../app/sidecar/src/ipc-bridge.ts";
 import { createSidecar } from "../../app/sidecar/src/wiring.ts";
-import { type AppState, type UiCommand, parseEvent, serializeMessage } from "../../app/sidecar/src/ipc.ts";
-import { type Color, COLORS, SETUP_COLOR } from "../../app/sidecar/src/protocol.ts";
+import {
+  type AppState,
+  type DeviceTransport,
+  type SidecarEvent,
+  type UiCommand,
+  parseEvent,
+  serializeMessage,
+} from "../../app/sidecar/src/ipc.ts";
+import {
+  type Color,
+  COLORS,
+  DeviceMessageType,
+  LogLevel,
+  SETUP_COLOR,
+  ServerMessageType,
+  Transport,
+  WifiState,
+  parseMac,
+} from "../../app/sidecar/src/protocol.ts";
+import { type UsbInbound, type UsbSend, toHex } from "../../app/sidecar/src/usb-bridge.ts";
 
 const LOCAL = "127.0.0.1";
 
@@ -38,13 +56,23 @@ interface Stack {
   atem: FakeAtem;
   /** The latest AppState the sidecar has emitted to the UI. */
   latestState: () => AppState | undefined;
+  /** Every UI event the sidecar has emitted, in order. */
+  events: SidecarEvent[];
+  /** Every frame the sidecar has handed the shell to write to a USB device. */
+  usbSends: UsbSend[];
   /** Send a UI command into the sidecar over the IPC bridge. */
   command: (command: UiCommand) => void;
+  /** Send a shell→sidecar USB bridge message, as the Tauri shell would on the same stdin. */
+  shell: (message: UsbInbound) => void;
   stop: () => Promise<void>;
 }
 
-/** Build the sidecar through main.ts's `createSidecar`, TCP-only, with the FakeAtem and ephemeral ports. */
-async function buildStack(stateFile: string): Promise<Stack> {
+/**
+ * Build the sidecar through main.ts's `createSidecar` with the FakeAtem and ephemeral ports.
+ * TCP-only unless `transports` says otherwise; `"default"` leaves it to createSidecar, as main.ts does.
+ */
+type TransportChoice = readonly DeviceTransport[] | "default";
+async function buildStack(stateFile: string, transports: TransportChoice = ["wifi"]): Promise<Stack> {
   const store = await ConfigStore.load(stateFile);
   const atem = new FakeAtem({ inputCount: 4, programInput: 1, previewInput: 2 });
   const source = new AtemSource(atem);
@@ -54,6 +82,8 @@ async function buildStack(stateFile: string): Promise<Stack> {
   const ipc = new IpcBridge({ input, output });
 
   const states: AppState[] = [];
+  const events: SidecarEvent[] = [];
+  const usbSends: UsbSend[] = [];
   let buffer = "";
   output.on("data", (chunk: Buffer) => {
     buffer += chunk.toString("utf8");
@@ -62,7 +92,10 @@ async function buildStack(stateFile: string): Promise<Stack> {
       const line = buffer.slice(0, nl);
       buffer = buffer.slice(nl + 1);
       const event = parseEvent(line);
+      if (event) events.push(event);
       if (event?.type === "state") states.push(event.state);
+      const usb = JSON.parse(line) as { type?: string };
+      if (usb.type === "usbSend") usbSends.push(usb as UsbSend);
     }
   });
 
@@ -72,7 +105,7 @@ async function buildStack(stateFile: string): Promise<Stack> {
     store,
     log: () => {},
     scanNetwork: () => Promise.resolve([]), // no test scans; never open sockets on the LAN
-    transports: ["wifi"],
+    ...(transports === "default" ? {} : { transports }),
     tcp: { tcpPort: 0, discoveryPort: 0, host: LOCAL },
   });
   if (!server) throw new Error("the wifi transport is selected, so the TCP server exists");
@@ -83,7 +116,10 @@ async function buildStack(stateFile: string): Promise<Stack> {
     server,
     atem,
     latestState: () => states.at(-1),
+    events,
+    usbSends,
     command: (command) => void input.write(serializeMessage(command)),
+    shell: (message) => void input.write(`${JSON.stringify(message)}\n`),
     stop: () => app.stop(),
   };
 }
@@ -117,11 +153,25 @@ function nextColor(
 
 const is = (want: Color) => (got: Color): boolean => got.r === want.r && got.g === want.g && got.b === want.b;
 
+/** Poll until `probe` returns a value (not undefined), or fail naming what never arrived. */
+async function eventually<T>(what: string, probe: () => T | undefined, timeoutMs = 1500): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const value = probe();
+    if (value !== undefined) return value;
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 /** Run `body` against a fresh stack in a throwaway directory; always tear down. */
-async function withStack(body: (stack: Stack, stateFile: string) => Promise<void>): Promise<void> {
+async function withStack(
+  body: (stack: Stack, stateFile: string) => Promise<void>,
+  transports?: TransportChoice,
+): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), "tallybot-e2e-"));
   const stateFile = join(dir, "state.json");
-  const stack = await buildStack(stateFile);
+  const stack = await buildStack(stateFile, transports);
   try {
     await body(stack, stateFile);
   } finally {
@@ -316,4 +366,49 @@ test("assignments survive a sidecar restart", async () => {
     await second.stop();
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("main.ts's default composition carries USB, ESP-NOW relay, firmware, STATUS, logs and bridge routing to the UI", async () => {
+  const bridge = "bb:bb:bb:bb:bb:01";
+  const light = "11:22:33:44:55:66";
+  const usbFrame = (mac: string, payload: Uint8Array): UsbInbound => ({ type: "usbFrame", mac, payloadHex: toHex(payload) });
+  const text = (s: string): number[] => [...new TextEncoder().encode(s)];
+  const device = (stack: Stack, mac: string) => stack.latestState()?.devices.find((d) => d.mac === mac);
+  const sentTo = (stack: Stack, mac: string, prefix: number[]) =>
+    stack.usbSends.find((m) => m.mac === mac && m.payloadHex.startsWith(toHex(Uint8Array.from(prefix))));
+
+  await withStack(
+    async (stack) => {
+      // The shell saw a v3 light's HELLO on a USB port.
+      stack.shell({ type: "usbDeviceConnected", mac: bridge, version: 3 });
+      await eventually("the USB device in a snapshot", () => (device(stack, bridge)?.transport === "usb" ? true : undefined));
+
+      stack.shell(usbFrame(bridge, Uint8Array.of(DeviceMessageType.FIRMWARE, ...text("1.2.0"))));
+      await eventually("the USB device's firmware version", () => (device(stack, bridge)?.firmwareVersion === "1.2.0" ? true : undefined));
+
+      // STATUS: provisioned for WiFi, idle, no RSSI, no stored SSID.
+      stack.shell(usbFrame(bridge, Uint8Array.of(DeviceMessageType.STATUS, Transport.WIFI, WifiState.IDLE, 0, 0)));
+      await eventually("the STATUS-reported provisioned mode", () => (device(stack, bridge)?.provisionedMode === "wifi" ? true : undefined));
+
+      stack.shell(usbFrame(bridge, Uint8Array.of(DeviceMessageType.LOG, LogLevel.WARN, ...text("joining GreenRoom"))));
+      const log = await eventually("the device's LOG as a deviceLog event", () =>
+        stack.events.find((e) => e.type === "deviceLog" && e.mac === bridge),
+      );
+      assert.deepEqual(log, { type: "deviceLog", mac: bridge, level: "warn", text: "joining GreenRoom" });
+
+      // Designating the bridge sends it SET_BRIDGE 1 down its cable.
+      stack.command({ type: "setBridge", mac: bridge });
+      await eventually("SET_BRIDGE 1 to the bridge", () => sentTo(stack, bridge, [ServerMessageType.SET_BRIDGE, 1]));
+
+      // A light's HELLO relayed up through the bridge: it appears as an ESP-NOW device, and its
+      // colour goes back down the bridge's cable inside a RELAY addressed to it.
+      const hello = Uint8Array.of(DeviceMessageType.HELLO, 3, ...parseMac(light));
+      stack.shell(usbFrame(bridge, Uint8Array.of(DeviceMessageType.RELAY, ...parseMac(light), ...hello)));
+      await eventually("the relayed light in a snapshot", () => (device(stack, light)?.transport === "espnow" ? true : undefined));
+      await eventually("a RELAY to the light via the bridge", () =>
+        sentTo(stack, bridge, [ServerMessageType.RELAY, ...parseMac(light), ServerMessageType.SET_COLOR]),
+      );
+    },
+    "default",
+  );
 });
