@@ -77,6 +77,7 @@
 	import { FLASH_STAGES, leavesBlank } from "$lib/flasher/flasher";
 	import type { AppUpdate } from "$lib/updater/updater";
 	import Cpu from "@lucide/svelte/icons/cpu";
+	import Cable from "@lucide/svelte/icons/cable";
 	import Usb from "@lucide/svelte/icons/usb";
 	import Check from "@lucide/svelte/icons/check";
 	import LoaderCircle from "@lucide/svelte/icons/loader-circle";
@@ -347,7 +348,7 @@
 		class="gap-0 overflow-hidden rounded-3xl p-0 sm:max-w-[440px]"
 	>
 		<div class="head">
-			<Cpu class="text-muted-foreground size-[18px]" />
+			<Cable class="text-muted-foreground size-[18px]" />
 			<Dialog.Title class="text-[0.95rem] font-semibold tracking-tight">{title}</Dialog.Title>
 		</div>
 

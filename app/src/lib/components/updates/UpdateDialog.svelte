@@ -22,7 +22,7 @@
 	import CircleX from "@lucide/svelte/icons/circle-x";
 	import LoaderCircle from "@lucide/svelte/icons/loader-circle";
 	import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
-	import Cpu from "@lucide/svelte/icons/cpu";
+	import Cable from "@lucide/svelte/icons/cable";
 	import RotateCw from "@lucide/svelte/icons/rotate-cw";
 
 	let {
@@ -112,7 +112,7 @@
 						</ul>
 					</div>
 					<p class="fw">
-						<Cpu class="size-4 shrink-0" />
+						<Cable class="size-4 shrink-0" />
 						<span>Comes with light firmware <span class="font-mono">{update.firmwareVersion}</span>.</span>
 					</p>
 				{/if}

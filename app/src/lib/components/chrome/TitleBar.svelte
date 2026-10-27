@@ -34,7 +34,7 @@
 	import XIcon from "@lucide/svelte/icons/x";
 	import CircleArrowUp from "@lucide/svelte/icons/circle-arrow-up";
 	import RotateCw from "@lucide/svelte/icons/rotate-cw";
-	import Cpu from "@lucide/svelte/icons/cpu";
+	import Cable from "@lucide/svelte/icons/cable";
 
 	let {
 		onsettings,
@@ -133,7 +133,7 @@
 				aria-label="Install light firmware"
 				title="Install light firmware"
 			>
-				<Cpu class="size-[16px]" />
+				<Cable class="size-[16px]" />
 			</button>
 		{/if}
 		<button
