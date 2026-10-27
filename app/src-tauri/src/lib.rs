@@ -77,6 +77,15 @@ pub fn run() {
     work_around_webkit_dmabuf();
 
     tauri::Builder::default()
+        // First, so a second launch exits before it spawns an engine or opens a port: two
+        // engines would fight over TCP 7000 and the serial ports. It surfaces this window.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_autostart::Builder::new().build()) // Settings → "Launch on system startup"
