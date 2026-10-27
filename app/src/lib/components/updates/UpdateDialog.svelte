@@ -77,9 +77,12 @@
 				<Button onclick={() => (open = false)}>OK</Button>
 			</div>
 		{:else if st.status === "error" && !update}
+			<!-- a failed check, or an earlier failed install whose update the check couldn't find again -->
 			<div class="center">
 				<CircleX class="text-destructive size-7" />
-				<Dialog.Title class="text-base font-semibold">Couldn't check for updates</Dialog.Title>
+				<Dialog.Title class="text-base font-semibold"
+					>{st.phase === "check" ? "Couldn't check for updates" : "The update didn't install"}</Dialog.Title
+				>
 				<Dialog.Description class="select-text">{st.message}</Dialog.Description>
 			</div>
 			<div class="foot">
@@ -94,7 +97,9 @@
 						{st.status === "ready"
 							? `TallyBot ${update.version} is ready to install`
 							: st.status === "error"
-								? `Couldn't download TallyBot ${update.version}`
+								? st.phase === "install"
+									? `TallyBot ${update.version} didn't install`
+									: `Couldn't download TallyBot ${update.version}`
 								: `TallyBot ${update.version} is available`}
 					</Dialog.Title>
 					<Dialog.Description class="text-[0.8rem]">
@@ -129,6 +134,9 @@
 					</div>
 				{:else if st.status === "error"}
 					<p class="err"><CircleX class="size-4 shrink-0" /> <span class="select-text">{st.message}</span></p>
+					{#if st.phase === "install"}
+						<p class="text-muted-foreground text-[0.8rem]">You're still on {updater.currentVersion}.</p>
+					{/if}
 				{:else if st.status === "ready"}
 					<div class="warn">
 						<TriangleAlert class="size-4 shrink-0" />
@@ -155,7 +163,8 @@
 					<Button variant="ghost" onclick={() => (open = false)}>Hide</Button>
 				{:else if st.status === "error"}
 					<Button variant="ghost" onclick={() => (open = false)}>Close</Button>
-					<Button onclick={() => updater.download()}>Try again</Button>
+					<!-- the installer is used up by an install attempt: trying again starts from the download -->
+					<Button onclick={() => updater.download()}>{st.phase === "install" ? "Download again" : "Try again"}</Button>
 				{:else if st.status === "ready"}
 					{#if blocked}<span class="foot-note">{blocked}</span>{/if}
 					<Button variant="ghost" onclick={() => (open = false)}>Later</Button>

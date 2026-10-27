@@ -22,6 +22,8 @@ export interface FlashBackend {
 	readonly state: AppState;
 	/** Ports holding a board with no TallyBot firmware (the shell's health). */
 	readonly unflashedPorts: readonly string[];
+	/** Which of those boards are a known light an interrupted install left blank (the shell's health). */
+	readonly blankLights: readonly { mac: string; port: string }[];
 	/** The USB port a light is on, or null when it isn't plugged in. */
 	portOf(mac: string): string | null;
 	/** A different light that turned up on USB while waiting for another (its label), if known. */
@@ -112,40 +114,80 @@ export class FlashSession {
 		const input = b.state.inputs.find((i) => i.id === d.inputId);
 		return {
 			kind: "light",
-			port: b.portOf(d.mac),
+			port: this.portOf(d.mac),
 			mac: d.mac,
 			label: shortMac(d.mac),
-			fromVersion: this.firmware(d).version,
+			// left blank by an interrupted install: whatever it last reported is gone
+			fromVersion: this.#isBlank(d.mac) ? null : this.firmware(d).version,
 			wrongLight: b.wrongLight ?? null,
 			input: input ? { label: input.label, live: input.tally === "live" } : null,
 		};
 	});
 
+	/**
+	 * The port a light is on: where it speaks over USB, or the unflashed port an interrupted install
+	 * left it blank on. A blank light sends no HELLO, so without the second a retry would wait for
+	 * it to appear forever.
+	 */
+	portOf(mac: string): string | null {
+		return this.#backend.portOf(mac) ?? this.#backend.blankLights.find((b) => b.mac === mac)?.port ?? null;
+	}
+
+	/** The light a blank board on `port` used to be, when an interrupted install left it blank. */
+	blankLightOn(port: string): string | null {
+		return this.#backend.blankLights.find((b) => b.port === port)?.mac ?? null;
+	}
+
 	/** What's on USB for the titlebar entry to choose from: blank boards, then cabled lights. */
 	readonly candidates = $derived.by<FlashCandidate[]>(() => [
-		...this.#backend.unflashedPorts.map((port) => ({
-			kind: "blank" as const,
-			port,
-			mac: null,
-			label: null,
-			version: null,
-			outdated: false,
-		})),
+		...this.#backend.unflashedPorts
+			// a known light left blank is offered as that light, below
+			.filter((port) => this.blankLightOn(port) === null)
+			.map((port) => ({
+				kind: "blank" as const,
+				port,
+				mac: null,
+				label: null,
+				version: null,
+				outdated: false,
+			})),
 		...this.#backend.state.devices.flatMap((d) => {
-			const port = this.#backend.portOf(d.mac);
+			const port = this.portOf(d.mac);
 			if (port === null) return [];
+			const blank = this.#isBlank(d.mac);
 			return [
 				{
 					kind: "light" as const,
 					port,
 					mac: d.mac,
 					label: shortMac(d.mac),
-					version: this.firmware(d).version,
-					outdated: this.outdated(d),
+					version: blank ? null : this.firmware(d).version,
+					outdated: blank || this.outdated(d),
 				},
 			];
 		}),
 	]);
+
+	#isBlank(mac: string): boolean {
+		return this.#backend.portOf(mac) === null && this.#backend.blankLights.some((b) => b.mac === mac);
+	}
+
+	/**
+	 * How an install that ended while its drawer was hidden came out, for the page's notice (null
+	 * while the drawer is open, or nothing has ended). The drawer itself shows it once reopened;
+	 * closing it clears the outcome, and with it this.
+	 */
+	readonly outcome = $derived.by<{ level: "info" | "warn" | "error"; message: string } | null>(() => {
+		const s = this.#flasher.state;
+		if (this.open) return null;
+		if (s.status !== "done" && s.status !== "failed" && s.status !== "cancelled") return null;
+		const what = s.target.kind === "blank" ? "the new light" : s.target.label;
+		if (s.status === "done") return { level: "info", message: `The firmware install on ${what} finished.` };
+		const dark = s.leavesBlank ? ` ${s.target.kind === "blank" ? "The board" : what} has no firmware now, so it stays dark until it's installed again.` : "";
+		return s.status === "failed"
+			? { level: "error", message: `The firmware install on ${what} failed.${dark}` }
+			: { level: s.leavesBlank ? "warn" : "info", message: `The firmware install on ${what} was stopped.${dark}` };
+	});
 
 	/** The Settings step's prefill: the light's settings as they are now (null for a blank board). */
 	readonly currentSettings = $derived.by<LightSettings | null>(() => {
@@ -171,7 +213,12 @@ export class FlashSession {
 	 */
 	readonly installPill = $derived.by<InstallPill | null>(() => {
 		const s = this.#flasher.state;
-		if (s.status !== "running" || this.open) return null;
+		if (this.open) return null;
+		// it ended with the drawer hidden: the pill stays, as a failure, until the outcome is seen
+		if (s.status === "failed" || (s.status === "cancelled" && s.leavesBlank)) {
+			return { label: s.status === "failed" ? "Install failed" : "Install stopped", progress: 0, failed: true };
+		}
+		if (s.status !== "running") return null;
 		let progress = 0;
 		for (const stage of FLASH_STAGES) {
 			if (stage === s.stage) {

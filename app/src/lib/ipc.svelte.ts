@@ -39,6 +39,11 @@ export interface ShellHealth {
 	unflashedPorts: string[];
 	/** Lights on USB and the port each is on (what the flasher targets). */
 	lightPorts: { mac: string; port: string }[];
+	/**
+	 * Unflashed ports holding a known light that an interrupted install left without firmware: it
+	 * sends no HELLO, so this is the only record of which light it is.
+	 */
+	blankLights: { mac: string; port: string }[];
 }
 
 const HEALTHY: ShellHealth = {
@@ -47,6 +52,7 @@ const HEALTHY: ShellHealth = {
 	usbPortErrors: [],
 	unflashedPorts: [],
 	lightPorts: [],
+	blankLights: [],
 };
 
 /** True when running inside the Tauri webview; false in a plain browser (`pnpm dev`). */

@@ -9,6 +9,7 @@ import {
 	type FlashState,
 	type FlashTarget,
 	type Flasher,
+	leavesBlank,
 } from "$lib/flasher/flasher";
 
 /**
@@ -85,7 +86,7 @@ export class MockFlasher implements Flasher {
 				const failAfter = fail === "unplugged" ? DURATION.write * 0.43 : fail === "port-busy" ? 500 : 3200;
 				this.#later(begin + failAfter, () => {
 					this.#clear();
-					this.state = { status: "failed", target, stage, failure: fail, detail: DETAIL[fail] };
+					this.state = { status: "failed", target, stage, failure: fail, detail: DETAIL[fail], leavesBlank: leavesBlank(stage) };
 				});
 				return;
 			}
@@ -102,7 +103,7 @@ export class MockFlasher implements Flasher {
 		if (this.state.status !== "running") return;
 		const { target, stage } = this.state;
 		this.#clear();
-		this.state = { status: "cancelled", target, stage };
+		this.state = { status: "cancelled", target, stage, leavesBlank: leavesBlank(stage) };
 	}
 
 	reset(): void {

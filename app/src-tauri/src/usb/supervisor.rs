@@ -106,6 +106,7 @@ pub fn start(app: AppHandle) {
             // Nor is an unflashed board that was unplugged; its replug is probed afresh.
             for path in unpark_absent(&mut parked.lock().unwrap(), &present) {
                 health::set_unflashed_port(&app, &path, false);
+                health::set_blank_light(&app, &path, None); // unplugged: we can't tell who comes back
             }
 
             let mut slept = Duration::ZERO;

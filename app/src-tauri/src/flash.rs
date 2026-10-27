@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
 
-use crate::{report_event, usb};
+use crate::{health, report_event, usb};
 
 const IMAGE: &str = "firmware/tallybot-firmware-esp32c3.bin";
 const MANIFEST: &str = "firmware/tallybot-firmware-esp32c3.json";
@@ -81,6 +81,15 @@ pub enum Stage {
     Rejoin,
 }
 
+impl Stage {
+    /// Whether a job that stops or fails at this stage leaves the board without working firmware.
+    /// Before the erase nothing was touched; a failed verify means the written bytes are wrong, so
+    /// it counts as blank too; once the reset has run the new firmware is in place.
+    pub fn leaves_blank(self) -> bool {
+        matches!(self, Stage::Erase | Stage::Write | Stage::Verify)
+    }
+}
+
 /// The failures the dialog explains with a tailored fix; anything else is `Error`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -107,6 +116,9 @@ pub struct FlashStatus {
     target_mac: Option<String>,
     #[serde(flatten)]
     event: FlashEvent,
+    /// The job failed or was stopped where it left the board without firmware
+    /// ([`Stage::leaves_blank`]); false while running and once done.
+    leaves_blank: bool,
 }
 
 /// The one flash that may run at a time, its stop request, and its latest [`FlashStatus`].
@@ -129,7 +141,12 @@ fn publish(app: &AppHandle, port: &str, target_mac: Option<&str>, event: FlashEv
         let state = app.state::<FlashState>();
         let mut slot = state.status.lock().unwrap();
         let revision = slot.as_ref().map_or(0, |s| s.revision) + 1;
-        let status = FlashStatus { revision, port: port.to_string(), target_mac: target_mac.map(str::to_owned), event };
+        let leaves_blank = match &event {
+            FlashEvent::Failed { stage, .. } | FlashEvent::Cancelled { stage } => stage.leaves_blank(),
+            FlashEvent::Running { .. } | FlashEvent::Done { .. } => false,
+        };
+        let status =
+            FlashStatus { revision, port: port.to_string(), target_mac: target_mac.map(str::to_owned), event, leaves_blank };
         *slot = Some(status.clone());
         status
     };
@@ -161,6 +178,18 @@ impl Job {
 
     fn report(&mut self, event: FlashEvent) {
         self.reported = true;
+        // A known light this job left without firmware is still that light: remember which port
+        // it's on, so the board reads as it (not as a stranger) and "Try again" can find it.
+        // A failure that touched nothing (at connect) leaves an earlier record as it was.
+        match &event {
+            FlashEvent::Failed { stage, .. } | FlashEvent::Cancelled { stage } if stage.leaves_blank() => {
+                if let Some(mac) = &self.target_mac {
+                    health::set_blank_light(&self.app, &self.port, Some(mac));
+                }
+            }
+            FlashEvent::Done { .. } => health::set_blank_light(&self.app, &self.port, None),
+            _ => {}
+        }
         publish(&self.app, &self.port, self.target_mac.as_deref(), event);
     }
 }

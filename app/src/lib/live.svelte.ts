@@ -28,6 +28,9 @@ export class LiveBackend implements Backend {
 	get unflashedPorts() {
 		return sidecar.health.unflashedPorts;
 	}
+	get blankLights() {
+		return sidecar.health.blankLights;
+	}
 	get engineDown() {
 		return sidecar.stale;
 	}

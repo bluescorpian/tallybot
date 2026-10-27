@@ -225,9 +225,13 @@ export class MockBoard implements Backend {
 		usbPortErrors: [],
 		unflashedPorts: this.#unflashed.map((b) => b.port),
 		lightPorts: [],
+		blankLights: this.#unflashed.flatMap((b) => (b.mac === null ? [] : [{ mac: b.mac, port: b.port }])),
 	}));
 	get unflashedPorts() {
 		return this.health.unflashedPorts;
+	}
+	get blankLights() {
+		return this.health.blankLights;
 	}
 	get wrongLight() {
 		return this.#wrong;

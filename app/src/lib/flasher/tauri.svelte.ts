@@ -14,7 +14,7 @@ type FlashEvent =
 	| { status: "cancelled"; stage: FlashStage };
 
 /** `flash.rs` `FlashStatus`: the current or last job. `revision` orders pushes and pulls. */
-type FlashStatus = FlashEvent & { revision: number; port: string; targetMac: string | null };
+type FlashStatus = FlashEvent & { revision: number; port: string; targetMac: string | null; leavesBlank: boolean };
 
 export class TauriFlasher implements Flasher {
 	state = $state<FlashState>({ status: "idle" });
@@ -41,7 +41,7 @@ export class TauriFlasher implements Flasher {
 		this.state = { status: "running", target, stage: "connect", progress: 0 };
 		invoke("flash_start", { port: target.port, mac: target.kind === "light" ? target.mac : null }).catch(
 			(err) => {
-				this.state = { status: "failed", target, stage: "connect", failure: "error", detail: String(err) };
+				this.state = { status: "failed", target, stage: "connect", failure: "error", detail: String(err), leavesBlank: false };
 			},
 		);
 	}

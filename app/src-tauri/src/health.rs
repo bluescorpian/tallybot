@@ -29,6 +29,10 @@ pub struct Health {
     pub unflashed_ports: Vec<String>,
     /// Lights detected on USB (they sent HELLO) and the port each is on, sorted by MAC.
     pub light_ports: Vec<LightPort>,
+    /// Unflashed boards that are a known light: an install on that port stopped where it left the
+    /// board without firmware (`flash.rs`), so it sends no HELLO and has no MAC of its own to show.
+    /// Kept until the port is unplugged or a light speaks on it again.
+    pub blank_lights: Vec<LightPort>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -112,10 +116,19 @@ pub fn set_unflashed_port(app: &AppHandle, port: &str, unflashed: bool) {
 }
 
 /// Record the port a light is on (`Some`), or that it left USB (`None`). Emits only on change.
+/// A light speaking on a port means that port no longer holds a blanked light.
 pub fn set_light_port(app: &AppHandle, mac: &str, port: Option<&str>) {
     update(app, |h| {
+        let unblanked = match port {
+            Some(p) => {
+                let before = h.blank_lights.len();
+                h.blank_lights.retain(|b| b.port != p && b.mac != mac);
+                h.blank_lights.len() != before
+            }
+            None => false,
+        };
         let existing = h.light_ports.iter().position(|l| l.mac == mac);
-        match (existing, port) {
+        unblanked | match (existing, port) {
             (Some(i), Some(p)) if h.light_ports[i].port == p => false,
             (Some(i), Some(p)) => {
                 h.light_ports[i].port = p.to_string();
@@ -132,6 +145,20 @@ pub fn set_light_port(app: &AppHandle, mac: &str, port: Option<&str>) {
             }
             (None, None) => false,
         }
+    });
+}
+
+/// Record that the board on `port` is the light `mac`, left without firmware (`Some`), or that the
+/// port no longer holds one (`None`). Emits only on change.
+pub fn set_blank_light(app: &AppHandle, port: &str, mac: Option<&str>) {
+    update(app, |h| {
+        let before = h.blank_lights.clone();
+        h.blank_lights.retain(|b| b.port != port && mac.map_or(true, |m| b.mac != m));
+        if let Some(m) = mac {
+            h.blank_lights.push(LightPort { mac: m.to_string(), port: port.to_string() });
+            h.blank_lights.sort_by(|a, b| a.port.cmp(&b.port));
+        }
+        h.blank_lights != before
     });
 }
 

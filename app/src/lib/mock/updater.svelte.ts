@@ -78,7 +78,7 @@ export class MockUpdater implements Updater {
 			received = Math.min(SIZE, received + SIZE / 40);
 			if (fail && received > SIZE * 0.55) {
 				clearInterval(this.#timer);
-				this.state = { status: "error", message: "The download was interrupted. Check this PC's internet connection and try again.", update };
+				this.state = { status: "error", phase: "download", message: "The download was interrupted. Check this PC's internet connection and try again.", update };
 				return;
 			}
 			if (received >= SIZE) {

@@ -5,7 +5,15 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
-import { canCheck, downloadable, releaseNotes, type AppUpdate, type Updater, type UpdaterState } from "./updater";
+import {
+	canCheck,
+	downloadable,
+	releaseNotes,
+	type AppUpdate,
+	type UpdatePhase,
+	type Updater,
+	type UpdaterState,
+} from "./updater";
 
 /** `updater.rs` `UpdateInfo`. */
 interface UpdateInfo {
@@ -17,6 +25,12 @@ interface UpdateInfo {
 	releaseUrl: string;
 }
 
+/** `updater.rs` `UpdateStatus`: the shell's record of the last failed step. */
+interface UpdateStatus {
+	revision: number;
+	failure: { phase: UpdatePhase; version: string | null; message: string } | null;
+}
+
 /** Last version this install ran, to say "updated to x" once after an update. */
 const LAST_RUN_KEY = "tallybot.lastRunVersion";
 
@@ -25,7 +39,11 @@ export class TauriUpdater implements Updater {
 	state = $state<UpdaterState>({ status: "idle" });
 	lastChecked = $state<Date | null>(null);
 
-	/** Learn the running version, then check quietly, as the app does on every launch. */
+	/**
+	 * Learn the running version, then check quietly, as the app does on every launch. A download
+	 * or install that failed before this webview started (a reload, or the Windows restart after a
+	 * failed install) is then shown as the error it was, from the shell's record.
+	 */
 	async init(): Promise<void> {
 		this.currentVersion = await getVersion();
 		await listen<{ received: number; total: number | null }>("update-progress", ({ payload }) => {
@@ -40,7 +58,12 @@ export class TauriUpdater implements Updater {
 		const last = readLastRun();
 		writeLastRun(this.currentVersion);
 		const justUpdated = last !== null && last !== this.currentVersion ? this.currentVersion : undefined;
+		const { failure } = await invoke<UpdateStatus>("update_status");
 		await this.#check(justUpdated);
+		if (failure && failure.phase !== "check") {
+			const update = "update" in this.state ? this.state.update : null;
+			this.state = { status: "error", phase: failure.phase, message: failure.message, update };
+		}
 	}
 
 	check(): void {
@@ -54,7 +77,7 @@ export class TauriUpdater implements Updater {
 			const info = await invoke<UpdateInfo | null>("update_check");
 			this.state = info ? { status: "available", update: toAppUpdate(info) } : { status: "current", justUpdated };
 		} catch (err) {
-			this.state = { status: "error", message: String(err), update: null };
+			this.state = { status: "error", phase: "check", message: String(err), update: null };
 		} finally {
 			this.lastChecked = new Date();
 		}
@@ -70,7 +93,7 @@ export class TauriUpdater implements Updater {
 				this.state = { status: "ready", update: "update" in now && now.update ? now.update : update };
 			},
 			(err) => {
-				this.state = { status: "error", message: String(err), update };
+				this.state = { status: "error", phase: "download", message: String(err), update };
 			},
 		);
 	}
@@ -81,7 +104,7 @@ export class TauriUpdater implements Updater {
 		this.state = { status: "restarting", update };
 		// On success this never returns: the shell stops the engine, installs and restarts.
 		invoke("update_install").catch((err) => {
-			this.state = { status: "error", message: String(err), update };
+			this.state = { status: "error", phase: "install", message: String(err), update };
 		});
 	}
 }

@@ -45,6 +45,12 @@ export function downloadProgress(received: number, update: AppUpdate): number {
 	return update.sizeBytes ? Math.min(1, received / update.sizeBytes) : 0;
 }
 
+/**
+ * Which step of an update failed (`updater.rs` `Phase`): it decides what the dialog says and what
+ * "Try again" does. An install failure on Windows is reported on the relaunch after it.
+ */
+export type UpdatePhase = "check" | "download" | "install";
+
 export type UpdaterState =
 	| { status: "idle" }
 	| { status: "checking" }
@@ -55,7 +61,7 @@ export type UpdaterState =
 	/** Downloaded: installs on "Restart now". Until then the titlebar pill keeps reminding. */
 	| { status: "ready"; update: AppUpdate }
 	| { status: "restarting"; update: AppUpdate }
-	| { status: "error"; message: string; update: AppUpdate | null };
+	| { status: "error"; phase: UpdatePhase; message: string; update: AppUpdate | null };
 
 export interface Updater {
 	readonly currentVersion: string;

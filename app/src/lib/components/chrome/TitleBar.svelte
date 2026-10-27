@@ -6,12 +6,18 @@
 	export type UpdatePill =
 		| { kind: "available"; version: string }
 		| { kind: "downloading"; progress: number }
-		| { kind: "ready" };
+		| { kind: "ready" }
+		/** The download or install failed; the update dialog says why. */
+		| { kind: "failed" };
 
-	/** A firmware install running with its drawer hidden: progress 0–1 for one light/board. */
+	/**
+	 * A firmware install running with its drawer hidden: progress 0–1 for one light/board. `failed`:
+	 * it ended badly while hidden, and the pill stays until the drawer is reopened.
+	 */
 	export interface InstallPill {
 		label: string;
 		progress: number;
+		failed?: boolean;
 	}
 </script>
 
@@ -34,6 +40,7 @@
 	import CopyIcon from "@lucide/svelte/icons/copy";
 	import XIcon from "@lucide/svelte/icons/x";
 	import CircleArrowUp from "@lucide/svelte/icons/circle-arrow-up";
+	import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
 	import RotateCw from "@lucide/svelte/icons/rotate-cw";
 	import Cable from "@lucide/svelte/icons/cable";
 
@@ -85,23 +92,30 @@
 		{#if install}
 			<!-- An install running with its drawer hidden: same calm pill as a download, so
 			     you can keep using the board and come back to it. Click reopens the drawer. -->
-			<button class="update-pill" onclick={oninstall} title="Show the firmware install">
-				<svg class="dl-ring" viewBox="0 0 16 16" aria-hidden="true">
-					<circle cx="8" cy="8" r="6" class="ring-track" />
-					<circle cx="8" cy="8" r="6" class="ring-fill" stroke-dasharray={`${install.progress * 37.7} 37.7`} />
-				</svg>
-				{install.label} {Math.round(install.progress * 100)}%
+			<button class="update-pill" class:failed={install.failed} onclick={oninstall} title="Show the firmware install">
+				{#if install.failed}
+					<TriangleAlert class="size-[14px]" /> {install.label}
+				{:else}
+					<svg class="dl-ring" viewBox="0 0 16 16" aria-hidden="true">
+						<circle cx="8" cy="8" r="6" class="ring-track" />
+						<circle cx="8" cy="8" r="6" class="ring-fill" stroke-dasharray={`${install.progress * 37.7} 37.7`} />
+					</svg>
+					{install.label} {Math.round(install.progress * 100)}%
+				{/if}
 			</button>
 		{/if}
 		{#if update}
 			<button
 				class="update-pill"
 				onclick={onupdate}
+				class:failed={update.kind === "failed"}
 				title={update.kind === "available"
 					? `TallyBot ${update.version} is available`
 					: update.kind === "downloading"
 						? "Downloading the update"
-						: "Restart TallyBot to install the update"}
+						: update.kind === "failed"
+							? "The update didn't finish: open it to see why"
+							: "Restart TallyBot to install the update"}
 			>
 				{#if update.kind === "downloading"}
 					<!-- a determinate ring, so progress reads without opening anything -->
@@ -118,6 +132,8 @@
 					Downloading {Math.round(update.progress * 100)}%
 				{:else if update.kind === "ready"}
 					<RotateCw class="size-[14px]" /> Restart to update
+				{:else if update.kind === "failed"}
+					<TriangleAlert class="size-[14px]" /> Update failed
 				{:else}
 					<CircleArrowUp class="size-[14px]" /> Update available
 				{/if}
@@ -247,6 +263,15 @@
 	}
 	.update-pill:hover {
 		background: color-mix(in oklab, var(--primary), var(--background) 84%);
+	}
+	/* Something ended badly while its dialog was hidden: the destructive tint, until it's seen. */
+	.update-pill.failed {
+		border-color: color-mix(in oklch, var(--destructive), transparent 70%);
+		background: color-mix(in oklab, var(--destructive), var(--background) 92%);
+		color: var(--destructive);
+	}
+	.update-pill.failed:hover {
+		background: color-mix(in oklab, var(--destructive), var(--background) 84%);
 	}
 	.update-pill:focus-visible {
 		outline: 2px solid var(--primary);

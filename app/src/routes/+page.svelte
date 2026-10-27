@@ -13,7 +13,7 @@
 	import type { LogLevelName } from "$ipc";
 	import Board from "$lib/components/board/Board.svelte";
 	import { FLASHER_URL } from "$lib/links";
-	import { sidecarLost, toBoardProps } from "$lib/boardState";
+	import { shortMac, sidecarLost, toBoardProps } from "$lib/boardState";
 	import { isTauri } from "$lib/ipc.svelte";
 	import type { Backend } from "$lib/backend";
 	import { LiveBackend } from "$lib/live.svelte";
@@ -75,7 +75,8 @@
 		const s = updater.state;
 		// A failed check (offline at launch) stays quiet: it's only news once an update is known.
 		if (s.status === "available") return { kind: "available", version: s.update.version };
-		if (s.status === "error" && s.update) return { kind: "available", version: s.update.version };
+		// a download or install that failed stays visible as a failure, not quietly "available" again
+		if (s.status === "error" && s.phase !== "check") return { kind: "failed" };
 		if (s.status === "downloading") return { kind: "downloading", progress: downloadProgress(s.received, s.update) };
 		if (s.status === "ready") return { kind: "ready" };
 		return null;
@@ -175,12 +176,55 @@
 		for (const e of health.usbPortErrors) {
 			list.push({ key: `usb:${e.port}`, level: "warn", message: e.message, dismissible: true });
 		}
+		// An install that ended while its drawer was hidden (the drawer says it all once reopened).
+		const outcome = session.outcome;
+		if (outcome) {
+			list.push({
+				key: "flash",
+				level: outcome.level,
+				message: outcome.message,
+				dismissible: true,
+				action: { label: "Open installer", run: () => (session.open = true) },
+			});
+		}
+		// A download or install that failed while the update dialog was closed (or before this
+		// launch: a failed Windows install restarts TallyBot on the old version).
+		const us = updater.state;
+		if (us.status === "error" && us.phase !== "check" && !updateOpen) {
+			const v = us.update ? `TallyBot ${us.update.version}` : "The update";
+			list.push({
+				key: "update-failed",
+				level: "error",
+				message:
+					us.phase === "install"
+						? `${v} didn't install (${us.message}). TallyBot is still on ${updater.currentVersion}.`
+						: `${v} didn't download (${us.message}).`,
+				dismissible: true,
+				action: { label: "Open update", run: () => (updateOpen = true) },
+			});
+		}
 		for (const port of health.unflashedPorts) {
 			if (session.ready) {
 				// the drawer already says everything while it's working on this board
 				// one install at a time: no other board is offered while one runs
 				if (session.running) continue;
+				// the install outcome notice above is already about this board
+				if (outcome && flasher.state.status !== "idle" && flasher.state.status !== "running" && flasher.state.target.port === port) continue;
 				if (session.open && session.request?.kind === "blank" && session.request.port === port) continue;
+				// A known light an interrupted install left blank: still that light, so it's named and
+				// reinstalled as itself (its input and settings kept), not set up as a stranger.
+				const blankMac = session.blankLightOn(port);
+				if (blankMac) {
+					if (session.open && session.request?.kind === "light" && session.request.mac === blankMac) continue;
+					list.push({
+						key: `unflashed:${port}`,
+						level: "warn",
+						message: `Light ${shortMac(blankMac)} has no firmware: an install on it didn't finish. It stays dark until its firmware is installed again.`,
+						dismissible: true,
+						action: { label: "Reinstall its firmware", run: () => session.openFlasher({ kind: "light", mac: blankMac }) },
+					});
+					continue;
+				}
 				// Dismissible: the titlebar's firmware button is always a way back in. A dismissal
 				// lasts while the board stays plugged in (cleared when its port goes away).
 				list.push({

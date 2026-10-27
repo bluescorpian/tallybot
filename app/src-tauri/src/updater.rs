@@ -78,6 +78,45 @@ pub struct UpdateStatus {
     failure: Option<UpdateFailure>,
 }
 
+/// Where a failed Windows install leaves its reason for the relaunched app, in the app data dir.
+const INSTALL_FAILURE_FILE: &str = "update-install-failed.json";
+
+/// At start-up: take over the reason a failed install left before restarting (see
+/// [`update_install`]), so the update dialog can say why the update didn't happen. Read once, then
+/// deleted, so it's reported on that one relaunch only.
+pub fn restore_install_failure(app: &AppHandle) {
+    let Ok(dir) = app.path().app_data_dir() else { return };
+    let path = dir.join(INSTALL_FAILURE_FILE);
+    let Ok(text) = std::fs::read_to_string(&path) else { return }; // the usual case: no file
+    if let Err(e) = std::fs::remove_file(&path) {
+        diag!("[updater] couldn't remove {}: {e}", path.display());
+    }
+    match serde_json::from_str::<UpdateFailure>(&text) {
+        Ok(failure) => {
+            diag!("[updater] the last update didn't install: {}", failure.message);
+            set_failure_if(app, Some(failure), |_| true);
+        }
+        Err(e) => diag!("[updater] unreadable {}: {e}", path.display()),
+    }
+}
+
+/// Leave `failure` for the next launch: the app is about to restart, and the UI that asked won't
+/// get the command's `Err`.
+fn leave_install_failure(app: &AppHandle, failure: &UpdateFailure) {
+    let written = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())
+        .and_then(|dir| {
+            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+            let json = serde_json::to_string(failure).map_err(|e| e.to_string())?;
+            std::fs::write(dir.join(INSTALL_FAILURE_FILE), json).map_err(|e| e.to_string())
+        });
+    if let Err(e) = written {
+        diag!("[updater] couldn't record the install failure for the next launch: {e}");
+    }
+}
+
 /// The updater's last failure, for a UI that (re)starts.
 #[tauri::command]
 pub fn update_status(app: AppHandle) -> UpdateStatus {
@@ -221,7 +260,10 @@ pub fn update_install(app: AppHandle) -> Result<(), String> {
         let message = fail(&app, Phase::Install, Some(&update.version), err(e));
         if cfg!(windows) {
             // The engine is already stopped, so come back up on the old version rather than
-            // leave the board dead; the update is offered again on the next check.
+            // leave the board dead. The relaunched app reads why from the file and says so; the
+            // update is offered again on its check.
+            let failure = UpdateFailure { phase: Phase::Install, version: Some(update.version.clone()), message };
+            leave_install_failure(&app, &failure);
             diag!("[updater] restarting on the old version");
             app.restart();
         }

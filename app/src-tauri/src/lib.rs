@@ -113,6 +113,7 @@ pub fn run() {
                 Ok(dir) => log::init(&dir),
                 Err(e) => log::diag!("[log] no app config dir ({e}); logging to stderr only"),
             }
+            updater::restore_install_failure(app.handle()); // a failed install's reason, before the UI pulls
             sidecar::start(app.handle().clone()); // spawn + respawn-on-crash supervisor
             usb::start(app.handle().clone()); // poll for ESP32-C3 serial ports + relay
             Ok(())
