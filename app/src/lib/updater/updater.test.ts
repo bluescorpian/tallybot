@@ -1,11 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { downloadProgress, newerFirmwareUpdate, releaseNotes, type AppUpdate } from "./updater";
+import { formatReleaseDate } from "../format/time";
 
 const update = (over: Partial<AppUpdate> = {}): AppUpdate => ({
 	version: "1.3.0",
 	firmwareVersion: "1.2.0",
-	date: "2026-10-01",
+	date: "2026-10-01T09:00:00Z",
 	notes: [],
 	sizeBytes: 200,
 	installable: true,
@@ -44,4 +45,17 @@ test("download progress is 0 until the size is known, and never passes 1", () =>
 	assert.equal(downloadProgress(50, update({ sizeBytes: null })), 0);
 	assert.equal(downloadProgress(50, update({ sizeBytes: 200 })), 0.25);
 	assert.equal(downloadProgress(300, update({ sizeBytes: 200 })), 1);
+});
+
+test("a release's publish instant shows as the user's local date, and a missing or bad one shows none", () => {
+	// `pnpm test` pins TZ so the instant below falls on a different calendar day locally than in UTC.
+	assert.equal(Intl.DateTimeFormat().resolvedOptions().timeZone, "America/Los_Angeles");
+	// 03:00 UTC on the 20th is still the evening of the 19th in Los Angeles.
+	const shown = formatReleaseDate("2026-10-20T03:00:00Z");
+	assert.match(shown ?? "", /\b19\b/, `local day, not the UTC one: ${shown}`);
+	assert.doesNotMatch(shown ?? "", /\b20\b/, `local day, not the UTC one: ${shown}`);
+	assert.match(shown ?? "", /\b2026\b/);
+
+	assert.equal(formatReleaseDate(null), null);
+	assert.equal(formatReleaseDate("not a date"), null, "never 'Invalid Date'");
 });

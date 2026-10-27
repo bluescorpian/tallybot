@@ -115,6 +115,46 @@ test("heartbeats keep a relayed light alive past the timeout; silence expires it
   }
 });
 
+test("a wall-clock step neither drops a heartbeating light nor strands a silent one", async (t) => {
+  // Default clock (no `now` option): liveness must run on elapsed time, not the system clock.
+  const wallStep = (byMs: number) => {
+    const real = Date.now.bind(Date);
+    t.mock.method(Date, "now", () => real() + byMs);
+  };
+
+  // Forward: the clock jumps an hour ahead (NTP sync) right after a beat; the light stays.
+  {
+    const usb = new FakeUsb();
+    const espnow = new EspNowTransport(usb.asUsb(), { heartbeatTimeoutMs: 1000, sweepIntervalMs: 10 });
+    await espnow.start();
+    try {
+      usb.relay(BRIDGE, LIGHT, helloInner(3));
+      wallStep(60 * 60_000);
+      await sweepOnce(espnow);
+      assert.deepEqual(espnow.connectedMacs(), [LIGHT], "a forward clock step must not drop a live light");
+    } finally {
+      await espnow.stop();
+      t.mock.restoreAll();
+    }
+  }
+
+  // Backward: the clock jumps an hour back, then the light goes silent past the timeout; it drops.
+  {
+    const usb = new FakeUsb();
+    const espnow = new EspNowTransport(usb.asUsb(), { heartbeatTimeoutMs: 30, sweepIntervalMs: 10 });
+    await espnow.start();
+    try {
+      usb.relay(BRIDGE, LIGHT, helloInner(3));
+      wallStep(-60 * 60_000);
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      assert.deepEqual(espnow.connectedMacs(), [], "a backward clock step must not keep a silent light");
+    } finally {
+      await espnow.stop();
+      t.mock.restoreAll();
+    }
+  }
+});
+
 test("the bridge disconnecting from USB drops all relayed lights at once", () => {
   const usb = new FakeUsb();
   const espnow = new EspNowTransport(usb.asUsb());
