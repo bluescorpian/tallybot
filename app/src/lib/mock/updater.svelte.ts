@@ -2,6 +2,7 @@
 // `TauriUpdater` ($lib/updater/tauri.svelte); both implement `Updater`.
 import { version as APP_VERSION } from "../../../package.json";
 import { canCheck, downloadable, isNewer, type AppUpdate, type Updater, type UpdaterState } from "$lib/updater/updater";
+import { RELEASES_URL } from "$lib/links";
 import { MOCK_BUNDLED_FIRMWARE } from "./flasher.svelte";
 
 /** The next minor release after `v` (plain x.y.z). */
@@ -25,7 +26,7 @@ const MOCK_UPDATE: AppUpdate = {
 	],
 	sizeBytes: 38_400_000,
 	installable: true,
-	releaseUrl: `https://github.com/bluescorpian/tallybot/releases/tag/v${MOCK_VERSION}`,
+	releaseUrl: `${RELEASES_URL}/tag/v${MOCK_VERSION}`,
 };
 const SIZE = 38_400_000;
 

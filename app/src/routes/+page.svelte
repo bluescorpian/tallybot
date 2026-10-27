@@ -12,6 +12,7 @@
 	import { onMount, untrack } from "svelte";
 	import type { LogLevelName } from "$ipc";
 	import Board from "$lib/components/board/Board.svelte";
+	import { FLASHER_URL } from "$lib/links";
 	import { sidecarLost, toBoardProps } from "$lib/boardState";
 	import { isTauri } from "$lib/ipc.svelte";
 	import type { Backend } from "$lib/backend";
@@ -111,7 +112,6 @@
 		/** The banner's next step, as a button after the message. */
 		action?: { label: string; run: () => void };
 	}
-	const FLASHER_URL = "https://tally.hrry.sh";
 
 	// A saved ATEM that never answers leaves the chip spinning forever, which reads as "wait"
 	// when the fix is on the user's side (a wrong IP, or this PC on another network). After a

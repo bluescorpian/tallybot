@@ -54,6 +54,14 @@ for (const [, key] of updater.matchAll(/"((?:windows|linux|darwin)-[a-z0-9_]+-[a
   if (!platforms.has(key)) fail(`updater.rs names platform "${key}", which latest.json doesn't carry`);
 }
 
+// updater.rs derives the release page from the updater endpoint, and the UI's links.ts names the
+// same repo: both expect the endpoint to be `<repo>/releases/latest/download/latest.json`.
+const endpoint = json("app/src-tauri/tauri.conf.json").plugins?.updater?.endpoints?.[0] ?? "";
+const repo = endpoint.match(/^(https:\/\/github\.com\/[^/]+\/[^/]+)\/releases\/latest\/download\/latest\.json$/)?.[1];
+if (!repo) fail(`tauri.conf.json's updater endpoint isn't <repo>/releases/latest/download/latest.json: "${endpoint}"`);
+const links = read("app/src/lib/links.ts");
+if (repo && !links.includes(`"${repo}"`)) fail(`app/src/lib/links.ts doesn't name the updater's repo ${repo}`);
+
 // ── Release-time checks ──────────────────────────────────────────────────────
 
 const tagIndex = process.argv.indexOf("--tag");

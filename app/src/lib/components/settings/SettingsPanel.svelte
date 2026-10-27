@@ -42,6 +42,7 @@
 	import { Badge } from "$lib/components/ui/badge";
 	import { downloadProgress, type Updater } from "$lib/updater/updater";
 	import { formatClockTime } from "$lib/format/time";
+	import { LICENSE_URL, REPO_URL } from "$lib/links";
 
 	// Host hooks:
 	//  • onsave  — fired after Save commits a *changed* IP, so a host can mirror the
@@ -508,7 +509,7 @@
 					<!-- links (the README on GitHub is the user documentation) -->
 					<a
 						class="link-row"
-						href="https://github.com/bluescorpian/tallybot"
+						href={REPO_URL}
 						target="_blank"
 						rel="noreferrer"
 					>
@@ -528,7 +529,7 @@
 					</a>
 					<a
 						class="link-row"
-						href="https://github.com/bluescorpian/tallybot/blob/main/LICENSE.md"
+						href={LICENSE_URL}
 						target="_blank"
 						rel="noreferrer"
 					>

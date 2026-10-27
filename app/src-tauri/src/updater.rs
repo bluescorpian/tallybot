@@ -23,7 +23,21 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 
 use crate::log::diag;
 
-const RELEASES: &str = "https://github.com/bluescorpian/tallybot/releases";
+/// The release page for `version`, derived from the updater endpoint in tauri.conf.json
+/// (`<repo>/releases/latest/download/latest.json`) so the repo is named once.
+/// `scripts/check-release.mjs` keeps the endpoint in that shape.
+fn release_url(app: &AppHandle, version: &str) -> String {
+    let endpoint = app
+        .config()
+        .plugins
+        .0
+        .get("updater")
+        .and_then(|u| u.get("endpoints")?.get(0)?.as_str());
+    match endpoint.and_then(|e| e.strip_suffix("/latest/download/latest.json")) {
+        Some(releases) => format!("{releases}/tag/v{version}"),
+        None => String::new(),
+    }
+}
 
 /// The update found by the last check, and its installer once downloaded.
 #[derive(Default)]
@@ -82,7 +96,7 @@ pub async fn update_check(app: AppHandle) -> Result<Option<UpdateInfo>, String> 
         notes: u.body.clone(),
         firmware_version: u.raw_json.get("firmwareVersion").and_then(|v| v.as_str()).map(str::to_owned),
         installable,
-        release_url: format!("{RELEASES}/tag/v{}", u.version),
+        release_url: release_url(&app, &u.version),
     });
     *state.update.lock().unwrap() = found;
     Ok(info)
