@@ -45,6 +45,7 @@ import {
   DEFAULT_BRIGHTNESS,
   ESPNOW_CHANNEL_MAX,
   ESPNOW_CHANNEL_MIN,
+  FIRMWARE_GRACE_MS,
   HOST_SILENCE_TIMEOUT_MS,
   Transport,
   isEspnowChannel,
@@ -187,6 +188,15 @@ const realAnimationClock: AnimationClock = {
   },
 };
 
+/** Run `fn` once after `ms`; returns a function that cancels it. Injectable so tests step time. */
+export type Schedule = (ms: number, fn: () => void) => () => void;
+
+const realSchedule: Schedule = (ms, fn) => {
+  const handle = setTimeout(fn, ms);
+  handle.unref();
+  return () => clearTimeout(handle);
+};
+
 /**
  * Animation tick. Small enough for a smooth breathe; the flash and breathe phases are derived
  * from elapsed time, not per-tick, so this rate is independent of either's period.
@@ -272,6 +282,10 @@ export interface SidecarAppDeps {
   refreshClock?: AnimationClock;
   /** Override the refresh period in ms (default {@link REFRESH_PERIOD_MS}). */
   refreshMs?: number;
+  /** Override the one-shot timer behind the FIRMWARE wait (tests inject a steppable one). */
+  schedule?: Schedule;
+  /** Override how long a light gets to send FIRMWARE after HELLO (default {@link FIRMWARE_GRACE_MS}). */
+  firmwareGraceMs?: number;
   /** The subnet sweep behind the settings "Scan" (injected so tests don't open sockets). */
   scanNetwork: (log: (message: string) => void) => Promise<SourceScanHit[]>;
   /**
@@ -309,6 +323,8 @@ export class SidecarApp {
   readonly #animTickMs: number;
   readonly #refreshClock: AnimationClock;
   readonly #refreshMs: number;
+  readonly #schedule: Schedule;
+  readonly #firmwareGraceMs: number;
   readonly #scanNetwork: (log: (message: string) => void) => Promise<SourceScanHit[]>;
   readonly #dev: boolean;
   /** What the operator must see that only the sidecar knows (`faults.ts`); rides every snapshot. */
@@ -326,6 +342,10 @@ export class SidecarApp {
    * flash the "outdated" badge in the moment between its HELLO and its FIRMWARE message.
    */
   readonly #firmware = new Map<string, string>();
+  /** Online lights still inside their {@link FIRMWARE_GRACE_MS} wait → the cancel for that timer. */
+  readonly #firmwareWait = new Map<string, () => void>();
+  /** Online lights whose wait ran out with no FIRMWARE: they run firmware that predates it. */
+  readonly #firmwareOverdue = new Set<string>();
   /** The last colour pushed to each device, to suppress redundant SET_COLORs. */
   readonly #lastColor = new Map<string, { color: Color; brightness: number }>();
   /** Devices mid locate-strobe → elapsed ms into the burst; cleared when it ends (see {@link IDENTIFY_DURATION_MS}). */
@@ -370,6 +390,8 @@ export class SidecarApp {
     this.#animTickMs = deps.animTickMs ?? ANIM_TICK_MS;
     this.#refreshClock = deps.refreshClock ?? realAnimationClock;
     this.#refreshMs = deps.refreshMs ?? REFRESH_PERIOD_MS;
+    this.#schedule = deps.schedule ?? realSchedule;
+    this.#firmwareGraceMs = deps.firmwareGraceMs ?? FIRMWARE_GRACE_MS;
     this.#scanNetwork = deps.scanNetwork;
     this.#dev = deps.dev ?? false;
     this.#faults = new FaultBook(this.#log);
@@ -385,6 +407,7 @@ export class SidecarApp {
       // A device that left USB but is still reachable (it reverts to TCP or ESP-NOW) has no live
       // STATUS any more, so what the last one said (mode, join progress, channel, bridging) is stale.
       if (this.#provisioning.transportOf(mac) !== "usb") this.#dropUsbState(mac);
+      this.#awaitFirmware(mac);
       // Pull a fresh STATUS so an already-provisioned device reports its mode/ssid-state at once,
       // rather than waiting for a spontaneous frame (no-op for non-USB devices).
       this.#provisioning.requestStatus(mac);
@@ -404,6 +427,8 @@ export class SidecarApp {
     });
     this.#server.on("deviceDisconnected", ({ mac }) => {
       this.#online.delete(mac);
+      this.#stopFirmwareWait(mac);
+      this.#firmwareOverdue.delete(mac);
       this.#lastColor.delete(mac); // forget it, so a reconnect is sent its colour afresh
       this.#dropUsbState(mac); // stale once it's gone
       this.#log(`device disconnected: ${mac}`);
@@ -419,6 +444,8 @@ export class SidecarApp {
       this.#ipc.notice("warn", message);
     });
     this.#server.on("firmware", ({ mac, version }) => {
+      this.#stopFirmwareWait(mac);
+      this.#firmwareOverdue.delete(mac);
       if (this.#firmware.get(mac) === version) return;
       this.#firmware.set(mac, version);
       this.#log(`device ${mac} runs firmware ${version}`);
@@ -507,6 +534,7 @@ export class SidecarApp {
     this.#setAnimating(false);
     this.#stopRefresh?.();
     this.#stopRefresh = null;
+    for (const mac of [...this.#firmwareWait.keys()]) this.#stopFirmwareWait(mac);
     this.#ipc.close();
     await this.#atem.disconnect();
     await this.#server.stop();
@@ -919,18 +947,40 @@ export class SidecarApp {
   }
 
   /**
+   * Start the {@link FIRMWARE_GRACE_MS} wait for a light that just sent HELLO and hasn't reported
+   * a firmware version yet. When it runs out with no FIRMWARE, {@link #firmwareOf} reads the light
+   * as legacy and the board re-renders.
+   */
+  #awaitFirmware(mac: string): void {
+    this.#stopFirmwareWait(mac);
+    if (this.#firmware.has(mac) || this.#firmwareOverdue.has(mac)) return;
+    const cancel = this.#schedule(this.#firmwareGraceMs, () => {
+      this.#firmwareWait.delete(mac);
+      if (!this.#online.has(mac) || this.#firmware.has(mac)) return;
+      this.#firmwareOverdue.add(mac);
+      this.#sync();
+    });
+    this.#firmwareWait.set(mac, cancel);
+  }
+
+  #stopFirmwareWait(mac: string): void {
+    this.#firmwareWait.get(mac)?.();
+    this.#firmwareWait.delete(mac);
+  }
+
+  /**
    * The one place a device's {@link DeviceFirmware} is decided. A reported version wins (and
-   * outlives a disconnect, see {@link #firmware}); a device that is connected — so has sent its
-   * HELLO — without one runs firmware that predates FIRMWARE; anything else hasn't been heard from.
-   * Except over ESP-NOW: its datagrams are fire-and-forget, so a lost FIRMWARE is no evidence of
-   * old firmware, and such a light stays unknown (never offered an update on a guess) until one
-   * arrives or it's cabled.
+   * outlives a disconnect, see {@link #firmware}). A light connected over USB or TCP that sent no
+   * FIRMWARE within {@link FIRMWARE_GRACE_MS} of its HELLO runs firmware that predates FIRMWARE;
+   * until then it's unknown, so the moment between the two messages never reads as outdated.
+   * Over ESP-NOW it stays unknown: datagrams are fire-and-forget, so a lost FIRMWARE is no
+   * evidence of old firmware (never offered an update on a guess) until one arrives or it's cabled.
    */
   #firmwareOf(mac: string): DeviceFirmware {
     const version = this.#firmware.get(mac);
     if (version !== undefined) return { kind: "reported", version };
-    if (!this.#online.has(mac)) return { kind: "unknown" };
-    return this.#provisioning.transportOf(mac) === "espnow" ? { kind: "unknown" } : { kind: "legacy" };
+    if (!this.#online.has(mac) || this.#provisioning.transportOf(mac) === "espnow") return { kind: "unknown" };
+    return this.#firmwareOverdue.has(mac) ? { kind: "legacy" } : { kind: "unknown" };
   }
 
   #sync(): void {

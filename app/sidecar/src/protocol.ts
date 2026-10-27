@@ -170,6 +170,13 @@ export const BRIDGE_TX_POWER = {
   REDUCED: 34,
 } as const;
 
+/**
+ * How long after a HELLO the server waits for the FIRMWARE message that follows it before it
+ * reads the light as firmware too old to send one (server). Every firmware that sends FIRMWARE
+ * sends it straight after HELLO, so the wait only covers the transport, not the device.
+ */
+export const FIRMWARE_GRACE_MS = 3_000;
+
 /** WiFi join progress, streamed in STATUS so the wizard confirms a join before unplug. */
 export const WifiState = {
   IDLE: 0,
