@@ -1,7 +1,17 @@
 <script module lang="ts">
+	import { wifiCredentialsProblem } from "$protocol";
+
 	/** The SSID to send: what was typed, trimmed. Empty means no network was entered. */
 	export function cleanSsid(raw: string): string {
 		return raw.trim();
+	}
+
+	/**
+	 * Why a light can't take what was typed (too long for it), or null. The engine refuses the
+	 * same credentials, so a form that sends them anyway gets a notice, never a silent drop.
+	 */
+	export function credentialsProblem(ssid: string, password: string): string | null {
+		return wifiCredentialsProblem(cleanSsid(ssid), password);
 	}
 </script>
 
@@ -24,6 +34,7 @@
 	let { id, ssid = $bindable(), password = $bindable() }: Props = $props();
 
 	let reveal = $state(false);
+	const problem = $derived(credentialsProblem(ssid, password));
 </script>
 
 <label class="text-muted-foreground block text-[0.7rem]" for="{id}-ssid">Network (SSID)</label>
@@ -55,6 +66,9 @@
 		{#if reveal}<EyeOff class="size-3.5" />{:else}<Eye class="size-3.5" />{/if}
 	</button>
 </div>
+{#if problem}
+	<p class="text-destructive mt-1.5 text-[0.7rem] leading-snug" role="alert">{problem}</p>
+{/if}
 
 <style>
 	/* flat inputs matching the picker's existing affordances. */

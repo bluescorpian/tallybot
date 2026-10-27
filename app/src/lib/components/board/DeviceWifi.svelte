@@ -16,7 +16,7 @@
 	import { untrack } from "svelte";
 	import type { DeviceWifiState } from "$ipc";
 	import PopoverPageHeader from "$lib/components/board/PopoverPageHeader.svelte";
-	import WifiCredentials, { cleanSsid } from "$lib/components/board/WifiCredentials.svelte";
+	import WifiCredentials, { cleanSsid, credentialsProblem } from "$lib/components/board/WifiCredentials.svelte";
 	import Check from "@lucide/svelte/icons/check";
 
 	interface Props {
@@ -65,8 +65,10 @@
 
 	const newSsid = $derived(cleanSsid(ssidInput));
 
+	const fits = $derived(credentialsProblem(ssidInput, password) === null);
+
 	function save() {
-		if (!newSsid) return;
+		if (!newSsid || !fits) return;
 		editing = false;
 		onprovisionwifi?.(newSsid, password);
 	}
@@ -133,7 +135,7 @@
 		<p class="text-muted-foreground mt-2 text-[0.68rem] leading-snug">
 			Stored on the device — it joins this network when unplugged. No need to be in range now.
 		</p>
-		<button type="button" class="btn-primary mt-3 w-full" disabled={!newSsid} onclick={save}>
+		<button type="button" class="btn-primary mt-3 w-full" disabled={!newSsid || !fits} onclick={save}>
 			Save network
 		</button>
 	{/if}

@@ -72,7 +72,7 @@
 	import * as RadioGroup from "$lib/components/ui/radio-group";
 	import BrightnessBar, { toLevel, LEVELS } from "$lib/components/board/BrightnessBar.svelte";
 	import { TRANSPORT_MODES, BRIDGE_LABEL, BRIDGE_DESC } from "$lib/components/board/transportModes";
-	import WifiCredentials, { cleanSsid } from "$lib/components/board/WifiCredentials.svelte";
+	import WifiCredentials, { cleanSsid, credentialsProblem } from "$lib/components/board/WifiCredentials.svelte";
 	import type { Flasher, FlashStage, FlashTarget } from "$lib/flasher/flasher";
 	import { FLASH_STAGES } from "$lib/flasher/flasher";
 	import type { AppUpdate } from "$lib/updater/updater";
@@ -783,6 +783,7 @@
 						<Button variant="ghost" onclick={() => toSummary(null)}>Later</Button>
 					{/if}
 					<Button
+						disabled={(job?.kind === "blank" || !keep) && form.transport === "wifi" && credentialsProblem(form.ssid, form.password) !== null}
 						onclick={() =>
 							toSummary(
 								job?.kind === "light" && keep ? currentSettings : { ...$state.snapshot(form), ssid: cleanSsid(form.ssid) },

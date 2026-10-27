@@ -307,18 +307,41 @@ export function encodeSetColor(color: Color, brightness: number = DEFAULT_BRIGHT
 }
 
 /**
+ * The longest SSID and password SET_WIFI carries, in UTF-8 bytes: 802.11's SSID limit and WPA2's
+ * passphrase limit. The firmware's decoder drops a longer one (`protocol.h` mirrors these), so
+ * the sidecar and the UI refuse it first, with {@link wifiCredentialsProblem}'s message.
+ */
+export const WIFI_SSID_MAX_BYTES = 32;
+export const WIFI_PASSWORD_MAX_BYTES = 63;
+
+/**
+ * Why a light can't take these Wi-Fi credentials, in words for the operator, or null when it can.
+ * Limits are bytes, not characters: an accented or non-Latin name uses more than one per character.
+ */
+export function wifiCredentialsProblem(ssid: string, password: string): string | null {
+  const enc = new TextEncoder();
+  if (enc.encode(ssid).length > WIFI_SSID_MAX_BYTES) {
+    return `The network name is too long: a light takes at most ${WIFI_SSID_MAX_BYTES} bytes (fewer characters if it has accents or symbols).`;
+  }
+  if (enc.encode(password).length > WIFI_PASSWORD_MAX_BYTES) {
+    return `The password is too long: a light takes at most ${WIFI_PASSWORD_MAX_BYTES} bytes (fewer characters if it has accents or symbols).`;
+  }
+  return null;
+}
+
+/**
  * SET_WIFI payload: `[type][ssidLen][ssid…][passLen][pass…]` (USB only). The device
  * persists these creds where WiFiManager reads them and confirms at once (save-only); the
  * join runs in the background and streams as STATUS `wifiState`, never gating the save.
- * SSID/password are UTF-8; each length is a single byte (the lengths the firmware and
- * NVS accept comfortably bound this — SSID ≤ 32, WPA pass ≤ 63).
+ * SSID/password are UTF-8, within {@link WIFI_SSID_MAX_BYTES} / {@link WIFI_PASSWORD_MAX_BYTES};
+ * longer ones throw, since the firmware would drop the frame.
  */
 export function setWifiPayload(ssid: string, password: string): Uint8Array {
+  const problem = wifiCredentialsProblem(ssid, password);
+  if (problem) throw new RangeError(problem);
   const enc = new TextEncoder();
   const ssidBytes = enc.encode(ssid);
   const passBytes = enc.encode(password);
-  assertByte("ssidLen", ssidBytes.length);
-  assertByte("passLen", passBytes.length);
   const out = new Uint8Array(1 + 1 + ssidBytes.length + 1 + passBytes.length);
   let i = 0;
   out[i++] = ServerMessageType.SET_WIFI;

@@ -67,6 +67,10 @@
 #define MSG_SET_COLOR 0x01     // server → device (both transports)
 // 0x02 retired (was IDENTIFY): flashing is now driven server-side over SET_COLOR.
 #define MSG_SET_WIFI 0x03      // host → device  (USB): persist creds; save-only, join runs in background
+// SET_WIFI limits in bytes (802.11 SSID, WPA2 passphrase); a longer one is dropped. Mirrors
+// WIFI_SSID_MAX_BYTES / WIFI_PASSWORD_MAX_BYTES in protocol.ts, which refuses them first.
+#define WIFI_SSID_MAX_BYTES 32
+#define WIFI_PASSWORD_MAX_BYTES 63
 #define MSG_SET_TRANSPORT 0x04  // host → device (USB): persist transport mode
 #define MSG_GET_STATUS 0x05    // host → device  (USB): request a STATUS frame
 #define MSG_SCAN_WIFI 0x06     // host → device  (USB): reserved, deferred post-v1.2
@@ -143,8 +147,8 @@
 struct ServerMessage {
   enum Kind { SET_COLOR, SET_WIFI, SET_TRANSPORT, GET_STATUS, SET_BRIDGE, RELAY, UNKNOWN } kind;
   uint8_t r, g, b, brightness;  // valid only when kind == SET_COLOR
-  char ssid[33];                // valid only when kind == SET_WIFI (≤32 chars + NUL)
-  char pass[64];                // valid only when kind == SET_WIFI (≤63 chars + NUL)
+  char ssid[WIFI_SSID_MAX_BYTES + 1];      // valid only when kind == SET_WIFI (+ NUL)
+  char pass[WIFI_PASSWORD_MAX_BYTES + 1];  // valid only when kind == SET_WIFI (+ NUL)
   uint8_t transportMode;        // valid only when kind == SET_TRANSPORT
   bool hasChannel;              // SET_TRANSPORT: true iff the optional channel byte was present
   uint8_t channel;              // SET_TRANSPORT (if hasChannel) / SET_BRIDGE (when enabled) channel

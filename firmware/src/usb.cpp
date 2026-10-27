@@ -25,7 +25,13 @@ unsigned long g_lastHello = 0;
 
 void onPacket(const uint8_t* payload, size_t len) {
   ServerMessage msg;
-  if (!decodeServerMessage(payload, len, &msg)) return;
+  if (!decodeServerMessage(payload, len, &msg)) {
+    // Credentials that don't fit would otherwise vanish with the host believing they were saved.
+    if (len > 0 && payload[0] == MSG_SET_WIFI)
+      TLOG(LOG_LEVEL_WARN, "SET_WIFI rejected: malformed, or SSID over %d / password over %d bytes\n",
+           WIFI_SSID_MAX_BYTES, WIFI_PASSWORD_MAX_BYTES);
+    return;
+  }
   g_hostSeen = true;  // any host frame stops the HELLO re-announce
   g_lastFrame = millis();
   if (msg.kind == ServerMessage::SET_COLOR) {

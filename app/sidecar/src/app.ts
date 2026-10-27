@@ -33,6 +33,7 @@ import {
   isIPv4,
   macTail,
   supportsEspNow,
+  wifiCredentialsProblem,
 } from "./protocol.ts";
 import { provisionedModeName, transportModeValue } from "./usb-transport.ts";
 
@@ -504,7 +505,14 @@ export class SidecarApp {
         this.#faults.clear("atem"); // a new attempt; its own errors will say if it fails too
         this.#atem.connect(command.ip); // change event publishes the new connecting state
         break;
-      case "provisionWifi":
+      case "provisionWifi": {
+        // The light would silently drop credentials over its limits, and the SSID would be stored
+        // as if it took: refuse here, with the reason.
+        const problem = wifiCredentialsProblem(command.ssid, command.password);
+        if (problem) {
+          this.#ipc.notice("warn", `Can't set up Wi-Fi on tally ${macTail(command.mac, 2)}: ${problem}`);
+          break;
+        }
         if (this.#provisioning.provisionWifi(command.mac, command.ssid, command.password)) {
           // Record the attempted SSID immediately so the wizard shows it without waiting for the
           // device's confirming STATUS. (That STATUS now echoes the NVS SSID too and reconciles to
@@ -516,6 +524,7 @@ export class SidecarApp {
           this.#ipc.notice("info", `Tally ${macTail(command.mac, 2)} isn't on USB — can't provision WiFi.`);
         }
         break;
+      }
       case "setTransport": {
         // The sidecar's backstop for the UI's ESP-NOW gate: never send SET_TRANSPORT(ESPNOW) to a
         // light whose firmware predates it. (An unknown version means it isn't connected, which
