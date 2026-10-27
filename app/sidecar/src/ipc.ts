@@ -215,7 +215,7 @@ export interface ProgramGate {
  * place, `SidecarApp`'s fault book (`faults.ts`), and every one is also written to the log.
  */
 export interface Fault {
-  /** The condition, unique within {@link AppState.faults}: `atem`, `state.write`, `device:<mac>:log`, … */
+  /** The condition, unique within {@link AppState.faults}: `atem`, `state.write`, `state.load`, `device:<mac>:log`, … */
   key: string;
   level: "warn" | "error";
   /** Operator-facing: what failed and, where there is one, what to do. */

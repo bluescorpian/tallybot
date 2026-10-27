@@ -24,7 +24,7 @@ import {
 } from "./engine.ts";
 import type { DeviceTransportEvents } from "./device-events.ts";
 import { FaultBook, type FaultReport, describeError } from "./faults.ts";
-import type { DeviceConfig, DeviceReport } from "./store.ts";
+import type { DeviceConfig, DeviceReport, StoreProblem } from "./store.ts";
 import type {
   BridgeTxPower,
   DeviceFirmware,
@@ -139,6 +139,8 @@ export interface AtemSourcePort {
 }
 
 export interface StorePort {
+  /** What went wrong loading the state file, if anything; raised as the `state.load` fault. */
+  readonly problem?: StoreProblem | null;
   readonly sourceIp: string | null;
   /** MAC of the designated ESP-NOW bridge, or null when none. Persisted (survives restarts). */
   readonly bridgeMac: string | null;
@@ -296,6 +298,29 @@ export interface SidecarAppDeps {
   dev?: boolean;
 }
 
+/**
+ * The operator's account of a state file that didn't load as-is (`store.ts`). It stays for the
+ * session: nothing the sidecar does makes it untrue.
+ */
+function stateLoadFault(problem: StoreProblem): { level: "warn" | "error"; message: string } {
+  if (problem.kind === "newer") {
+    return {
+      level: "warn",
+      message: `TallyBot's settings file was saved by a newer TallyBot (format ${String(problem.version)}), so this one opened it read-only to keep it intact. Changes work until TallyBot restarts, but aren't saved. Update TallyBot to keep them.`,
+    };
+  }
+  if (problem.keptAs !== null) {
+    return {
+      level: "error",
+      message: `TallyBot's settings file was damaged, so it started with no saved settings: light assignments and the ATEM address need setting again. The damaged file was kept as ${problem.keptAs}.`,
+    };
+  }
+  return {
+    level: "error",
+    message: "TallyBot's settings file was damaged and couldn't be set aside, so it started with no saved settings and won't save any, to leave the file as it is. Changes work until TallyBot restarts.",
+  };
+}
+
 /** The fault key for a light's latest WARN/ERROR line (cleared when it reconnects). */
 function deviceLogFault(mac: string): string {
   return `device:${mac}:log`;
@@ -396,6 +421,8 @@ export class SidecarApp {
     this.#dev = deps.dev ?? false;
     this.#faults = new FaultBook(this.#log);
     this.#source = deps.atem.snapshot();
+    const problem = deps.store.problem;
+    if (problem) this.#faults.raise({ key: "state.load", ...stateLoadFault(problem) });
 
     this.#ipc.on("command", (command) => void this.#run(command));
 
