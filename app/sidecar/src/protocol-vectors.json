@@ -1,0 +1,374 @@
+{
+  "//": "The binary protocol's shared constants and byte-exact payloads (unframed: no TCP length byte, no COBS). Every mirror is tested against this file: protocol.ts (protocol-vectors.test.ts), tools/src/device-protocol.ts (device-protocol.test.ts), app/src-tauri/src/usb/protocol.rs (cargo test) and firmware/src/protocol.h (scripts/check-protocol-mirrors.mjs, compiled on the host). `decoded: null` means every decoder must reject the payload. `deviceEncodes`: the firmware's encoder must produce exactly this payload. Change it together with docs/architecture.md and every mirror.",
+  "constants": {
+    "PROTOCOL_VERSION_CURRENT": 3,
+    "PROTOCOL_VERSION_MIN_SUPPORTED": 1,
+    "PROTOCOL_VERSION_ESPNOW": 3,
+    "SERVER_PORT": 7000,
+    "DISCOVERY_PORT": 7001,
+    "DISCOVERY_REQUEST": "TALLY_FIND",
+    "DISCOVERY_RESPONSE_PREFIX": "TALLY_HERE:",
+    "deviceMessageType": {
+      "HELLO": 1,
+      "HEARTBEAT": 2,
+      "STATUS": 3,
+      "LOG": 4,
+      "SCAN_RESULT": 5,
+      "RELAY": 6,
+      "FIRMWARE": 7
+    },
+    "serverMessageType": {
+      "SET_COLOR": 1,
+      "SET_WIFI": 3,
+      "SET_TRANSPORT": 4,
+      "GET_STATUS": 5,
+      "SCAN_WIFI": 6,
+      "RELAY": 7,
+      "SET_BRIDGE": 8
+    },
+    "transport": {
+      "NOTX": 0,
+      "WIFI": 1,
+      "ESPNOW": 2
+    },
+    "wifiState": {
+      "IDLE": 0,
+      "JOINING": 1,
+      "CONNECTED": 2,
+      "FAILED": 3
+    },
+    "logLevel": {
+      "INFO": 0,
+      "WARN": 1,
+      "ERROR": 2
+    },
+    "colors": {
+      "live": [
+        255,
+        0,
+        0
+      ],
+      "preview": [
+        0,
+        255,
+        0
+      ],
+      "idle": [
+        30,
+        30,
+        30
+      ],
+      "disconnected": [
+        0,
+        0,
+        255
+      ]
+    },
+    "DEFAULT_BRIGHTNESS": 128,
+    "MAX_PAYLOAD_BYTES": 255,
+    "ESPNOW_CHANNEL": 1,
+    "ESPNOW_CHANNEL_MIN": 1,
+    "ESPNOW_CHANNEL_MAX": 13,
+    "WIFI_SSID_MAX_BYTES": 32,
+    "WIFI_PASSWORD_MAX_BYTES": 63,
+    "HEARTBEAT_INTERVAL_MS": 10000,
+    "DISCOVERY_INTERVAL_MS": 2000,
+    "HOST_SILENCE_TIMEOUT_MS": 5000
+  },
+  "deviceToServer": [
+    {
+      "name": "hello",
+      "payload": "0103aabbccddeeff",
+      "decoded": {
+        "kind": "hello",
+        "version": 3,
+        "mac": "aa:bb:cc:dd:ee:ff"
+      },
+      "deviceEncodes": true
+    },
+    {
+      "name": "hello-v1",
+      "payload": "0101aabbccddeeff",
+      "decoded": {
+        "kind": "hello",
+        "version": 1,
+        "mac": "aa:bb:cc:dd:ee:ff"
+      }
+    },
+    {
+      "name": "hello-short",
+      "payload": "0103aabbccddee",
+      "decoded": null
+    },
+    {
+      "name": "hello-long",
+      "payload": "0103aabbccddeeff00",
+      "decoded": null
+    },
+    {
+      "name": "heartbeat",
+      "payload": "02",
+      "decoded": {
+        "kind": "heartbeat"
+      },
+      "deviceEncodes": true
+    },
+    {
+      "name": "heartbeat-long",
+      "payload": "0200",
+      "decoded": null
+    },
+    {
+      "name": "firmware",
+      "payload": "07312e312e30",
+      "decoded": {
+        "kind": "firmware",
+        "version": "1.1.0"
+      },
+      "deviceEncodes": true
+    },
+    {
+      "name": "firmware-empty",
+      "payload": "07",
+      "decoded": null
+    },
+    {
+      "name": "status",
+      "payload": "030202c404686f6d650101",
+      "decoded": {
+        "kind": "status",
+        "transport": 2,
+        "wifiState": 2,
+        "rssi": -60,
+        "ssid": "home",
+        "channel": 1,
+        "bridge": true
+      },
+      "deviceEncodes": true
+    },
+    {
+      "name": "status-no-ssid",
+      "payload": "03000000000100",
+      "decoded": {
+        "kind": "status",
+        "transport": 0,
+        "wifiState": 0,
+        "rssi": 0,
+        "ssid": "",
+        "channel": 1,
+        "bridge": false
+      },
+      "deviceEncodes": true
+    },
+    {
+      "name": "status-without-trailing-bytes",
+      "payload": "0301000000",
+      "decoded": {
+        "kind": "status",
+        "transport": 1,
+        "wifiState": 0,
+        "rssi": 0,
+        "ssid": "",
+        "channel": null,
+        "bridge": false
+      }
+    },
+    {
+      "name": "status-ssid-truncated",
+      "payload": "030100000541",
+      "decoded": null
+    },
+    {
+      "name": "log",
+      "payload": "04016869",
+      "decoded": {
+        "kind": "log",
+        "level": 1,
+        "text": "hi"
+      },
+      "deviceEncodes": true
+    },
+    {
+      "name": "log-short",
+      "payload": "04",
+      "decoded": null
+    },
+    {
+      "name": "relay",
+      "payload": "06aabbccddeeff02",
+      "decoded": {
+        "kind": "relayed",
+        "srcMac": "aa:bb:cc:dd:ee:ff",
+        "inner": "02"
+      }
+    },
+    {
+      "name": "relay-no-inner",
+      "payload": "06aabbccddeeff",
+      "decoded": null
+    },
+    {
+      "name": "unknown-type",
+      "payload": "09",
+      "decoded": null
+    },
+    {
+      "name": "empty",
+      "payload": "",
+      "decoded": null
+    }
+  ],
+  "serverToDevice": [
+    {
+      "name": "set-color",
+      "payload": "01ff000080",
+      "decoded": {
+        "kind": "SET_COLOR",
+        "r": 255,
+        "g": 0,
+        "b": 0,
+        "brightness": 128
+      }
+    },
+    {
+      "name": "set-color-short",
+      "payload": "01ff0000",
+      "decoded": null
+    },
+    {
+      "name": "set-color-long",
+      "payload": "01ff00008000",
+      "decoded": null
+    },
+    {
+      "name": "set-wifi",
+      "payload": "0304686f6d6506736563726574",
+      "decoded": {
+        "kind": "SET_WIFI",
+        "ssid": "home",
+        "password": "secret"
+      }
+    },
+    {
+      "name": "set-wifi-open-network",
+      "payload": "0304686f6d6500",
+      "decoded": {
+        "kind": "SET_WIFI",
+        "ssid": "home",
+        "password": ""
+      }
+    },
+    {
+      "name": "set-wifi-ssid-33-bytes",
+      "payload": "032161616161616161616161616161616161616161616161616161616161616161616100",
+      "decoded": null
+    },
+    {
+      "name": "set-wifi-password-64-bytes",
+      "payload": "0304686f6d654070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070",
+      "decoded": null
+    },
+    {
+      "name": "set-wifi-trailing-byte",
+      "payload": "0304686f6d6500ff",
+      "decoded": null
+    },
+    {
+      "name": "set-transport",
+      "payload": "0401",
+      "decoded": {
+        "kind": "SET_TRANSPORT",
+        "mode": 1,
+        "channel": null
+      }
+    },
+    {
+      "name": "set-transport-espnow",
+      "payload": "040201",
+      "decoded": {
+        "kind": "SET_TRANSPORT",
+        "mode": 2,
+        "channel": 1
+      }
+    },
+    {
+      "name": "set-transport-channel-0",
+      "payload": "040200",
+      "decoded": null
+    },
+    {
+      "name": "set-transport-channel-14",
+      "payload": "04020e",
+      "decoded": null
+    },
+    {
+      "name": "set-transport-long",
+      "payload": "04020100",
+      "decoded": null
+    },
+    {
+      "name": "get-status",
+      "payload": "05",
+      "decoded": {
+        "kind": "GET_STATUS"
+      }
+    },
+    {
+      "name": "get-status-long",
+      "payload": "0500",
+      "decoded": null
+    },
+    {
+      "name": "set-bridge",
+      "payload": "080101",
+      "decoded": {
+        "kind": "SET_BRIDGE",
+        "enabled": true,
+        "channel": 1
+      }
+    },
+    {
+      "name": "set-bridge-off-ignores-channel",
+      "payload": "080000",
+      "decoded": {
+        "kind": "SET_BRIDGE",
+        "enabled": false,
+        "channel": 0
+      }
+    },
+    {
+      "name": "set-bridge-channel-0",
+      "payload": "080100",
+      "decoded": null
+    },
+    {
+      "name": "set-bridge-short",
+      "payload": "0801",
+      "decoded": null
+    },
+    {
+      "name": "relay",
+      "payload": "07aabbccddeeff01ff000080",
+      "decoded": {
+        "kind": "RELAY",
+        "targetMac": "aa:bb:cc:dd:ee:ff",
+        "inner": "01ff000080"
+      }
+    },
+    {
+      "name": "relay-no-inner",
+      "payload": "07aabbccddeeff",
+      "decoded": null
+    },
+    {
+      "name": "retired-identify",
+      "payload": "02",
+      "decoded": null
+    },
+    {
+      "name": "unknown-type",
+      "payload": "09",
+      "decoded": null
+    }
+  ]
+}

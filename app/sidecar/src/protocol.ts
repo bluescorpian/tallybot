@@ -9,6 +9,9 @@
  *     opaque so this file stays the single payload codec authority).
  *   • `tools/src/device-protocol.ts`   (the simulated device's half: HELLO/FIRMWARE/HEARTBEAT
  *     encoders and the SET_COLOR decoder, on top of this file's constants).
+ * `protocol-vectors.json` (beside this file) pins the shared constants and byte-exact payloads,
+ * and every mirror is tested against it (its header lists how), so a one-sided change fails CI
+ * instead of a flashed light. A protocol change edits that file too.
  *
  * **Frames are exact-length.** Every decoder (here, the firmware's and the shell's) rejects a
  * message whose length doesn't match its type, so a field can't be appended to a message the

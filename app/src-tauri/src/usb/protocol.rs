@@ -5,8 +5,8 @@
 //! detection and outbound routing). Every other payload is forwarded opaque to the
 //! sidecar, whose `app/sidecar/src/protocol.ts` stays the single payload-codec
 //! authority. So this file mirrors just two things from `protocol.ts` /
-//! `firmware/src/protocol.h`: COBS framing and the HELLO layout. Keep the three in
-//! lockstep — a maintainer touching the protocol should find all three.
+//! `firmware/src/protocol.h`: COBS framing and the HELLO layout. Keep them in lockstep: the
+//! shared `app/sidecar/src/protocol-vectors.json` is checked against this file in its tests.
 //!
 //! Framing is COBS (Consistent Overhead Byte Stuffing): a lone `0x00` is the frame
 //! delimiter and never appears inside an encoded frame, so after any corruption the
@@ -225,6 +225,34 @@ mod tests {
                 mac: "aa:bb:cc:dd:ee:ff".to_string()
             })
         );
+    }
+
+    /// The protocol mirror guard, shell side: this file against the shared vectors the sidecar,
+    /// firmware and simulator are tested against too (`app/sidecar/src/protocol-vectors.json`).
+    #[test]
+    fn matches_the_shared_protocol_vectors() {
+        let v: serde_json::Value =
+            serde_json::from_str(include_str!("../../../sidecar/src/protocol-vectors.json")).expect("vectors parse");
+        let c = &v["constants"];
+        assert_eq!(c["deviceMessageType"]["HELLO"], MSG_HELLO);
+        assert_eq!(c["serverMessageType"]["GET_STATUS"], MSG_GET_STATUS);
+
+        let hex = |s: &str| (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect::<Vec<u8>>();
+        for vector in v["deviceToServer"].as_array().expect("deviceToServer") {
+            let name = vector["name"].as_str().unwrap();
+            let got = parse_hello(&hex(vector["payload"].as_str().unwrap()));
+            let decoded = &vector["decoded"];
+            if decoded["kind"] == "hello" {
+                let want = Hello {
+                    version: decoded["version"].as_u64().unwrap() as u8,
+                    mac: decoded["mac"].as_str().unwrap().to_string(),
+                };
+                assert_eq!(got, Some(want), "{name}");
+            } else {
+                // Not a HELLO the sidecar accepts (another type, or a malformed HELLO): neither does this.
+                assert_eq!(got, None, "{name}");
+            }
+        }
     }
 
     #[test]

@@ -14,6 +14,15 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - run: node scripts/check-release.mjs
 
+  # The protocol mirror guard's firmware leg: protocol.h compiled on the host against the shared
+  # vectors (app/sidecar/src/protocol-vectors.json). The sidecar, tools and shell legs run in their
+  # own test suites below.
+  protocol-mirrors:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: node scripts/check-protocol-mirrors.mjs
+
   # Node + Rust run inside the flake's dev shell, so CI builds with the same
   # toolchain (and webkit/udev system libs) as local development.
   sidecar:

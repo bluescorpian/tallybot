@@ -2,7 +2,9 @@
 //
 // This file is the C++ mirror of `app/sidecar/src/protocol.ts` (the source of truth;
 // see `docs/architecture.md` "Binary Message Protocol"), which lists the other mirrors.
-// Keep them in lockstep.
+// Keep them in lockstep: `app/sidecar/src/protocol-vectors.json` pins the shared constants and
+// byte-exact payloads, and `node scripts/check-protocol-mirrors.mjs` (CI) compiles this header on
+// the host and checks it against them.
 //
 // Frames are exact-length: the decoder below rejects a message whose length doesn't match
 // its type, and so do the hosts. A protocol change adds a new message type (old parsers skip
