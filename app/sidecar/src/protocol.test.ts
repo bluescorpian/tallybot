@@ -21,6 +21,7 @@ import {
   frame,
   getStatusPayload,
   isDiscoveryRequest,
+  isIPv4,
   macTail,
   parseDiscoveryResponse,
   parseMac,
@@ -266,6 +267,8 @@ test("parseMac round-trips with formatMac and rejects junk", () => {
   assert.throws(() => parseMac("aa:bb:cc:dd:ee"), RangeError); // too few octets
   assert.throws(() => parseMac("aa:bb:cc:dd:ee:gg"), RangeError); // non-hex
   assert.throws(() => parseMac("aabbccddeeff"), RangeError); // no separators
+  assert.throws(() => parseMac("aa:bb:cc:dd:ee:ff:00"), RangeError); // too many octets
+  assert.throws(() => parseMac("aaa:bb:cc:dd:ee:ff"), RangeError); // an octet of three digits
 });
 
 // ── Device → server decoder ────────────────────────────────────────────────────
@@ -343,6 +346,15 @@ test("deviceCompatibility supports the range and names the stale side outside it
   assert.equal(deviceCompatibility(PROTOCOL_VERSION.MIN_SUPPORTED), "supported");
   assert.equal(deviceCompatibility(PROTOCOL_VERSION.MIN_SUPPORTED - 1), "device-too-old");
   assert.equal(deviceCompatibility(PROTOCOL_VERSION.CURRENT + 1), "app-too-old");
+});
+
+test("isIPv4 accepts a dotted quad with octets 0-255 and nothing else", () => {
+  for (const ip of ["192.168.10.240", "0.0.0.0", "255.255.255.255", "192.0.2.1"]) {
+    assert.equal(isIPv4(ip), true, ip);
+  }
+  for (const ip of ["256.0.0.1", "999.999.999.999", "10.0.0", "10.0.0.1.2", "10.0..1", "a.b.c.d", "simulated", ""]) {
+    assert.equal(isIPv4(ip), false, ip);
+  }
 });
 
 test("supportsEspNow starts at protocol v3", () => {

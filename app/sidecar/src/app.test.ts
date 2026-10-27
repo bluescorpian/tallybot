@@ -490,6 +490,28 @@ test("setSource persists the IP and connects the ATEM", async () => {
   assert.deepEqual(atem.connects, ["10.0.0.9"]);
 });
 
+test("setSource refuses a non-IPv4 address with an info notice, and neither persists nor connects", async () => {
+  const { app, atem, store, ipc } = setup({
+    ip: null,
+    connection: "disconnected",
+    programInput: null,
+    previewInput: null,
+    inputs: [],
+  });
+  await app.start();
+
+  for (const ip of ["simulated", "256.0.0.1", "10.0.0", ""]) {
+    const before = ipc.notices.length;
+    ipc.command({ type: "setSource", ip });
+    await tick();
+    assert.equal(ipc.notices.length, before + 1, `"${ip}" raises a notice`);
+    assert.equal(ipc.notices.at(-1)?.level, "info");
+  }
+
+  assert.equal(store.sourceIp, null);
+  assert.deepEqual(atem.connects, []);
+});
+
 test("Device.firmware is unknown until heard from, then the reported version, which survives a reconnect", async () => {
   const { app, server, store, ipc } = setup();
   await store.assign(MAC, 1); // a light the app remembers but hasn't heard from this run
