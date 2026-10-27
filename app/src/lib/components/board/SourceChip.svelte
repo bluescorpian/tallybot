@@ -82,7 +82,7 @@
 <style>
   /* The pill body. The raised look is the dark border + top-left-lit gradient
      + inset bevel + the drop shadow (dark lower-right, white upper-left) lifts it
-     off the off-white board. Tuned and locked in /preview. */
+     off the off-white board. Tuned by eye against the board in the browser preview (`pnpm dev`). */
   .chip {
     width: min(300px, 100%);
     height: 60px;

@@ -44,7 +44,7 @@ function provisioning(d: Device) {
 		protocolVersion: d.protocolVersion,
 		bridge: d.bridge ?? false,
 		// Whether that version is out of date depends on the firmware this app bundles, which the
-		// route knows and this mapper doesn't: it applies `firmwareOutdated` ($lib/flasher/flasher).
+		// page knows and this mapper doesn't: it applies `FlashSession.outdated` ($lib/flasher/session.svelte).
 		firmwareOutdated: false,
 		firmwareVersion: d.firmware.kind === "reported" ? d.firmware.version : null,
 		firmwareAvailable: null,
@@ -98,10 +98,10 @@ function dockLight(d: Device): BoardLight {
  * A device is only *seated* when its `inputId` is actually present in the current
  * input list. An assignment to a now-missing input (e.g. a bigger switcher's input
  * this source doesn't report) is an *orphan*: assignments are global and survive
- * source changes (DESIGN.md / store.ts), so we don't drop it — we route it to the
+ * source changes (docs/design.md / store.ts), so we don't drop it — we route it to the
  * dock (inputId null → setup) so it stays visible and re-seats if the input
  * returns. A disconnect that *retains* its inputs keeps them in the list, so those
- * lights stay seated and fault (per DESIGN.md) — this only catches absent inputs.
+ * lights stay seated and fault (per docs/design.md) — this only catches absent inputs.
  */
 export function deviceToBoard(
 	d: Device,

@@ -1,5 +1,5 @@
 <script lang="ts">
-	// The settings drawer (DESIGN.md → "Settings (slide-out drawer)"). A right-side
+	// The settings drawer (docs/design.md → "Settings (slide-out drawer)"). A right-side
 	// shadcn Sheet that slides in over the board — the board stays visible behind, so
 	// you type the ATEM IP, Save, and watch the SourceChip go connecting → connected
 	// without leaving the screen. It re-hosts the built SettingsPanel; it doesn't

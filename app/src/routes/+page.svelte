@@ -233,7 +233,7 @@
 </script>
 
 <div class="page">
-	<!-- custom frameless titlebar — the gear opens the settings drawer (DESIGN.md) -->
+	<!-- custom frameless titlebar — the gear opens the settings drawer (docs/design.md) -->
 	<TitleBar
 		onsettings={() => (settingsOpen = true)}
 		update={updatePill}
@@ -371,7 +371,7 @@
 		background: var(--workspace);
 	}
 
-	/* Canvas behaviour (DESIGN.md): no zoom; scroll when content exceeds the window.
+	/* Canvas behaviour (docs/design.md): no zoom; scroll when content exceeds the window.
 	   The board surface fills the window with a small uniform margin all round; the
 	   schematic content stays left-aligned and extra width becomes dot-grid margin. */
 	.stage {

@@ -101,7 +101,7 @@ export class UsbTransport extends EventEmitter {
   async start(): Promise<void> {}
   async stop(): Promise<void> {}
 
-  /** MACs of devices currently reachable over USB (used by the composite for dedup). */
+  /** MACs of devices currently reachable over USB. */
   connectedMacs(): string[] {
     return [...this.#online.keys()];
   }

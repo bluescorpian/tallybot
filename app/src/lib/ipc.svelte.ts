@@ -8,8 +8,8 @@
 // senders for every command. It reuses the shared `$ipc` contract for parsing/serializing
 // — the same code the sidecar runs — so the framing can't drift between the two ends.
 //
-// Guarded by `isTauri`: in a plain browser (`pnpm dev`, the /preview design workflow)
-// there's no shell, so `start()` is a no-op and the page falls back to mock data.
+// Guarded by `isTauri`: in a plain browser (`pnpm dev`, previewed through its `?demo=` states)
+// there's no shell, so `start()` is a no-op and the page falls back to the mock board.
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {

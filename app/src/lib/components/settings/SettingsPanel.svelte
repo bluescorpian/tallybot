@@ -1,5 +1,5 @@
 <script lang="ts">
-	// Settings content (DESIGN.md → "Settings"). Standard shadcn (Luma) surface —
+	// Settings content (docs/design.md → "Settings"). Standard shadcn (Luma) surface —
 	// flat, not neumorphic; the bespoke/neumorphic language is the canvas only.
 	// Single scrolling pane, three settled groups: Source / General / About, over a
 	// shared dirty-gated SAVE footer.
@@ -21,8 +21,8 @@
 	//     then follows the live `source` the host passes back.
 	//   • Scan fills the IP field (a pending change), it does NOT connect; Save connects.
 	//   • Scan states: idle · scanning (~20s) · results · none/failed.
-	//   • Every host hook is optional: without one (the /preview design workflow, a
-	//     plain browser) the panel mocks that behaviour locally.
+	//   • Every host hook is optional: without one (a plain browser under `pnpm dev`)
+	//     the panel mocks that behaviour locally.
 	import Search from "@lucide/svelte/icons/search";
 	import LoaderCircle from "@lucide/svelte/icons/loader-circle";
 	import RotateCw from "@lucide/svelte/icons/rotate-cw";
@@ -81,7 +81,7 @@
 		};
 		// Real scan hookup (Tauri). When `onscan` is set, the Scan button asks the
 		// sidecar to sweep the subnet and results arrive via `scanResult`; when it's
-		// absent (the /preview design workflow) the mock sweep below runs instead.
+		// absent (a plain browser under `pnpm dev`) the mock sweep below runs instead.
 		onscan?: () => void;
 		scanResult?: SourceScanEvent | null;
 		updater?: Updater;
@@ -187,7 +187,7 @@
 			onscan();
 			return;
 		}
-		// mock sweep (no sidecar — the /preview workflow)
+		// mock sweep (no sidecar — a plain browser under `pnpm dev`)
 		clearTimeout(scanTimer);
 		scanTimer = setTimeout(() => {
 			hits = [

@@ -26,10 +26,10 @@ export interface DeviceConfig {
   /** Per-device LED brightness, 0–255. */
   brightness: number;
   /**
-   * SSID the device was provisioned to join over USB. The device's STATUS frame reports
-   * only *whether* creds are present, never the SSID string, so the host remembers it here
-   * to show "On <network>" when the device is re-plugged. Omitted when unset (so a device
-   * with no WiFi config keeps the minimal `{ inputId, brightness }` shape).
+   * SSID the device was provisioned to join. Set when the app provisions it, and adopted from
+   * the SSID the device's STATUS reports while cabled (its NVS value, the source of truth), so
+   * the board can show "On <network>" for a light that isn't plugged in. Omitted when unset (so
+   * a device with no WiFi config keeps the minimal `{ inputId, brightness }` shape).
    */
   ssid?: string;
 }

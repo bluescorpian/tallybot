@@ -1,5 +1,5 @@
 <script lang="ts">
-	// Board (DESIGN.md → "Concept", "Layout") — the assembled PCB-schematic canvas.
+	// Board (docs/design.md → "Concept", "Layout") — the assembled PCB-schematic canvas.
 	//
 	// Layout (top → bottom):
 	//   SourceChip → source bus → input pins (column headers)
@@ -77,7 +77,7 @@
 	// fall through. A light seats in its column when its inputId matches a real
 	// input; otherwise (unassigned, or an orphan assigned to a now-missing input) it
 	// drops to the dock. (The mapper already nulls orphans; this is the structural
-	// guarantee for the locked primitive, including hand-built /preview props.)
+	// guarantee for the locked primitive, including props built by hand rather than by the mapper.)
 	const inputIds = $derived(new Set(inputs.map((i) => i.id)));
 	const lightsFor = (id: string) => lights.filter((l) => l.inputId === id);
 	const unassigned = $derived(

@@ -10,7 +10,7 @@
 </script>
 
 <script lang="ts">
-	// The assign / flash picker popover (DESIGN.md → "Interaction").
+	// The assign / flash picker popover (docs/design.md → "Interaction").
 	//
 	// A plain click on any light opens this popover. It lists the source's
 	// inputs (by their labels) with the current one marked, and offers the two

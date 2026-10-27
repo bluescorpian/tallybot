@@ -16,7 +16,7 @@
 </script>
 
 <script lang="ts">
-	// Custom frameless titlebar (DESIGN.md → "App chrome"). The native OS titlebar
+	// Custom frameless titlebar (docs/design.md → "App chrome"). The native OS titlebar
 	// is off (`decorations: false` in tauri.conf.json); this bar replaces it.
 	// Flat UI language (zinc / Inter), not the neumorphic board surface.
 	//
@@ -179,7 +179,7 @@
 		/* Always on top: the settings sheet (z-50) and everything else stay behind it,
 		   so the window controls are never covered. No bottom border and no cream band:
 		   the large wordmark + the top-anchored controls float over the board so the bar
-		   doesn't read as a chunky header (DESIGN.md "deliberately thin chrome"). */
+		   doesn't read as a chunky header (docs/design.md "deliberately thin chrome"). */
 		position: relative;
 		z-index: 60;
 		display: flex;

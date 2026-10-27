@@ -1,5 +1,5 @@
 <script lang="ts">
-	// Dock (DESIGN.md → "Dock"): the recessed tray of unassigned lights along the
+	// Dock (docs/design.md → "Layout", the Dock): the recessed tray of unassigned lights along the
 	// bottom of the board. Unassigned devices show the setup colour and sit here
 	// until wired into a column; clicking one opens the same picker as a seated
 	// light. Presentational — Board owns the data and the flash blink, and places
