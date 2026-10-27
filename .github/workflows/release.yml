@@ -81,6 +81,11 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+      # The packaged sidecar is a different program from the source CI tests (pkg runtime, bundle,
+      # on-disk atem-connection worker), and the updater pushes a release to every install: boot
+      # it before anything is attached.
+      - name: Boot the packaged sidecar
+        run: node app/sidecar/smoke-boot.mjs app/src-tauri/binaries/tallybot-sidecar-x86_64-pc-windows-msvc.exe
       - name: Collect installers + portable zip
         shell: pwsh
         run: |
@@ -152,6 +157,11 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+      # The packaged sidecar is a different program from the source CI tests (pkg runtime, bundle,
+      # on-disk atem-connection worker), and the updater pushes a release to every install: boot
+      # it before anything is attached.
+      - name: Boot the packaged sidecar
+        run: node app/sidecar/smoke-boot.mjs app/src-tauri/binaries/tallybot-sidecar-x86_64-unknown-linux-gnu
       - name: Collect packages
         run: |
           v=${{ needs.version.outputs.version }}
