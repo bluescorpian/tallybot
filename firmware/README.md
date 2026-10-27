@@ -23,7 +23,7 @@ PlatformIO provides the toolchain. It is deliberately *not* in `flake.nix`, whic
 Tauri app only, so install `pio` separately.
 
 ```bash
-pio run              # build
+pio run              # build (the release env, the default)
 pio run -t upload    # flash (board attached over USB-C)
 pio device monitor   # serial @ 115200
 ```
@@ -37,12 +37,15 @@ There are two PlatformIO envs, and the choice matters once USB is involved:
 
 | Goal | Env | Why |
 |------|-----|-----|
-| Debug firmware at a terminal | `esp32-c3-devkitm-1` (default) | Plain-text logs, so `pio device monitor` is readable and crash backtraces symbolise. |
-| **Test USB comms with the host app** | **`esp32-c3-release`** | Frames *every* byte as COBS, so the host's decoder reads the stream cleanly. |
+| **Use with the host app** (and what both flashers ship) | **`esp32-c3-release`** (default) | Frames *every* byte as COBS, so the host's decoder reads the stream cleanly. |
+| Debug firmware at a terminal | `esp32-c3-devkitm-1` | Plain-text logs, so `pio device monitor` is readable and crash backtraces symbolise. |
 
 ```bash
-pio run -e esp32-c3-release -t upload   # flash the release build for host USB testing
+pio run -e esp32-c3-devkitm-1 -t upload && pio device monitor   # the dev build, at a terminal
 ```
+
+Both envs share one `[env]` block in `platformio.ini`; the dev env only adds
+`TALLYBOT_USB_TEXT_LOG`, and CI fails if that flag ever reaches the release env.
 
 **Why you can't use the dev build for USB-comms testing:** the dev build prints plain-text
 logs onto the *same* USB wire as the COBS control frames. That's great for a human reading
@@ -76,7 +79,7 @@ runner — no ATEM, no app, no UI. From the repo root:
 cd tools && pnpm sidecar-dev      # binds TCP 7000 / UDP 7001; drive program/preview here
 ```
 
-Then flash a board (`pio run -t upload && pio device monitor`), provision it onto the
+Then flash a board (`pio run -t upload`), provision it onto the
 same subnet, and it appears in the `sidecar-dev` REPL by its MAC. Driving program/preview
 changes the LED; `flash <mac>` strobes it; killing the runner turns it steady blue.
 

@@ -65,7 +65,17 @@ jobs:
         with:
           path: ~/.platformio
           key: pio-${{ hashFiles('firmware/platformio.ini') }}
-      - run: pip install platformio
+      # Pinned like the platform and libraries in platformio.ini: a new PlatformIO core can
+      # change how the release image is built. Bump deliberately.
+      - run: pip install platformio==6.2.0
       - name: Build dev + release envs
         working-directory: firmware
         run: pio run -e esp32-c3-devkitm-1 -e esp32-c3-release
+      # The release env is what both flashers ship; the dev env's plain-text USB logs would
+      # corrupt the host's COBS stream, so its flag must never reach the release env.
+      - name: Release env frames every byte
+        working-directory: firmware
+        run: |
+          pio project config --json-output | jq -e '
+            [.[] | select(.[0] == "env:esp32-c3-release") | .[1][] | select(.[0] == "build_flags") | .[1][]]
+            | any(test("TALLYBOT_USB_TEXT_LOG")) | not'

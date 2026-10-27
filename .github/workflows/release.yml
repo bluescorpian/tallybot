@@ -181,7 +181,9 @@ jobs:
         with:
           path: ~/.platformio
           key: pio-${{ hashFiles('firmware/platformio.ini') }}
-      - run: pip install platformio
+      # Pinned like the platform and libraries in platformio.ini: a new PlatformIO core can
+      # change how the release image is built. Bump deliberately.
+      - run: pip install platformio==6.2.0
       # One image at offset 0x0 (merge_bin.py): what the web flasher, the in-app flasher and
       # a manual `esptool write_flash 0x0` all take. The staging script names it (and the
       # manifest beside it: firmware version + sha256, which the app reads) from

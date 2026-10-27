@@ -151,7 +151,7 @@ cargo tauri dev        # builds and runs the desktop app
 ```
 
 To flash firmware from source, use [PlatformIO](https://platformio.org/):
-`cd firmware && pio run -e esp32-c3-release -t upload`.
+`cd firmware && pio run -t upload` (the release build, the default env).
 
 Pushing a `vX.Y.Z` tag drafts a release with the installers and firmware; publishing it
 updates the web flasher.
