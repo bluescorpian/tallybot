@@ -158,8 +158,15 @@ export class DeviceServer extends EventEmitter {
   // ── TCP ──────────────────────────────────────────────────────────────────────
 
   #startTcp(): Promise<void> {
-    return new Promise((resolve) => {
-      this.#tcp.listen(this.#wantedTcpPort, this.#host, () => resolve());
+    // A failed bind (EADDRINUSE: another engine owns 7000) fires 'error', never the listen
+    // callback: reject on it, as `#startDiscovery` does, so `start()` fails loudly instead of
+    // hanging before the ATEM is ever connected.
+    return new Promise((resolve, reject) => {
+      this.#tcp.once("error", reject);
+      this.#tcp.listen(this.#wantedTcpPort, this.#host, () => {
+        this.#tcp.removeListener("error", reject);
+        resolve();
+      });
     });
   }
 
