@@ -5,8 +5,7 @@
 	// light. Presentational — Board owns the data and the flash blink, and places
 	// this tray (the tray just fills its positioned wrapper).
 	import LightPicker from "$lib/components/board/LightPicker.svelte";
-	import type { BoardLight } from "$lib/components/board/types";
-	import type { TransportMode } from "$ipc";
+	import type { BoardLight, LightActions } from "$lib/components/board/types";
 	import type { PickerInput } from "$lib/components/board/LightPicker.svelte";
 
 	interface Props {
@@ -16,34 +15,11 @@
 		pickerInputs: PickerInput[];
 		/** Light width in px — keeps dock pucks sized to the column pucks. */
 		lightWidth: number;
-		onassign?: (mac: string, inputId: string) => void;
-		onflash?: (mac: string) => void;
-		/** Set a device's LED brightness (protocol byte, 0–255). */
-		onbrightness?: (mac: string, value: number) => void;
-		/** Provision a device's Wi-Fi (persist creds; save-only — no live join). */
-		onprovisionwifi?: (mac: string, ssid: string, pass: string) => void;
-		/** Set a device's unplugged transport mode. */
-		onsettransport?: (mac: string, mode: TransportMode) => void;
-		/** Designate (mac) / un-designate (null) the ESP-NOW bridge device. */
-		onsetbridge?: (mac: string | null) => void;
-		/** Open the firmware updater for this light (the flasher drawer). */
-		onupdatefirmware?: (mac: string) => void;
+		actions?: LightActions;
 		/** The light to bring into view (see LightPicker's `reveal`). */
 		reveal?: { mac: string; pick: boolean; seq: number } | null;
 	}
-	let {
-		lights,
-		pickerInputs,
-		lightWidth,
-		onassign,
-		onflash,
-		onbrightness,
-		onprovisionwifi,
-		onsettransport,
-		onsetbridge,
-		onupdatefirmware,
-		reveal = null,
-	}: Props = $props();
+	let { lights, pickerInputs, lightWidth, actions, reveal = null }: Props = $props();
 </script>
 
 <div class="dock">
@@ -54,33 +30,7 @@
 	<div class="dock-row">
 		{#each lights as light (light.mac)}
 			<div class="dock-slot" style="width:{lightWidth}px">
-				<LightPicker
-					mac={light.mac}
-					label={light.label}
-					state={light.state}
-					inputs={pickerInputs}
-					currentInputId={null}
-					brightness={light.brightness}
-					transport={light.transport}
-					provisionedMode={light.provisionedMode}
-					ssid={light.ssid}
-					wifiState={light.wifiState}
-					rssi={light.rssi}
-					protocolVersion={light.protocolVersion}
-					bridge={light.bridge}
-					firmwareVersion={light.firmwareVersion}
-					firmwareOutdated={light.firmwareOutdated}
-					firmwareMissing={light.firmwareMissing}
-					firmwareAvailable={light.firmwareAvailable}
-					onupdatefirmware={() => onupdatefirmware?.(light.mac)}
-					reveal={reveal?.mac === light.mac ? reveal : null}
-					onassign={(id) => onassign?.(light.mac, id)}
-					onflash={() => onflash?.(light.mac)}
-					onbrightness={(v) => onbrightness?.(light.mac, v)}
-					onprovisionwifi={(s, p) => onprovisionwifi?.(light.mac, s, p)}
-					onsettransport={(m) => onsettransport?.(light.mac, m)}
-					onsetbridge={(enabled) => onsetbridge?.(enabled ? light.mac : null)}
-				/>
+				<LightPicker {light} inputs={pickerInputs} {actions} reveal={reveal?.mac === light.mac ? reveal : null} />
 			</div>
 		{/each}
 	</div>

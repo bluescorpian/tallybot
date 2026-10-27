@@ -858,14 +858,16 @@
 			assignable={props.assignable}
 			override={props.override}
 			overrideSource={props.overrideSource}
-			onassign={assign}
-			onunassign={unassign}
-			onflash={flash}
-			onbrightness={setBrightness}
-			onprovisionwifi={provisionWifi}
-			onsettransport={setTransport}
-			onsetbridge={setBridge}
-			onupdatefirmware={flasherReady ? (mac) => openFlasher({ kind: "light", mac }) : undefined}
+			actions={{
+				assign,
+				unassign,
+				flash,
+				setBrightness,
+				provisionWifi,
+				setTransport,
+				setBridge,
+				updateFirmware: flasherReady ? (mac) => openFlasher({ kind: "light", mac }) : undefined,
+			}}
 			{reveal}
 			onsetup={setup}
 			oninputclick={devMode ? onInputClick : undefined}

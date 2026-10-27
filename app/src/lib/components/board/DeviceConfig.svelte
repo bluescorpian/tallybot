@@ -10,7 +10,7 @@
 	// Flat shadcn surface (the popover is flat, not the neumorphic board). Cyan
 	// `--signal` is activity (the wired chip), never a tally state.
 	import { Switch } from "$lib/components/ui/switch/index.js";
-	import type { DeviceTransport, TransportMode } from "$ipc";
+	import type { BoardLight, LightActions } from "$lib/components/board/types";
 	import { supportsEspNow } from "$protocol";
 	import PopoverPageHeader from "$lib/components/board/PopoverPageHeader.svelte";
 	import ChevronRight from "@lucide/svelte/icons/chevron-right";
@@ -23,42 +23,21 @@
 	import { TRANSPORT_MODES, BRIDGE_LABEL, BRIDGE_DESC } from "./transportModes";
 
 	interface Props {
-		label: string;
-		transport: DeviceTransport;
-		provisionedMode: TransportMode | null;
-		ssid: string | null;
-		/** Device's HELLO protocol version (null if never connected) — gates ESP-NOW. */
-		protocolVersion: number | null;
-		/** True while this device is the designated, confirmed ESP-NOW bridge. */
-		bridge: boolean;
+		light: BoardLight;
+		actions?: LightActions;
 		/** Open the Wi-Fi credentials page. */
 		onwifi?: () => void;
-		/** Set the unplugged transport mode inline (only Wi-Fi has its own page). */
-		onsettransport?: (mode: TransportMode) => void;
-		/** Designate (true) or un-designate (false) this device as the ESP-NOW bridge. */
-		onsetbridge?: (enabled: boolean) => void;
 		/** Return to the compact picker. */
 		onback?: () => void;
 	}
-	let {
-		label,
-		transport,
-		provisionedMode,
-		ssid,
-		protocolVersion,
-		bridge,
-		onwifi,
-		onsettransport,
-		onsetbridge,
-		onback,
-	}: Props = $props();
+	let { light, actions = {}, onwifi, onback }: Props = $props();
 
-	const wired = $derived(transport === "usb");
+	const wired = $derived(light.transport === "usb");
 	// v1.3 lives behind a firmware-capability gate (`supportsEspNow`, the same rule the
 	// sidecar applies before sending the ESP-NOW frames): below it the ESP-NOW row stays
 	// disabled ("Soon") and the bridge section is hidden. A device that's never connected
 	// (null version) is treated as too old.
-	const espnowCapable = $derived(protocolVersion !== null && supportsEspNow(protocolVersion));
+	const espnowCapable = $derived(light.protocolVersion !== null && supportsEspNow(light.protocolVersion));
 
 	// Mode list — data-driven so v1.3 appends a row, not a button. Each row leads with the
 	// situation it's for (the reader knows their venue, not the radio protocol) and names
@@ -77,7 +56,7 @@
 	function pick(m: (typeof MODES)[number]) {
 		if (m.disabled) return;
 		if (m.id === "wifi") onwifi?.();
-		else onsettransport?.(m.id);
+		else actions.setTransport?.(light.mac, m.id);
 	}
 </script>
 
@@ -85,7 +64,7 @@
 <PopoverPageHeader title="Configure" {onback}>
 	{#snippet subtitle()}
 		<span class="text-muted-foreground flex items-center gap-1.5 text-[0.68rem] leading-tight">
-			<span class="font-mono">{label}</span>
+			<span class="font-mono">{light.label}</span>
 			{#if wired}
 				<span class="text-signal inline-flex items-center gap-0.5"><Usb class="size-3" /> wired</span>
 			{/if}
@@ -99,7 +78,7 @@
 <div class="px-1.5 py-1.5">
 	<p class="text-muted-foreground px-1.5 pt-1 pb-1.5 text-[0.68rem]">Where will this light run?</p>
 	{#each MODES as m (m.id)}
-		{@const current = !m.disabled && provisionedMode === m.id}
+		{@const current = !m.disabled && light.provisionedMode === m.id}
 		<button
 			type="button"
 			class="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left outline-none transition-colors
@@ -121,12 +100,12 @@
 							class="text-muted-foreground border-border rounded-full border px-1.5 py-px text-[0.58rem] font-normal"
 							>Soon</span
 						>
-					{:else if m.id === "wifi" && provisionedMode === "wifi" && ssid}
+					{:else if m.id === "wifi" && light.provisionedMode === "wifi" && light.ssid}
 						<!-- The configured network, shown as a pill beside "Wi-Fi" so it reads at a
 						     glance; long SSIDs truncate with the full name on hover. -->
 						<span
 							class="text-muted-foreground border-border max-w-[6.5rem] truncate rounded-full border px-1.5 py-px font-mono text-[0.58rem] font-normal"
-							title={ssid}>{ssid}</span
+							title={light.ssid}>{light.ssid}</span
 						>
 					{/if}
 				</span>
@@ -152,14 +131,14 @@
 		<div class="flex items-center gap-2.5 rounded-lg px-2 py-1.5">
 			<Network class="text-muted-foreground size-4 shrink-0" />
 			<span class="min-w-0 flex-1">
-				<span class="block text-sm leading-tight {bridge ? 'font-medium' : ''}">{BRIDGE_LABEL}</span>
+				<span class="block text-sm leading-tight {light.bridge ? 'font-medium' : ''}">{BRIDGE_LABEL}</span>
 				<span class="text-muted-foreground block text-[0.68rem] leading-tight">
 					{BRIDGE_DESC}
 				</span>
 			</span>
 			<Switch
-				checked={bridge}
-				onCheckedChange={(v) => onsetbridge?.(v)}
+				checked={light.bridge}
+				onCheckedChange={(v) => actions.setBridge?.(v ? light.mac : null)}
 				aria-label={BRIDGE_LABEL}
 			/>
 		</div>

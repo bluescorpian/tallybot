@@ -68,3 +68,24 @@ export interface BoardLight {
 	/** The firmware version an update would install (this app's), when known. */
 	firmwareAvailable: string | null;
 }
+
+/**
+ * What a light's menu can do, keyed by the light's MAC. The board hands one of these to every
+ * light's picker, so each rule (e.g. the bridge toggle's mac-or-null) is written once.
+ */
+export interface LightActions {
+	assign?: (mac: string, inputId: string) => void;
+	unassign?: (mac: string) => void;
+	/** Flash-to-identify. */
+	flash?: (mac: string) => void;
+	/** Set a device's LED brightness (protocol byte, 0–255). */
+	setBrightness?: (mac: string, value: number) => void;
+	/** Provision a device's Wi-Fi (persist creds; save-only — no live join). */
+	provisionWifi?: (mac: string, ssid: string, pass: string) => void;
+	/** Set a device's unplugged transport mode. */
+	setTransport?: (mac: string, mode: TransportMode) => void;
+	/** Designate (mac) / un-designate (null) the ESP-NOW bridge device. */
+	setBridge?: (mac: string | null) => void;
+	/** Open the firmware updater for this light (the flasher drawer). */
+	updateFirmware?: (mac: string) => void;
+}

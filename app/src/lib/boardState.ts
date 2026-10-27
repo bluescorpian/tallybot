@@ -10,7 +10,6 @@ import type {
 	InputState,
 	LightState,
 } from "$lib/components/board/types";
-import type { PickerInput } from "$lib/components/board/LightPicker.svelte";
 import type { SourceStatus } from "$lib/components/board/SourceChip.svelte";
 
 /**
@@ -204,9 +203,4 @@ export function sidecarLost(state: AppState): AppState {
 		inputs: state.inputs.map((i) => ({ ...i, tally: "unknown" })),
 		devices: state.devices.map((d) => ({ ...d, state: "offline" })),
 	};
-}
-
-/** The picker's input list derives straight from the board inputs (same shape). */
-export function pickerInputs(inputs: BoardInput[]): PickerInput[] {
-	return inputs.map((i) => ({ id: i.id, label: i.label, state: i.state }));
 }

@@ -17,7 +17,6 @@
 	// Trace rules: PCB-authentic — segments are vertical / horizontal / 45° only,
 	// bends are 45° chamfers, and every run stops short of its endpoint by GAPT so
 	// a small gap reads between a trace and the thing it connects to.
-	import type { TransportMode } from "$ipc";
 	import SourceChip from "$lib/components/board/SourceChip.svelte";
 	import type { SourceStatus } from "$lib/components/board/SourceChip.svelte";
 	import InputKey from "$lib/components/board/InputKey.svelte";
@@ -28,6 +27,7 @@
 	import type {
 		BoardInput,
 		BoardLight,
+		LightActions,
 		LightState,
 	} from "$lib/components/board/types";
 	import type { PickerInput } from "$lib/components/board/LightPicker.svelte";
@@ -48,19 +48,8 @@
 		override?: boolean;
 		/** Override-source label; null in v1 (the source element stays hidden). */
 		overrideSource?: string | null;
-		onassign?: (mac: string, inputId: string) => void;
-		onunassign?: (mac: string) => void;
-		onflash?: (mac: string) => void;
-		/** Set a device's LED brightness (protocol byte, 0–255). */
-		onbrightness?: (mac: string, value: number) => void;
-		/** Provision a device's Wi-Fi (persist creds; save-only — no live join). */
-		onprovisionwifi?: (mac: string, ssid: string, pass: string) => void;
-		/** Set a device's unplugged transport mode. */
-		onsettransport?: (mac: string, mode: TransportMode) => void;
-		/** Designate (mac) / un-designate (null) the ESP-NOW bridge device. */
-		onsetbridge?: (mac: string | null) => void;
-		/** Open the firmware updater for this light (the flasher drawer). */
-		onupdatefirmware?: (mac: string) => void;
+		/** What a light's menu does (assign, flash, configure, …), keyed by MAC. */
+		actions?: LightActions;
 		/** Bring a light into view with a highlight; `pick` also opens its menu. Bump `seq` to replay. */
 		reveal?: { mac: string; pick: boolean; seq: number } | null;
 		/**
@@ -78,14 +67,7 @@
 		assignable = true,
 		override = false,
 		overrideSource = null,
-		onassign,
-		onunassign,
-		onflash,
-		onbrightness,
-		onprovisionwifi,
-		onsettransport,
-		onsetbridge,
-		onupdatefirmware,
+		actions = {},
 		onsetup,
 		oninputclick,
 		reveal = null,
@@ -302,7 +284,7 @@
 	function flash(mac: string) {
 		// Guard against spamming: ignore while a flash is already in flight.
 		if (flashingMac !== null) return;
-		onflash?.(mac);
+		actions.flash?.(mac);
 		flashingMac = mac;
 		flashOn = true;
 		let n = 0;
@@ -316,8 +298,12 @@
 		}, 180);
 	}
 
+	// Every picker gets the same actions; flash goes through the local blink above.
+	const lightActions = $derived<LightActions>({ ...actions, flash });
+	// What a picker shows: the blink applied, and a dock light never "current" on an input (an
+	// orphan's inputId names an input this board doesn't have).
 	const dockLights = $derived(
-		unassigned.map((l) => ({ ...l, state: displayState(l) })),
+		unassigned.map((l) => ({ ...l, state: displayState(l), inputId: null })),
 	);
 </script>
 
@@ -407,32 +393,10 @@
 						style={place(colCx(i), lightsY + r * (LT_H + ROW_GAP), LT_W)}
 					>
 						<LightPicker
-							mac={light.mac}
-							label={light.label}
-							state={displayState(light)}
+							light={{ ...light, state: displayState(light) }}
 							inputs={offerInputs}
-							currentInputId={inp.id}
-							brightness={light.brightness}
-							transport={light.transport}
-							provisionedMode={light.provisionedMode}
-							ssid={light.ssid}
-							wifiState={light.wifiState}
-							rssi={light.rssi}
-							protocolVersion={light.protocolVersion}
-							bridge={light.bridge}
-							firmwareVersion={light.firmwareVersion}
-							firmwareOutdated={light.firmwareOutdated}
-							firmwareMissing={light.firmwareMissing}
-							firmwareAvailable={light.firmwareAvailable}
-							onupdatefirmware={() => onupdatefirmware?.(light.mac)}
+							actions={lightActions}
 							reveal={reveal?.mac === light.mac ? reveal : null}
-							onassign={(id) => onassign?.(light.mac, id)}
-							onunassign={() => onunassign?.(light.mac)}
-							onflash={() => flash(light.mac)}
-							onbrightness={(v) => onbrightness?.(light.mac, v)}
-							onprovisionwifi={(s, p) => onprovisionwifi?.(light.mac, s, p)}
-							onsettransport={(m) => onsettransport?.(light.mac, m)}
-							onsetbridge={(enabled) => onsetbridge?.(enabled ? light.mac : null)}
 						/>
 					</div>
 				{/each}
@@ -457,13 +421,7 @@
 					lights={dockLights}
 					pickerInputs={offerInputs}
 					lightWidth={LT_W}
-					onassign={(mac, id) => onassign?.(mac, id)}
-					onflash={(mac) => flash(mac)}
-					onbrightness={(mac, v) => onbrightness?.(mac, v)}
-					onprovisionwifi={(mac, s, p) => onprovisionwifi?.(mac, s, p)}
-					onsettransport={(mac, m) => onsettransport?.(mac, m)}
-					onsetbridge={(mac) => onsetbridge?.(mac)}
-					onupdatefirmware={(mac) => onupdatefirmware?.(mac)}
+					actions={lightActions}
 					{reveal}
 				/>
 			</div>

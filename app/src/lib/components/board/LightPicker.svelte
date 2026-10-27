@@ -27,13 +27,11 @@
 		PopoverContent,
 		PopoverTrigger,
 	} from "$lib/components/ui/popover/index.js";
-	import TallyLightPcb, {
-		type LightState,
-	} from "$lib/components/board/TallyLightPcb.svelte";
+	import TallyLightPcb from "$lib/components/board/TallyLightPcb.svelte";
 	import BrightnessBar from "$lib/components/board/BrightnessBar.svelte";
 	import DeviceConfig from "$lib/components/board/DeviceConfig.svelte";
 	import DeviceWifi from "$lib/components/board/DeviceWifi.svelte";
-	import type { DeviceTransport, DeviceWifiState, TransportMode } from "$ipc";
+	import type { BoardLight, LightActions } from "$lib/components/board/types";
 	import Zap from "@lucide/svelte/icons/zap";
 	import Check from "@lucide/svelte/icons/check";
 	import Unplug from "@lucide/svelte/icons/unplug";
@@ -45,51 +43,11 @@
 	import ChevronRight from "@lucide/svelte/icons/chevron-right";
 
 	interface Props {
-		mac: string;
-		/** Short 2-octet form shown on the light and in the header. */
-		label: string;
-		state?: LightState;
+		/** The light, with its display state and current input already resolved by the board. */
+		light: BoardLight;
 		/** All selectable inputs, in switcher order. */
 		inputs: PickerInput[];
-		/** Currently assigned input id, or null when the light is unassigned. */
-		currentInputId?: string | null;
-		/** This device's LED brightness as the protocol byte (0–255). */
-		brightness?: number;
-		/** Transport currently carrying the device — `"usb"` enables Configure + the wired cuff. */
-		transport?: DeviceTransport;
-		/** Persisted "when unplugged" mode; null until provisioned. */
-		provisionedMode?: TransportMode | null;
-		/** SSID the device is provisioned to join, or null. */
-		ssid?: string | null;
-		/** Live WiFi join progress while provisioning over USB, or null. */
-		wifiState?: DeviceWifiState | null;
-		/** Last reported RSSI (dBm) while provisioning, or null. */
-		rssi?: number | null;
-		/** Device's HELLO protocol version (null if never connected) — gates ESP-NOW. */
-		protocolVersion?: number | null;
-		/** True while this device is the designated, confirmed ESP-NOW bridge. */
-		bridge?: boolean;
-		onassign?: (inputId: string) => void;
-		onunassign?: () => void;
-		onflash?: () => void;
-		/** Emits the new brightness byte (0–255) when the level changes. */
-		onbrightness?: (value: number) => void;
-		/** Provision Wi-Fi: persist creds + start the validating join over the cable. */
-		onprovisionwifi?: (ssid: string, pass: string) => void;
-		/** Set the unplugged transport mode. */
-		onsettransport?: (mode: TransportMode) => void;
-		/** Designate (true) / un-designate (false) this device as the ESP-NOW bridge. */
-		onsetbridge?: (enabled: boolean) => void;
-		/** Firmware older than this app ships: badge the light and offer an update row. */
-		firmwareOutdated?: boolean;
-		/** The firmware version the light reported, or null when it hasn't reported one. */
-		firmwareVersion?: string | null;
-		/** No firmware at all (an interrupted install): badge "!" and offer a reinstall. */
-		firmwareMissing?: boolean;
-		/** The version an update installs (this app's firmware), when known. */
-		firmwareAvailable?: string | null;
-		/** Start the firmware update (the host opens the flasher drawer). */
-		onupdatefirmware?: () => void;
+		actions?: LightActions;
 		open?: boolean;
 		/**
 		 * Bring this light into view with a one-off highlight (`pick` also opens its menu). A new
@@ -97,35 +55,8 @@
 		 */
 		reveal?: { pick: boolean; seq: number } | null;
 	}
-	let {
-		mac,
-		label,
-		state: lightState = "idle",
-		inputs,
-		currentInputId = null,
-		brightness = 128,
-		transport = "wifi",
-		provisionedMode = null,
-		ssid = null,
-		wifiState = null,
-		rssi = null,
-		protocolVersion = null,
-		bridge = false,
-		onassign,
-		onunassign,
-		onflash,
-		onbrightness,
-		onprovisionwifi,
-		onsettransport,
-		onsetbridge,
-		firmwareOutdated = false,
-		firmwareVersion = null,
-		firmwareMissing = false,
-		firmwareAvailable = null,
-		onupdatefirmware,
-		open = $bindable(false),
-		reveal = null,
-	}: Props = $props();
+	let { light, inputs, actions = {}, open = $bindable(false), reveal = null }: Props = $props();
+	const currentInputId = $derived(light.inputId);
 
 	let trigger = $state<HTMLButtonElement | null>(null);
 	let revealing = $state(false);
@@ -149,7 +80,7 @@
 	// entry only appears then. Back to the menu once closed: after the exit animation, so the
 	// page being dismissed doesn't swap to the menu while it fades out.
 	let view = $state<"menu" | "config" | "wifi">("menu");
-	const wired = $derived(transport === "usb");
+	const wired = $derived(light.transport === "usb");
 	function onclosed(isOpen: boolean) {
 		if (!isOpen) view = "menu";
 	}
@@ -166,15 +97,15 @@
 	};
 
 	function assign(id: string) {
-		if (id !== currentInputId) onassign?.(id);
+		if (id !== currentInputId) actions.assign?.(light.mac, id);
 		open = false;
 	}
 	function updateFirmware() {
 		open = false;
-		onupdatefirmware?.();
+		actions.updateFirmware?.(light.mac);
 	}
 	function unassign() {
-		onunassign?.();
+		actions.unassign?.(light.mac);
 		open = false;
 	}
 </script>
@@ -187,18 +118,18 @@
 				bind:this={trigger}
 				class="light-trigger"
 				class:reveal={revealing}
-				aria-label={`Light ${mac} — assign or flash`}
+				aria-label={`Light ${light.mac} — assign or flash`}
 			>
-				<TallyLightPcb {mac} {label} state={lightState} {wired} />
-				{#if firmwareOutdated}
+				<TallyLightPcb mac={light.mac} label={light.label} state={light.state} {wired} />
+				{#if light.firmwareOutdated}
 					<!-- Static badge on the corner, like an app-icon badge: findable at a glance,
 					     never animated, so it doesn't pull focus mid-show. Drawn on the trigger so
 					     the locked PCB primitive stays untouched. -->
 					<span
 						class="fw-badge"
-						class:missing={firmwareMissing}
-						title={firmwareMissing ? "Needs its firmware reinstalled" : "Firmware update available"}
-						>{#if firmwareMissing}!{:else}<ArrowUp class="size-2.5" strokeWidth={3} />{/if}</span
+						class:missing={light.firmwareMissing}
+						title={light.firmwareMissing ? "Needs its firmware reinstalled" : "Firmware update available"}
+						>{#if light.firmwareMissing}!{:else}<ArrowUp class="size-2.5" strokeWidth={3} />{/if}</span
 					>
 				{/if}
 			</button>
@@ -207,26 +138,15 @@
 
 	<PopoverContent align="center" sideOffset={10} class={contentClass}>
 		{#if view === "config"}
-			<DeviceConfig
-				{label}
-				{transport}
-				{provisionedMode}
-				{ssid}
-				{protocolVersion}
-				{bridge}
-				onwifi={() => (view = "wifi")}
-				{onsettransport}
-				{onsetbridge}
-				onback={() => (view = "menu")}
-			/>
+			<DeviceConfig {light} {actions} onwifi={() => (view = "wifi")} onback={() => (view = "menu")} />
 		{:else if view === "wifi"}
 			<DeviceWifi
-				{mac}
-				{ssid}
+				mac={light.mac}
+				ssid={light.ssid}
 				live={wired}
-				{wifiState}
-				{rssi}
-				{onprovisionwifi}
+				wifiState={light.wifiState}
+				rssi={light.rssi}
+				onprovisionwifi={(ssid, pass) => actions.provisionWifi?.(light.mac, ssid, pass)}
 				onback={() => (view = "config")}
 			/>
 		{:else}
@@ -242,8 +162,8 @@
 					{/if}
 				</span>
 				<span class="flex items-center gap-1.5">
-					<span class="font-mono text-sm font-medium tracking-wide">{label}</span>
-					{#if bridge}
+					<span class="font-mono text-sm font-medium tracking-wide">{light.label}</span>
+					{#if light.bridge}
 						<!-- Bridge marker: this device relays tally to ESP-NOW lights. Flat
 						     cyan chip, matching the wired indicator's "activity, not state"
 						     language (blue/cyan = a live signal path, never a tally colour). -->
@@ -275,7 +195,7 @@
 					aria-label="Flash to identify"
 					title="Flash to identify"
 					class="text-foreground border-border bg-background hover:bg-accent focus-visible:ring-ring inline-flex size-[1.875rem] cursor-pointer items-center justify-center rounded-lg border shadow-sm transition-colors outline-none focus-visible:ring-2"
-					onclick={() => onflash?.()}
+					onclick={() => actions.flash?.(light.mac)}
 				>
 					<Zap class="size-4" />
 				</button>
@@ -284,7 +204,7 @@
 
 		<div class="bg-border h-px"></div>
 
-		{#if firmwareOutdated}
+		{#if light.firmwareOutdated}
 			<!-- Firmware update: first under the header, since it's the one thing on this light
 			     that wants attention. Opens the flasher drawer; a wireless light is walked
 			     through plugging in there, so the row is always clickable. -->
@@ -296,15 +216,15 @@
 				<CircleArrowUp class="text-primary size-4 shrink-0" />
 				<span class="min-w-0 flex-1">
 					<span class="block text-sm leading-tight font-medium"
-						>{firmwareMissing ? "Reinstall firmware" : "Update firmware"}</span
+						>{light.firmwareMissing ? "Reinstall firmware" : "Update firmware"}</span
 					>
 					<span class="text-muted-foreground block text-[0.68rem] leading-tight">
-						{#if firmwareMissing}
+						{#if light.firmwareMissing}
 							No firmware, so it stays dark
 						{:else if !wired}
 							Plug into PC
-						{:else if firmwareVersion && firmwareAvailable}
-							<span class="font-mono">{firmwareVersion} → {firmwareAvailable}</span>
+						{:else if light.firmwareVersion && light.firmwareAvailable}
+							<span class="font-mono">{light.firmwareVersion} → {light.firmwareAvailable}</span>
 						{:else}
 							About a minute, over USB
 						{/if}
@@ -319,7 +239,7 @@
 		     whether the light is assigned or sitting in the dock. -->
 		<div class="px-3 py-2.5">
 			<p class="text-muted-foreground pb-1.5 text-[0.68rem]">Brightness</p>
-			<BrightnessBar value={brightness} onchange={(v) => onbrightness?.(v)} />
+			<BrightnessBar value={light.brightness} onchange={(v) => actions.setBrightness?.(light.mac, v)} />
 		</div>
 
 		<div class="bg-border h-px"></div>
