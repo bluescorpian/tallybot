@@ -10,7 +10,7 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-	--titlebar-h: 56px; /* custom frameless titlebar; sized to seat the large wordmark. The settings sheet sits below it */
+	--titlebar-h: 68px; /* custom frameless titlebar; tall enough that the wordmark's "y" descender (~65px down) clears it. The settings sheet sits below it */
 	/* App-chrome surfaces (warm family, so the board reads as the brightest, lit panel):
 	   --chrome = the cream titlebar; --workspace = the warm taupe desk around the board.
 	   Board itself is --board (oklch 0.966 0.004 74), the brightest of the three. */
@@ -193,5 +193,30 @@
 	html,
 	body {
 		height: 100%;
+	}
+	/* App-wide scrollbars: a thin rounded thumb on a clear track, no arrow buttons, so
+	   the board and the drawers don't show the platform's default chrome. Only the
+	   ::-webkit-scrollbar family: every Tauri webview (WebKitGTK, WebView2, WKWebView)
+	   honours it, and setting the standard scrollbar-width/-color would make Chromium
+	   ignore these rules. */
+	::-webkit-scrollbar {
+		width: 10px;
+		height: 10px;
+	}
+	::-webkit-scrollbar-track,
+	::-webkit-scrollbar-corner {
+		background: transparent;
+	}
+	::-webkit-scrollbar-button {
+		display: none;
+	}
+	::-webkit-scrollbar-thumb {
+		border: 3px solid transparent;
+		border-radius: 9999px;
+		background-clip: content-box;
+		background-color: color-mix(in oklch, var(--foreground) 22%, transparent);
+	}
+	::-webkit-scrollbar-thumb:hover {
+		background-color: color-mix(in oklch, var(--foreground) 38%, transparent);
 	}
 }

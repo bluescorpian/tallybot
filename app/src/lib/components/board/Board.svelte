@@ -488,6 +488,9 @@
 		display: flex;
 		justify-content: flex-start;
 		align-items: flex-start;
+		/* the board keeps the window's size and scrolls its own content, rather than
+		   the schematic spilling out past its edge */
+		overflow: auto;
 		border-radius: 22px;
 		background-color: var(--board);
 		background-image: radial-gradient(
@@ -503,6 +506,10 @@
 			inset 0 0 0 1px oklch(0 0 0 / 0.10),
 			inset -1px -1px 0 oklch(1 0 0 / 0.30);
 		transition: filter 0.25s ease;
+	}
+	/* keep the scrollbar clear of the rounded corners */
+	.board::-webkit-scrollbar-track {
+		margin: 14px;
 	}
 	/* the fixed-geometry coordinate space all the absolute children live in */
 	.board-content {
