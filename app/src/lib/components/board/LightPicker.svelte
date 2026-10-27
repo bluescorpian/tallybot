@@ -159,7 +159,7 @@
 					{/if}
 				</span>
 				<span class="flex items-center gap-1.5">
-					<span class="font-mono text-sm font-medium tracking-wide">{light.label}</span>
+					<span class="font-mono text-sm font-medium tracking-wide select-text">{light.label}</span>
 					{#if light.bridge}
 						<!-- Bridge marker: this device relays tally to ESP-NOW lights. Flat
 						     cyan chip, matching the wired indicator's "activity, not state"

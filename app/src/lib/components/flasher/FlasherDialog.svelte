@@ -401,9 +401,9 @@
 					<span class="target-text">
 						<span class="target-kind">{job.kind === "blank" ? "Blank board" : "Tally light"}</span>
 						<span class="target-id">
-							{#if job.kind === "light"}<span class="font-mono font-medium">{name}</span>{/if}
+							{#if job.kind === "light"}<span class="font-mono font-medium select-text">{name}</span>{/if}
 							{#if job.port}
-								<span class="text-muted-foreground font-mono">{job.kind === "light" ? "· " : ""}{job.port}</span>
+								<span class="text-muted-foreground font-mono select-text">{job.kind === "light" ? "· " : ""}{job.port}</span>
 							{:else}
 								<span class="text-muted-foreground"
 								>{job.kind === "light" ? (replug ? "· unplugged" : "· wireless") : "Unplugged"}</span
@@ -411,7 +411,7 @@
 							{/if}
 						</span>
 					</span>
-					<span class="versions" title="Firmware">
+					<span class="versions select-text" title="Firmware">
 						{#if fromVersion}
 							<span class="ver old">{fromVersion}</span>
 						{:else if job.kind === "blank"}
@@ -622,7 +622,7 @@
 					{#if view === "done" && apply === "failed"}
 						<div class="outcome bad">
 							<CircleX class="size-5 shrink-0" />
-							<div role="status">
+							<div role="status" class="select-text">
 								<h3>Firmware installed, settings not applied</h3>
 								<p>{applyError}</p>
 							</div>
@@ -653,7 +653,7 @@
 				{:else if view === "failed" && st.status === "failed"}
 					<div class="outcome bad">
 						<CircleX class="size-5 shrink-0" />
-						<div>
+						<div class="select-text">
 							{#if st.failure === "no-response"}
 								<h3>The board didn't respond</h3>
 								<p>It needs a nudge into setup mode:</p>

@@ -65,7 +65,7 @@
         <span class="led" aria-hidden="true"></span>
       {/if}
       {#if status === "connected" && ip}
-        <span class="ip">{ip}</span>
+        <span class="ip select-text">{ip}</span>
       {:else}
         <span class="status-text">
           {status === "connected"
