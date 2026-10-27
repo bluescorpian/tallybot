@@ -125,12 +125,17 @@ test("a wall-clock step neither drops a heartbeating light nor strands a silent 
   {
     const usb = new FakeUsb();
     const espnow = new EspNowTransport(usb.asUsb(), { heartbeatTimeoutMs: 1000, sweepIntervalMs: 10 });
+    const connected: string[] = [];
+    const disconnected: string[] = [];
+    espnow.on("deviceConnected", ({ mac }) => connected.push(mac));
+    espnow.on("deviceDisconnected", ({ mac }) => disconnected.push(mac));
     await espnow.start();
     try {
       usb.relay(BRIDGE, LIGHT, helloInner(3));
+      assert.deepEqual(connected, [LIGHT]);
       wallStep(60 * 60_000);
       await sweepOnce(espnow);
-      assert.deepEqual(espnow.connectedMacs(), [LIGHT], "a forward clock step must not drop a live light");
+      assert.deepEqual(disconnected, [], "a forward clock step must not drop a live light");
     } finally {
       await espnow.stop();
       t.mock.restoreAll();
@@ -141,12 +146,17 @@ test("a wall-clock step neither drops a heartbeating light nor strands a silent 
   {
     const usb = new FakeUsb();
     const espnow = new EspNowTransport(usb.asUsb(), { heartbeatTimeoutMs: 30, sweepIntervalMs: 10 });
+    const connected: string[] = [];
+    const disconnected: string[] = [];
+    espnow.on("deviceConnected", ({ mac }) => connected.push(mac));
+    espnow.on("deviceDisconnected", ({ mac }) => disconnected.push(mac));
     await espnow.start();
     try {
       usb.relay(BRIDGE, LIGHT, helloInner(3));
+      assert.deepEqual(connected, [LIGHT]);
       wallStep(-60 * 60_000);
       await new Promise((resolve) => setTimeout(resolve, 80));
-      assert.deepEqual(espnow.connectedMacs(), [], "a backward clock step must not keep a silent light");
+      assert.deepEqual(disconnected, [LIGHT], "a backward clock step must not keep a silent light");
     } finally {
       await espnow.stop();
       t.mock.restoreAll();
