@@ -224,6 +224,7 @@ export class MockBoard implements Backend {
 			inputs: this.#inputs,
 			devices: this.devices,
 			programGate: { active: this.override, source: null },
+			faults: [],
 		};
 	});
 

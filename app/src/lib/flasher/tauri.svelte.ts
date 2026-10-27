@@ -38,7 +38,7 @@ export class TauriFlasher implements Flasher {
 
 	start(target: FlashTarget): void {
 		if (!canStart(this.state)) return;
-		this.state = { status: "running", target, stage: "connect", progress: 0 };
+		this.state = { status: "running", target, stage: "connect", progress: 0, leavesBlank: false };
 		invoke("flash_start", { port: target.port, mac: target.kind === "light" ? target.mac : null }).catch(
 			(err) => {
 				this.state = { status: "failed", target, stage: "connect", failure: "error", detail: String(err), leavesBlank: false };

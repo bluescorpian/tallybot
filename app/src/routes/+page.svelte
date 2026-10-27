@@ -137,7 +137,7 @@
 	});
 	const openWebFlasher = () => backend.openExternal(FLASHER_URL);
 	// The engine's faults (sidecar/src/faults.ts). Not while it's down: they're the dead process's.
-	const faults = $derived(engineDown ? [] : (appState.faults ?? []));
+	const faults = $derived(engineDown ? [] : appState.faults);
 	let dismissed = $state<Record<string, string>>({});
 	const banners = $derived.by<Banner[]>(() => {
 		const list: Banner[] = [];

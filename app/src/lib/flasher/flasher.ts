@@ -38,15 +38,15 @@ export type FlashState =
 	 * `progress` is 0–1 within the `write` stage, and 0 elsewhere. `leavesBlank`: stopping now would
 	 * leave the board without firmware.
 	 */
-	| { status: "running"; target: FlashTarget; stage: FlashStage; progress: number; leavesBlank?: boolean }
+	| { status: "running"; target: FlashTarget; stage: FlashStage; progress: number; leavesBlank: boolean }
 	/** `mac` is the light the board came back as (new for a blank board). */
 	| { status: "done"; target: FlashTarget; mac: string }
 	/**
 	 * `leavesBlank`: it ended where the board has no working firmware now, as the shell decides it
 	 * (`Stage::leaves_blank` in flash.rs). Every driver sets it; absent reads as false.
 	 */
-	| { status: "failed"; target: FlashTarget; stage: FlashStage; failure: FlashFailure; detail: string; leavesBlank?: boolean }
-	| { status: "cancelled"; target: FlashTarget; stage: FlashStage; leavesBlank?: boolean };
+	| { status: "failed"; target: FlashTarget; stage: FlashStage; failure: FlashFailure; detail: string; leavesBlank: boolean }
+	| { status: "cancelled"; target: FlashTarget; stage: FlashStage; leavesBlank: boolean };
 
 export interface Flasher {
 	/**

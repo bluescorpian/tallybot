@@ -13,6 +13,7 @@ const EMPTY_STATE: AppState = {
 	inputs: [],
 	devices: [],
 	programGate: { active: false, source: null },
+	faults: [],
 };
 
 export class LiveBackend implements Backend {

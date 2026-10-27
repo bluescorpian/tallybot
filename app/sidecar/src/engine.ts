@@ -123,8 +123,8 @@ export interface DeviceColor {
 }
 
 export interface EngineResult {
-  /** The snapshot to emit to the UI. */
-  state: AppState;
+  /** The snapshot to emit to the UI, less the faults the orchestrator owns and adds. */
+  state: Omit<AppState, "faults">;
   /** Target LED colour for every *online* device (offline devices are omitted). */
   colors: DeviceColor[];
 }
@@ -246,7 +246,7 @@ export function computeEngine(
     }
   }
 
-  const state: AppState = {
+  const state: EngineResult["state"] = {
     source: { kind: "atem", ip: source.ip, connection: source.connection },
     inputs,
     devices: uiDevices,

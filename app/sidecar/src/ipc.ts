@@ -173,10 +173,9 @@ export interface AppState {
   devices: Device[];
   programGate: ProgramGate;
   /**
-   * Every live {@link Fault}, oldest first. Added by the orchestrator, not the pure engine;
-   * absent reads as none (a snapshot built outside the orchestrator).
+   * Every live {@link Fault}, oldest first. Added by the orchestrator, not the pure engine.
    */
-  faults?: Fault[];
+  faults: Fault[];
   /**
    * True when the sidecar is running against the fake ATEM (the dev entry point,
    * `tools/src/sidecar-fake-main.ts`). The UI uses it to make the board's input keys
