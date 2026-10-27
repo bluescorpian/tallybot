@@ -45,7 +45,10 @@ export interface EspNowTransportOptions {
   heartbeatTimeoutMs?: number;
   /** Expiry-sweep cadence (default {@link EXPIRY_SWEEP_MS}); tests shorten it. */
   sweepIntervalMs?: number;
-  /** Clock source (injectable so tests drive expiry without the wall clock). */
+  /**
+   * Monotonic clock in ms (default `performance.now()`); injectable so tests drive expiry. Not the
+   * wall clock: a system clock step (NTP sync, manual change) would drop or strand every light.
+   */
   now?: () => number;
 }
 
@@ -55,7 +58,7 @@ type SendFailure = "no bridge designated" | "bridge not on USB";
 /** One relayed light's live facts. */
 interface RelayedLight {
   version: number;
-  /** Timestamp (ms) of the last frame seen from this light; reset on every message. */
+  /** Monotonic time (ms, from `now`) of the last frame seen from this light; reset on every message. */
   lastSeen: number;
 }
 
@@ -98,7 +101,7 @@ export class EspNowTransport extends EventEmitter {
     this.#usb = usb;
     this.#heartbeatTimeoutMs = options.heartbeatTimeoutMs ?? HEARTBEAT_TIMEOUT_MS;
     this.#sweepIntervalMs = options.sweepIntervalMs ?? EXPIRY_SWEEP_MS;
-    this.#now = options.now ?? (() => Date.now());
+    this.#now = options.now ?? (() => performance.now());
 
     this.#usb.on("relayed", ({ bridgeMac, srcMac, inner }) => this.#onRelayed(bridgeMac, srcMac, inner));
     // The bridge's only path home is its USB cable: when it unplugs, every light it relayed is
