@@ -18,6 +18,7 @@ import { EventEmitter } from "node:events";
 import { type AddressInfo, type Server, type Socket, createServer } from "node:net";
 import { type Socket as UdpSocket, createSocket } from "node:dgram";
 
+import { type DeviceTransportEvents, announceDevice, seconds } from "./device-events.ts";
 import {
   type Color,
   DISCOVERY_PORT,
@@ -26,8 +27,6 @@ import {
   encodeDiscoveryResponse,
   encodeSetColor,
   isDiscoveryRequest,
-  type UnsupportedReason,
-  deviceCompatibility,
   decodeDeviceMessage,
 } from "./protocol.ts";
 
@@ -61,22 +60,18 @@ interface Connection {
   timer: ReturnType<typeof setTimeout> | null;
 }
 
+/**
+ * The shared device events, plus `listening` once both sockets are bound. A TCP device has no LOG
+ * frame, so `log` carries only the server's own notes on a device (an expired connection).
+ */
+export interface DeviceServerEvents extends DeviceTransportEvents {
+  listening: [];
+}
+
 // Typed events (the interface merges with the class and is erased at build).
 export interface DeviceServer {
-  on(event: "listening", listener: () => void): this;
-  on(event: "deviceConnected", listener: (info: { mac: string; version: number }) => void): this;
-  on(event: "deviceDisconnected", listener: (info: { mac: string }) => void): this;
-  on(event: "deviceUnsupported", listener: (info: { mac: string; version: number; reason: UnsupportedReason }) => void): this;
-  on(event: "firmware", listener: (info: { mac: string; version: string }) => void): this;
-  /** Part of the {@link DeviceServerPort} contract; never emitted — a TCP device has no log channel. */
-  on(event: "log", listener: (entry: { mac: string; level: "info" | "warn" | "error"; text: string }) => void): this;
-  on(event: "error", listener: (err: Error) => void): this;
-  emit(event: "listening"): boolean;
-  emit(event: "deviceConnected", info: { mac: string; version: number }): boolean;
-  emit(event: "deviceDisconnected", info: { mac: string }): boolean;
-  emit(event: "deviceUnsupported", info: { mac: string; version: number; reason: UnsupportedReason }): boolean;
-  emit(event: "firmware", info: { mac: string; version: string }): boolean;
-  emit(event: "error", err: Error): boolean;
+  on<K extends keyof DeviceServerEvents>(event: K, listener: (...args: DeviceServerEvents[K]) => void): this;
+  emit<K extends keyof DeviceServerEvents>(event: K, ...args: DeviceServerEvents[K]): boolean;
 }
 
 export class DeviceServer extends EventEmitter {
@@ -223,9 +218,7 @@ export class DeviceServer extends EventEmitter {
     connection.mac = mac;
     this.#byMac.set(mac, connection);
 
-    const compatibility = deviceCompatibility(version);
-    if (compatibility !== "supported") this.emit("deviceUnsupported", { mac, version, reason: compatibility });
-    this.emit("deviceConnected", { mac, version });
+    announceDevice(this, mac, version);
   }
 
   #onClose(connection: Connection): void {
@@ -242,8 +235,21 @@ export class DeviceServer extends EventEmitter {
 
   #armTimer(connection: Connection): void {
     this.#clearTimer(connection);
-    connection.timer = setTimeout(() => connection.socket.destroy(), this.#heartbeatTimeoutMs);
+    connection.timer = setTimeout(() => this.#expire(connection), this.#heartbeatTimeoutMs);
     connection.timer.unref();
+  }
+
+  /**
+   * Drop a connection that went silent past the timeout. Its `close` then emits the disconnect; a
+   * socket that never said HELLO has no device to note it against, so it goes quietly.
+   */
+  #expire(connection: Connection): void {
+    const mac = connection.mac;
+    if (mac !== null && this.#byMac.get(mac) === connection) {
+      const timeout = seconds(this.#heartbeatTimeoutMs);
+      this.emit("log", { mac, level: "warn", text: `TCP light ${mac} expired: silent for ${timeout}` });
+    }
+    connection.socket.destroy();
   }
 
   #clearTimer(connection: Connection): void {

@@ -16,6 +16,7 @@
 
 import { EventEmitter } from "node:events";
 
+import { type DeviceTransportEvents, announceDevice } from "./device-events.ts";
 import type { DeviceWifiState } from "./ipc.ts";
 import {
   type Color,
@@ -23,8 +24,6 @@ import {
   Transport,
   WifiState,
   getStatusPayload,
-  type UnsupportedReason,
-  deviceCompatibility,
   logLevelName,
   setBridgePayload,
   setColorPayload,
@@ -70,21 +69,21 @@ const WIFI_STATE_NAME: Record<number, DeviceWifiState> = {
   [WifiState.FAILED]: "failed",
 };
 
-// Typed events (the interface merges with the class and is erased at build).
-export interface UsbTransport {
-  on(event: "deviceConnected", listener: (info: { mac: string; version: number }) => void): this;
-  on(event: "deviceDisconnected", listener: (info: { mac: string }) => void): this;
-  on(event: "deviceUnsupported", listener: (info: { mac: string; version: number; reason: UnsupportedReason }) => void): this;
-  on(event: "firmware", listener: (info: { mac: string; version: string }) => void): this;
-  on(event: "status", listener: (status: UsbStatus) => void): this;
-  on(event: "log", listener: (entry: { mac: string; level: "info" | "warn" | "error"; text: string }) => void): this;
+/** The shared device events, plus the USB-only STATUS push and the ESP-NOW bridge's relayed frames. */
+export interface UsbTransportEvents extends DeviceTransportEvents {
+  status: [status: UsbStatus];
   /**
    * An ESP-NOW frame a bridge received and forwarded up (RELAY envelope). `bridgeMac` is the
    * USB device the frame arrived on; `inner` is an unframed device→server payload the
    * {@link EspNowTransport} runs back through `decodeDeviceMessage`.
    */
-  on(event: "relayed", listener: (info: { bridgeMac: string; srcMac: string; inner: Uint8Array }) => void): this;
-  on(event: "error", listener: (err: Error) => void): this;
+  relayed: [info: { bridgeMac: string; srcMac: string; inner: Uint8Array }];
+}
+
+// Typed events (the interface merges with the class and is erased at build).
+export interface UsbTransport {
+  on<K extends keyof UsbTransportEvents>(event: K, listener: (...args: UsbTransportEvents[K]) => void): this;
+  emit<K extends keyof UsbTransportEvents>(event: K, ...args: UsbTransportEvents[K]): boolean;
 }
 
 export class UsbTransport extends EventEmitter {
@@ -166,11 +165,7 @@ export class UsbTransport extends EventEmitter {
     switch (message.type) {
       case "usbDeviceConnected": {
         this.#online.set(message.mac, message.version);
-        const compatibility = deviceCompatibility(message.version);
-        if (compatibility !== "supported") {
-          this.emit("deviceUnsupported", { mac: message.mac, version: message.version, reason: compatibility });
-        }
-        this.emit("deviceConnected", { mac: message.mac, version: message.version });
+        announceDevice(this, message.mac, message.version);
         break;
       }
       case "usbDeviceDisconnected": {
@@ -204,7 +199,9 @@ export class UsbTransport extends EventEmitter {
         bridge: decoded.bridge,
       });
     } else if (decoded.kind === "firmware") {
-      this.emit("firmware", { mac: frame.mac, version: decoded.version });
+      // Only from a device we hold, as on TCP and ESP-NOW: a frame that outlives its disconnect
+      // mustn't record firmware for a light that is no longer here.
+      if (this.#online.has(frame.mac)) this.emit("firmware", { mac: frame.mac, version: decoded.version });
     } else if (decoded.kind === "log") {
       this.emit("log", { mac: frame.mac, level: logLevelName(decoded.level), text: decoded.text });
     } else if (decoded.kind === "relayed") {

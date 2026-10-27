@@ -23,7 +23,8 @@ import { EventEmitter } from "node:events";
 
 import type { DeviceServerPort, ProvisioningPort } from "./app.ts";
 import type { DeviceTransport } from "./ipc.ts";
-import type { Color, UnsupportedReason } from "./protocol.ts";
+import type { DeviceTransportEvents } from "./device-events.ts";
+import type { Color } from "./protocol.ts";
 import type { UsbStatus, UsbTransport } from "./usb-transport.ts";
 
 /** One transport plugged into the composite, with the tag devices on it carry. */
@@ -32,15 +33,15 @@ export interface CompositeMember {
   port: DeviceServerPort;
 }
 
+/** The shared device events, plus the USB transport's STATUS pushes re-emitted for provisioning. */
+export interface CompositeDeviceServerEvents extends DeviceTransportEvents {
+  status: [status: UsbStatus];
+}
+
 // Typed events (the interface merges with the class and is erased at build).
 export interface CompositeDeviceServer {
-  on(event: "deviceConnected", listener: (info: { mac: string; version: number }) => void): this;
-  on(event: "deviceDisconnected", listener: (info: { mac: string }) => void): this;
-  on(event: "deviceUnsupported", listener: (info: { mac: string; version: number; reason: UnsupportedReason }) => void): this;
-  on(event: "firmware", listener: (info: { mac: string; version: string }) => void): this;
-  on(event: "status", listener: (status: UsbStatus) => void): this;
-  on(event: "log", listener: (entry: { mac: string; level: "info" | "warn" | "error"; text: string }) => void): this;
-  on(event: "error", listener: (err: Error) => void): this;
+  on<K extends keyof CompositeDeviceServerEvents>(event: K, listener: (...args: CompositeDeviceServerEvents[K]) => void): this;
+  emit<K extends keyof CompositeDeviceServerEvents>(event: K, ...args: CompositeDeviceServerEvents[K]): boolean;
 }
 
 export class CompositeDeviceServer extends EventEmitter implements DeviceServerPort, ProvisioningPort {

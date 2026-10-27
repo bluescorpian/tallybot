@@ -25,12 +25,11 @@
 
 import { EventEmitter } from "node:events";
 
+import { type DeviceTransportEvents, announceDevice, seconds } from "./device-events.ts";
 import { HEARTBEAT_TIMEOUT_MS } from "./device-server.ts";
 import {
   type Color,
   type LogLevelName,
-  type UnsupportedReason,
-  deviceCompatibility,
   decodeDeviceMessage,
   logLevelName,
   relayPayload,
@@ -65,12 +64,8 @@ interface RelayedLight {
 
 // Typed events (the interface merges with the class and is erased at build).
 export interface EspNowTransport {
-  on(event: "deviceConnected", listener: (info: { mac: string; version: number }) => void): this;
-  on(event: "deviceDisconnected", listener: (info: { mac: string }) => void): this;
-  on(event: "deviceUnsupported", listener: (info: { mac: string; version: number; reason: UnsupportedReason }) => void): this;
-  on(event: "firmware", listener: (info: { mac: string; version: string }) => void): this;
-  on(event: "log", listener: (entry: { mac: string; level: LogLevelName; text: string }) => void): this;
-  on(event: "error", listener: (err: Error) => void): this;
+  on<K extends keyof DeviceTransportEvents>(event: K, listener: (...args: DeviceTransportEvents[K]) => void): this;
+  emit<K extends keyof DeviceTransportEvents>(event: K, ...args: DeviceTransportEvents[K]): boolean;
 }
 
 export class EspNowTransport extends EventEmitter {
@@ -185,13 +180,9 @@ export class EspNowTransport extends EventEmitter {
     if (message.kind === "hello") {
       this.#unknownHeartbeats.delete(srcMac); // known now; a later orphan HEARTBEAT is news again
       this.#lights.set(srcMac, { version: message.version, lastSeen: this.#now() });
-      const compatibility = deviceCompatibility(message.version);
-      if (compatibility !== "supported") {
-        this.emit("deviceUnsupported", { mac: srcMac, version: message.version, reason: compatibility });
-      }
       // Re-announce on every HELLO (including a re-link), matching the TCP server — the
       // orchestrator re-pushes colour on a reconnect.
-      this.emit("deviceConnected", { mac: srcMac, version: message.version });
+      announceDevice(this, srcMac, message.version);
     } else if (message.kind === "heartbeat") {
       // Only refresh liveness for a light we already know — a stray HEARTBEAT before HELLO can't
       // identify a version, so we wait for the HELLO that the firmware always sends first.
@@ -238,8 +229,4 @@ export class EspNowTransport extends EventEmitter {
       }
     }
   }
-}
-
-function seconds(ms: number): string {
-  return `${(ms / 1000).toFixed(1)} s`;
 }

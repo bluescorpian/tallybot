@@ -22,9 +22,10 @@ import {
   INACTIVE_GATE,
   computeEngine,
 } from "./engine.ts";
+import type { DeviceTransportEvents } from "./device-events.ts";
 import type { DeviceConfig } from "./store.ts";
 import type { DeviceFirmware, DeviceTransport, DeviceWifiState, SidecarEvent, SourceScanHit, UiCommand } from "./ipc.ts";
-import { type Color, DEFAULT_BRIGHTNESS, type UnsupportedReason, macTail, supportsEspNow } from "./protocol.ts";
+import { type Color, DEFAULT_BRIGHTNESS, macTail, supportsEspNow } from "./protocol.ts";
 import { provisionedModeName, transportModeValue } from "./usb-transport.ts";
 
 // ── Collaborator ports (the concrete classes satisfy these structurally) ─────────
@@ -33,14 +34,8 @@ export interface DeviceServerPort {
   start(): Promise<void>;
   stop(): Promise<void>;
   sendColor(mac: string, color: Color, brightness: number): boolean;
-  on(event: "deviceConnected", listener: (info: { mac: string; version: number }) => void): unknown;
-  on(event: "deviceDisconnected", listener: (info: { mac: string }) => void): unknown;
-  on(event: "deviceUnsupported", listener: (info: { mac: string; version: number; reason: UnsupportedReason }) => void): unknown;
-  /** The firmware version a device reports right after its HELLO (firmware that predates this never does). */
-  on(event: "firmware", listener: (info: { mac: string; version: string }) => void): unknown;
-  /** Device-keyed diagnostic lines: a USB device's own LOG frames, or a transport's notes on a device. */
-  on(event: "log", listener: (entry: { mac: string; level: "info" | "warn" | "error"; text: string }) => void): unknown;
-  on(event: "error", listener: (err: Error) => void): unknown;
+  /** The shared per-device events ({@link DeviceTransportEvents}). */
+  on<K extends keyof DeviceTransportEvents>(event: K, listener: (...args: DeviceTransportEvents[K]) => void): unknown;
 }
 
 /**
