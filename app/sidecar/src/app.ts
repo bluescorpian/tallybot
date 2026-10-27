@@ -904,8 +904,8 @@ export class SidecarApp {
         transport: (online ? this.#provisioning.transportOf(mac) : null) ?? "wifi",
         wifiState: status?.wifiState ?? null,
         rssi: status?.rssi ?? null,
-        // Mode comes from the live USB STATUS (null off-USB); the SSID is the host's memory
-        // (the device never echoes the string), so it survives across transports/restarts.
+        // Mode comes from the live USB STATUS (null off-USB); the SSID is the stored copy of what
+        // the device last reported (or was provisioned with), so it survives unplugging/restarts.
         provisionedMode: status ? provisionedModeName(status.mode) : null,
         ssid: config?.ssid ?? null,
         // The device is the bridge only while it's the designated MAC *and* its STATUS confirms

@@ -1,15 +1,19 @@
 // TallyBot binary wire protocol — the device (firmware) side.
 //
 // This file is the C++ mirror of `app/sidecar/src/protocol.ts` (the source of truth;
-// see `docs/architecture.md` "Binary Message Protocol"). There is now a THIRD, minimal
-// mirror in `app/src-tauri/src/usb/protocol.rs` (COBS framing + HELLO parse only).
-// Keep all three in lockstep — a maintainer editing any one should find the others.
+// see `docs/architecture.md` "Binary Message Protocol"), which lists the other mirrors.
+// Keep them in lockstep.
+//
+// Frames are exact-length: the decoder below rejects a message whose length doesn't match
+// its type, and so do the hosts. A protocol change adds a new message type (old parsers skip
+// an unknown one), not a field on an existing message. SET_BRIDGE's v4 txPower byte is the
+// exception: the host sends it only to a device whose HELLO says v4.
 //
 // Framing is **transport-specific; payloads are shared**. The `[type][fields…]`
 // payloads ride unchanged over both transports; only the wrapper differs:
 //   • TCP — length-prefixed: a single leading byte gives the number of payload bytes
-//     that follow. One uniform loop frames any message regardless of length, which
-//     lets a parser skip a message (or trailing fields) it doesn't recognise.
+//     that follow. One uniform loop frames any message regardless of length, so a parser
+//     can step over a whole message it doesn't recognise.
 //       [len][payload …]      len = count of payload bytes that follow (1 byte, 0–255)
 //   • USB-CDC — COBS (via PacketSerial), self-synchronising on a lone 0x00 delimiter.
 //     PacketSerial applies the COBS wrapper; the encoders below build only the payload.
@@ -259,8 +263,8 @@ inline size_t encodeHelloPayload(uint8_t* out, const uint8_t mac[6]) {
 // STATUS payload: [type][transport][wifiState][rssi][ssidLen][ssid…][channel][bridging]. The SSID
 // (the device's stored network, read from NVS) replaces the old credsPresent bool — the host derives
 // "has creds" from ssidLen > 0, and keeps the name accurate even for a device it never
-// provisioned. `ssidLen` is capped at 32 (802.11 max). The two trailing bytes are a v3 addition —
-// older hosts skip them per the documented skip-trailing-fields rule. `channel` is the device's
+// provisioned. `ssidLen` is capped at 32 (802.11 max). The two trailing bytes are a v3 addition
+// (the sidecar's STATUS decoder reads them only when present). `channel` is the device's
 // stored ESP-NOW channel (default 1); `bridging` is 1 while bridge mode is active, else 0.
 // `out` must hold ≥ 7 + min(ssidLen, 32).
 inline size_t encodeStatusPayload(uint8_t* out, uint8_t transport, uint8_t wifiState, int8_t rssi,

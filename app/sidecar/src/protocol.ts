@@ -2,17 +2,26 @@
  * Binary device↔server wire protocol — the server (sidecar) side.
  *
  * Source of truth: `docs/architecture.md` ("Binary Message Protocol"). These values
- * are mirrored in TWO other places — keep all three in sync:
+ * are mirrored in three other places — keep them all in sync:
  *   • `firmware/src/protocol.h`        (C++, the device)
  *   • `app/src-tauri/src/usb/protocol.rs` (Rust, the USB-serial shell — a *minimal*
  *     mirror: COBS framing + HELLO parse only; every other payload is forwarded
  *     opaque so this file stays the single payload codec authority).
+ *   • `tools/src/device-protocol.ts`   (the simulated device's half: HELLO/FIRMWARE/HEARTBEAT
+ *     encoders and the SET_COLOR decoder, on top of this file's constants).
+ *
+ * **Frames are exact-length.** Every decoder (here, the firmware's and the shell's) rejects a
+ * message whose length doesn't match its type, so a field can't be appended to a message the
+ * field already parses. A protocol change adds a new message type instead, which old parsers
+ * skip (FIRMWARE is the worked example). Two exceptions: the STATUS decoder reads the trailing
+ * `[channel][bridging]` bytes only when they're present, and SET_BRIDGE's v4 `txPower` byte is
+ * sent only to a device whose HELLO says v4 (`docs/architecture.md` "Versioning").
  *
  * Framing is **transport-specific; payloads are shared**. The `[type][fields…]`
  * payloads below ride unchanged over both transports; only the wrapper differs:
  *   • TCP — length-prefixed: a single leading byte gives the number of payload
  *     bytes that follow. One uniform loop frames any message regardless of length,
- *     which lets a parser skip a message (or trailing fields) it doesn't recognise.
+ *     so a parser can step over a whole message it doesn't recognise.
  *       [len][payload …]      len = count of payload bytes that follow (1 byte, 0–255)
  *   • USB — COBS (Consistent Overhead Byte Stuffing), self-synchronising on a lone
  *     `0x00` delimiter. Framed by PacketSerial (firmware) / a cobs crate (shell);
@@ -601,10 +610,10 @@ export function decodeDeviceMessage(payload: Uint8Array): DeviceMessage {
     }
     case DeviceMessageType.STATUS: {
       // [type][transport][wifiState][rssi][ssidLen][ssid…][channel][bridging] — ≥ 5 payload
-      // bytes (ssidLen is always present, 0 when the device has no stored creds; the two
-      // trailing bytes are a v3 addition — absent on older firmware, per the skip-trailing
-      // rule). A v3 device always sends both; if only one is present we read it as the
-      // channel with bridging off (lenient decoding).
+      // bytes (ssidLen is always present, 0 when the device has no stored creds). The two
+      // trailing bytes are a v3 addition, and the one place a host decoder tolerates their
+      // absence (see the header). A v3 device always sends both; if only one is present we
+      // read it as the channel with bridging off.
       if (payload.length < 5) {
         throw new RangeError(`STATUS payload must be at least 5 bytes, got ${payload.length}`);
       }

@@ -59,7 +59,7 @@ export type DeviceState = "assigned" | "unassigned" | "offline";
 // names. `LogLevelName` is defined beside the wire LOG codec in `protocol.ts` and re-exported.
 
 /**
- * Which transport currently carries a device. v1.3 adds `"espnow"`. A USB-connected device
+ * Which transport currently carries a device. A USB-connected device
  * is shown with a wired indicator; while plugged in, USB always wins (the same MAC seen on
  * both WiFi and USB appears once, as `"usb"`).
  */
@@ -124,10 +124,11 @@ export interface Device {
   /**
    * Persisted "when unplugged" behaviour the device reports over USB (the STATUS
    * frame's transport byte): `"wifi"` joins a network, `"notx"` stays dark (USB-only
-   * install). `null` for a brand-new device that has never been provisioned. Distinct
-   * from `transport`, which is the transport *currently* carrying the device (`"usb"`
-   * while it's plugged in). Optional so pre-v1.2 sidecar builds (which never populate
-   * it) stay valid.
+   * install), `"espnow"` takes tally from a bridge. A never-provisioned device reports `"wifi"`
+   * (the firmware's default). `null` while the device isn't on USB, since only its STATUS
+   * says, or when it reports a mode this sidecar doesn't know. Distinct from `transport`,
+   * which is the transport *currently* carrying the device (`"usb"` while it's plugged in).
+   * Optional so pre-v1.2 sidecar builds (which never populate it) stay valid.
    */
   provisionedMode?: TransportMode | null;
   /**
