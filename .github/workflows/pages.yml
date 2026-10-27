@@ -37,13 +37,16 @@ jobs:
           cp flasher/index.html site/
           cp app/src-tauri/icons/128x128.png site/icon.png
           tag=${TAG:-$(gh release view --json tagName -q .tagName)}
+          # The release's asset names (scripts/release-assets.mjs).
+          image=$(node scripts/release-assets.mjs name firmware-image)
+          manifest=$(node scripts/release-assets.mjs name firmware-manifest)
           # Versioned name on the site: the CDN in front of Pages caches .bin files, so a
           # fixed name would keep serving the previous release's firmware after a publish.
-          bin="tallybot-firmware-esp32c3-${tag#v}.bin"
-          gh release download "$tag" --pattern tallybot-firmware-esp32c3.bin --output "site/$bin"
+          bin="${image%.bin}-${tag#v}.bin"
+          gh release download "$tag" --pattern "$image" --output "site/$bin"
           # The firmware's own version (firmware/VERSION, staged beside the image), not the app
           # tag: a release that leaves the firmware alone keeps the version the lights report.
-          gh release download "$tag" --pattern tallybot-firmware-esp32c3.json --output firmware.json
+          gh release download "$tag" --pattern "$manifest" --output firmware.json
           fw=$(jq -er '.version' firmware.json)
           jq -n --arg v "$fw" --arg bin "$bin" '{
             name: "TallyBot",

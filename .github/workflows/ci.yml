@@ -6,6 +6,14 @@ on:
   pull_request:
 
 jobs:
+  # The app's versions agree and the shell's copies of the release asset names still match
+  # scripts/release-assets.mjs. The firmware/VERSION-vs-last-tag check runs at release time only.
+  release-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: node scripts/check-release.mjs
+
   # Node + Rust run inside the flake's dev shell, so CI builds with the same
   # toolchain (and webkit/udev system libs) as local development.
   sidecar:

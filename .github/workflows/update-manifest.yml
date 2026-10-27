@@ -5,11 +5,9 @@ name: Update manifest
 # it to the release. It runs on publish rather than in release.yml so the notes are the
 # release's final, hand-edited text, and so a draft is never offered to anyone.
 #
-# Installer builds update in place: windows-x86_64-nsis, windows-x86_64-msi and
-# linux-x86_64-appimage, each with the signature release.yml attached. There is deliberately no
-# bare windows-x86_64 entry, which a portable exe would otherwise match and "update" by running
-# the installer. firmwareVersion (from the release's firmware manifest) is a custom field: the
-# in-app flasher uses it to say a newer app has newer light firmware.
+# The asset names, platform keys and manifest shape live in scripts/release-assets.mjs (read at
+# the release's own tag, so they match what release.yml attached); release.yml dry-runs the
+# same manifest step on every build.
 
 on:
   release:
@@ -23,39 +21,29 @@ jobs:
   manifest:
     runs-on: ubuntu-latest
     steps:
-      - name: Write and attach latest.json
+      - name: Resolve the release
+        id: tag
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           # The published release; a manual run falls back to the latest one.
           TAG: ${{ github.event.release.tag_name }}
+        run: echo "tag=${TAG:-$(gh release view --json tagName -q .tagName)}" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+      - name: Write and attach latest.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          tag: ${{ steps.tag.outputs.tag }}
         run: |
-          tag=${TAG:-$(gh release view --json tagName -q .tagName)}
           v=${tag#v}
           mkdir assets
-          gh release download "$tag" --dir assets --pattern '*.sig' --pattern 'tallybot-firmware-esp32c3.json'
-          url="https://github.com/$GH_REPO/releases/download/$tag"
+          gh release download "$tag" --dir assets --pattern '*.sig' \
+            --pattern "$(node scripts/release-assets.mjs name firmware-manifest)"
           gh release view "$tag" --json body,publishedAt > release.json
-          jq -n \
-            --arg v "$v" \
-            --slurpfile rel release.json \
-            --slurpfile fw assets/tallybot-firmware-esp32c3.json \
-            --rawfile nsis "assets/TallyBot-$v-windows-x64-setup.exe.sig" \
-            --rawfile msi "assets/TallyBot-$v-windows-x64.msi.sig" \
-            --rawfile appimage "assets/TallyBot-$v-linux-x86_64.AppImage.sig" \
-            --arg nsisUrl "$url/TallyBot-$v-windows-x64-setup.exe" \
-            --arg msiUrl "$url/TallyBot-$v-windows-x64.msi" \
-            --arg appimageUrl "$url/TallyBot-$v-linux-x86_64.AppImage" \
-            '{
-              version: $v,
-              notes: $rel[0].body,
-              pub_date: $rel[0].publishedAt,
-              firmwareVersion: $fw[0].version,
-              platforms: {
-                "windows-x86_64-nsis": { url: $nsisUrl, signature: ($nsis | rtrimstr("\n")) },
-                "windows-x86_64-msi": { url: $msiUrl, signature: ($msi | rtrimstr("\n")) },
-                "linux-x86_64-appimage": { url: $appimageUrl, signature: ($appimage | rtrimstr("\n")) }
-              }
-            }' > latest.json
+          node scripts/release-assets.mjs manifest "$v" assets \
+            "https://github.com/$GH_REPO/releases/download/$tag" release.json > latest.json
           cat latest.json
           gh release upload "$tag" latest.json --clobber

@@ -28,19 +28,19 @@ jobs:
       version: ${{ steps.v.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the previous tag, for the firmware/VERSION check
+      # The same check ci.yml runs on every PR, plus (on a tag) the tag matching the version
+      # and a firmware change since the last tag having bumped firmware/VERSION.
       - id: v
-        name: Tag matches the app version
+        name: Versions agree
         run: |
-          app=$(jq -r .version app/src-tauri/tauri.conf.json)
-          for f in app/package.json app/sidecar/package.json; do
-            [ "$(jq -r .version "$f")" = "$app" ] || { echo "::error::$f version != tauri.conf.json ($app)"; exit 1; }
-          done
-          cargo=$(sed -n 's/^version = "\(.*\)"/\1/p' app/src-tauri/Cargo.toml | head -1)
-          [ "$cargo" = "$app" ] || { echo "::error::Cargo.toml version $cargo != tauri.conf.json ($app)"; exit 1; }
-          if [ "$GITHUB_REF_TYPE" = tag ] && [ "${GITHUB_REF_NAME#v}" != "$app" ]; then
-            echo "::error::tag $GITHUB_REF_NAME doesn't match app version $app"; exit 1
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            node scripts/check-release.mjs --tag "$GITHUB_REF_NAME"
+          else
+            node scripts/check-release.mjs
           fi
-          echo "version=$app" >> "$GITHUB_OUTPUT"
+          echo "version=$(jq -r .version app/package.json)" >> "$GITHUB_OUTPUT"
 
   windows:
     needs: [version, firmware]
@@ -85,13 +85,17 @@ jobs:
         shell: pwsh
         run: |
           $v = '${{ needs.version.outputs.version }}'
+          # Asset names come from scripts/release-assets.mjs, which update-manifest.yml reads too.
+          $nsis = node scripts/release-assets.mjs name nsis $v
+          $msi = node scripts/release-assets.mjs name msi $v
+          $zip = node scripts/release-assets.mjs name portable $v
           $rel = 'app\src-tauri\target\release'
           New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item "$rel\bundle\nsis\*.exe" "dist\TallyBot-$v-windows-x64-setup.exe"
-          Copy-Item "$rel\bundle\msi\*.msi" "dist\TallyBot-$v-windows-x64.msi"
+          Copy-Item "$rel\bundle\nsis\*.exe" "dist\$nsis"
+          Copy-Item "$rel\bundle\msi\*.msi" "dist\$msi"
           # The updater signatures; update-manifest.yml puts them in latest.json on publish.
-          Copy-Item "$rel\bundle\nsis\*.exe.sig" "dist\TallyBot-$v-windows-x64-setup.exe.sig"
-          Copy-Item "$rel\bundle\msi\*.msi.sig" "dist\TallyBot-$v-windows-x64.msi.sig"
+          Copy-Item "$rel\bundle\nsis\*.exe.sig" "dist\$nsis.sig"
+          Copy-Item "$rel\bundle\msi\*.msi.sig" "dist\$msi.sig"
           # Portable build for PCs where installing isn't allowed: the exe plus its sidecar,
           # which the runtime resolves next to the exe without the target-triple suffix.
           $portable = New-Item -ItemType Directory -Force portable
@@ -99,7 +103,7 @@ jobs:
           Copy-Item 'app\src-tauri\binaries\tallybot-sidecar-x86_64-pc-windows-msvc.exe' "$portable\tallybot-sidecar.exe"
           # The bundled firmware: a bare exe's resource dir is its own folder.
           Copy-Item -Recurse 'app\src-tauri\resources\firmware' "$portable\firmware"
-          Compress-Archive -Path "$portable\*" -DestinationPath "dist\TallyBot-$v-windows-x64-portable.zip"
+          Compress-Archive -Path "$portable\*" -DestinationPath "dist\$zip"
       - uses: actions/upload-artifact@v4
         with:
           name: windows
@@ -151,12 +155,14 @@ jobs:
       - name: Collect packages
         run: |
           v=${{ needs.version.outputs.version }}
+          # Asset names come from scripts/release-assets.mjs, which update-manifest.yml reads too.
+          name() { node scripts/release-assets.mjs name "$1" "$v"; }
           b=app/src-tauri/target/release/bundle
           mkdir dist
-          cp $b/appimage/*.AppImage "dist/TallyBot-$v-linux-x86_64.AppImage"
-          cp $b/appimage/*.AppImage.sig "dist/TallyBot-$v-linux-x86_64.AppImage.sig"
-          cp $b/deb/*.deb "dist/TallyBot-$v-linux-amd64.deb"
-          cp $b/rpm/*.rpm "dist/TallyBot-$v-linux-x86_64.rpm"
+          cp $b/appimage/*.AppImage "dist/$(name appimage)"
+          cp $b/appimage/*.AppImage.sig "dist/$(name appimage).sig"
+          cp $b/deb/*.deb "dist/$(name deb)"
+          cp $b/rpm/*.rpm "dist/$(name rpm)"
       - uses: actions/upload-artifact@v4
         with:
           name: linux
@@ -177,8 +183,9 @@ jobs:
           key: pio-${{ hashFiles('firmware/platformio.ini') }}
       - run: pip install platformio
       # One image at offset 0x0 (merge_bin.py): what the web flasher, the in-app flasher and
-      # a manual `esptool write_flash 0x0` all take. The name is stable so pages.yml can find
-      # it. The staging script adds the manifest (firmware version + sha256) the app reads.
+      # a manual `esptool write_flash 0x0` all take. The staging script names it (and the
+      # manifest beside it: firmware version + sha256, which the app reads) from
+      # scripts/release-assets.mjs, so pages.yml and update-manifest.yml find them.
       - name: Build merged image
         run: |
           pio run -d firmware -e esp32-c3-release -t mergebin
@@ -189,9 +196,27 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  # Every asset the release attaches is present under its contract name, and latest.json
+  # builds from them: what update-manifest.yml does on publish, rehearsed here, so a renamed
+  # bundle fails before a draft exists (and on a manual run, before any tag).
+  assets:
+    needs: [version, windows, linux, firmware]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Check the assets and dry-run latest.json
+        run: |
+          v=${{ needs.version.outputs.version }}
+          node scripts/release-assets.mjs check-dist "$v" dist
+          node scripts/release-assets.mjs manifest "$v" dist "https://example.invalid/dry-run"
+
   release:
     if: github.ref_type == 'tag'
-    needs: [version, windows, linux, firmware]
+    needs: [version, assets]
     runs-on: ubuntu-latest
     permissions:
       contents: write

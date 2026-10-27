@@ -6,7 +6,7 @@
 // outDir  where to write it (default: src-tauri/resources/firmware, which tauri.conf.json
 //         bundles as the `firmware/` resource directory)
 //
-// Writes tallybot-firmware-esp32c3.bin plus tallybot-firmware-esp32c3.json:
+// Writes the image and its manifest under the release's fixed names (scripts/release-assets.mjs):
 //   { "version": "<firmware/VERSION>", "sha256": "<hex>", "size": <bytes> }
 // The shell reads the manifest to tell the UI which firmware this build installs, and checks
 // the image against its sha256 before flashing. The release workflow runs this in its firmware
@@ -16,6 +16,8 @@ import { createHash } from "node:crypto";
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { FIRMWARE } from "../../scripts/release-assets.mjs";
 
 const app = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const firmware = resolve(app, "../firmware");
@@ -28,6 +30,6 @@ if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error(`firmware/VERSION isn't x.
 const manifest = { version, sha256: createHash("sha256").update(bytes).digest("hex"), size: bytes.length };
 
 mkdirSync(outDir, { recursive: true });
-copyFileSync(image, join(outDir, "tallybot-firmware-esp32c3.bin"));
-writeFileSync(join(outDir, "tallybot-firmware-esp32c3.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+copyFileSync(image, join(outDir, FIRMWARE.image));
+writeFileSync(join(outDir, FIRMWARE.manifest), `${JSON.stringify(manifest, null, 2)}\n`);
 console.log(`staged firmware ${version} (${bytes.length} bytes) in ${outDir}`);
