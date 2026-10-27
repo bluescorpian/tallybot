@@ -19,7 +19,7 @@ void dropAssociation();  // disconnect STA (a warm association would drag the ra
 
 bool connected();
 void connectBlocking();  // full-power autoConnect → captive-portal fallback (blocks)
-void openPortal();       // force the captive portal now, restoring the saved network if cancelled (blocks)
+bool openPortal();       // force the captive portal now (blocks); true when a network was saved
 void beginAssociation(); // non-blocking warm join from stored creds (no portal); kept warm for USB-first boot
 void provision(const char* ssid, const char* pass);  // SET_WIFI: save-only, no validating join
 

@@ -115,6 +115,9 @@ void startTransportClient(uint8_t transport, Resume from) {
 }
 
 // Hold BOOT for kReprovisionHoldMs to re-open the captive portal (switch networks) in any state.
+// Whatever holds the radio lets go first, or a bridge or an ESP-NOW light would keep running
+// beside the portal and the WiFi client. Saving a network makes this a WiFi light (as SET_WIFI
+// does); cancelling returns to the transport the device is set up for.
 void checkBootButton(unsigned long now) {
   if (digitalRead(kBootButtonPin) != LOW) {  // active-low: released
     g_btnDownSince = 0;
@@ -125,10 +128,30 @@ void checkBootButton(unsigned long now) {
   } else if (now - g_btnDownSince >= kReprovisionHoldMs) {
     g_btnDownSince = 0;
     TLOG(LOG_LEVEL_INFO, "BOOT held - opening WiFi setup\n");
+    if (espnow::bridgeActive()) {
+      // WARN: the host relies on this bridge, and it doesn't re-assert it until a reconnect.
+      TLOG(LOG_LEVEL_WARN, "Leaving bridge mode: BOOT held for WiFi setup\n");
+      espnow::exitBridge();
+    }
+    if (g_mode == Mode::ESPNOW_CLIENT) {
+      espnow::stopLight();  // a no-op if USB had already gated it off
+      g_espnowGated = false;
+    }
     usb::resetSession();
     tally::stop();
-    wifi::openPortal();  // blocks until reconfigured or cancelled
-    enterWifiClient();
+    if (wifi::openPortal()) {  // blocks until reconfigured or cancelled
+      settings::setTransportMode(TRANSPORT_WIFI);
+      enterWifiClient();
+      return;
+    }
+    uint8_t transport = settings::transportMode();
+    TLOG(LOG_LEVEL_INFO, "Portal cancelled - back to the saved transport\n");
+    if (transport == TRANSPORT_WIFI) {
+      if (!wifi::connected()) wifi::connectBlocking();  // restore the saved network
+      enterWifiClient();
+    } else {
+      startTransportClient(transport, Resume::BOOT);  // cold radio: No-TX turns it off, ESP-NOW rebuilds it
+    }
   }
 }
 

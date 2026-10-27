@@ -216,13 +216,10 @@ void wifi::connectBlocking() {
        WiFi.localIP().toString().c_str());
 }
 
-void wifi::openPortal() {
+// The caller decides what a cancel means: it depends on the transport the device runs.
+bool wifi::openPortal() {
   WiFi.mode(WIFI_STA);
-  bool reconfigured = g_wm.startConfigPortal(g_apSsid);  // always raises the portal (blocks)
-  if (!reconfigured && WiFi.status() != WL_CONNECTED) {
-    TLOG(LOG_LEVEL_INFO, "Portal cancelled - restoring the saved network\n");
-    connectBlocking();
-  }
+  return g_wm.startConfigPortal(g_apSsid);  // always raises the portal (blocks)
 }
 
 void wifi::beginAssociation() {
