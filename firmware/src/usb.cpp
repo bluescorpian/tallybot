@@ -10,8 +10,8 @@
 
 namespace {
 constexpr unsigned long kHelloIntervalMs = 1000;  // re-announce HELLO until the host replies
-constexpr unsigned long kTallyIdleMs = 5000;       // USB silence after which we release tally
-constexpr unsigned long kSessionIdleMs = 5000;     // any-frame silence after which the host is gone
+constexpr unsigned long kTallyIdleMs = HOST_SILENCE_TIMEOUT_MS;    // SET_COLOR silence: release tally
+constexpr unsigned long kSessionIdleMs = HOST_SILENCE_TIMEOUT_MS;  // any-frame silence: the host is gone
 
 PacketSerial g_packet;
 usb::MessageHandler g_handler = nullptr;

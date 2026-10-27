@@ -123,11 +123,14 @@
 
 // ── ESP-NOW transport (v1.3) ─────────────────────────────────────────────────
 #define ESPNOW_CHANNEL 1               // fixed 2.4GHz channel; lights join no AP, so nothing negotiates
-#define ESPNOW_LINK_TIMEOUT_MS 5000    // no frame from the bridge this long ⇒ the link is dead
 
 // ── Timers ───────────────────────────────────────────────────────────────────
 #define HEARTBEAT_INTERVAL_MS 10000  // device heartbeats every 10s (docs/architecture.md)
 #define DISCOVERY_INTERVAL_MS 2000   // re-broadcast TALLY_FIND every 2s until found
+// No frame from the host this long, on any transport (USB, TCP, the ESP-NOW bridge), means the
+// link is dead: release tally and show steady blue. The server re-sends every colour each 250 ms,
+// so this is 20 lost keyframes.
+#define HOST_SILENCE_TIMEOUT_MS 5000
 // Server-side, for reference only (the firmware doesn't enforce these):
 //   HEARTBEAT_TIMEOUT_MS 30000 — server drops a device silent this long
 //   ANNOUNCE_INTERVAL_MS  5000 — server broadcasts its presence this often

@@ -171,7 +171,7 @@ void resetBridgeStats(unsigned long now) {
 // replaces it — the old peer is deleted then, so the peer table never holds a stale bridge.
 uint8_t g_bridge[6];          // our bridge (valid while g_haveBridge)
 bool g_haveBridge = false;    // g_bridge is registered as a peer (linked, or remembered after a timeout)
-bool g_linked = false;        // the link to g_bridge is live (a frame within ESPNOW_LINK_TIMEOUT_MS)
+bool g_linked = false;        // the link to g_bridge is live (a frame within HOST_SILENCE_TIMEOUT_MS)
 bool g_gotFrame = false;      // received the first frame from the bridge (stops HELLO re-send)
 bool g_everHadBridge = false; // splits "first hunt" (cyan) from "lost the bridge" (steady blue)
 unsigned long g_lastBroadcast = 0;
@@ -323,7 +323,7 @@ void espnow::loopLight(unsigned long now) {
 
   // Linked: no traffic for the timeout means the link is down — show it and resume discovery,
   // remembering the bridge for a fast relink.
-  if (now - g_lastRx >= ESPNOW_LINK_TIMEOUT_MS) {
+  if (now - g_lastRx >= HOST_SILENCE_TIMEOUT_MS) {
     g_linkTimeouts++;
     g_inOutage = true;
     TLOG(LOG_LEVEL_WARN, "Bridge link timed out (#%lu); resuming discovery\n", (unsigned long)g_linkTimeouts);

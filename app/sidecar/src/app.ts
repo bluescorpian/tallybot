@@ -171,16 +171,17 @@ const KEYFRAMES_PER_LINK_TIMEOUT = 20;
 /**
  * How often to re-assert every connected device's current colour, regardless of change. Treats
  * SET_COLOR as periodic *state* rather than a one-shot *event*: a packet lost in flight self-heals
- * on the next tick. Reliable transports (TCP, USB-CDC) don't need it, but the cost is trivial
- * (~6 payload bytes × 4/s per device) and it's applied uniformly so the firmware never has to know
- * its transport's reliability. It's the safeguard that makes v1.3's fire-and-forget ESP-NOW path
+ * on the next tick. Reliable transports (TCP, USB-CDC) don't need it for loss, but the cost is
+ * trivial (~6 payload bytes × 4/s per device) and it's applied uniformly so the firmware never has
+ * to know its transport's reliability. It's the safeguard that makes v1.3's fire-and-forget ESP-NOW path
  * trustworthy — and it lets a light that power-cycles or drifts into range mid-show recover within
- * a tick, without waiting on a reconnect handshake. 250 ms (not 1 s) because the keyframe is also
- * an ESP-NOW light's only proof its bridge is alive: its 5 s link timeout
- * ({@link ESPNOW_LINK_TIMEOUT_MS}) then takes {@link KEYFRAMES_PER_LINK_TIMEOUT} consecutive lost
- * keyframes rather than 5, and a light that did lose the link relinks on the next keyframe to reach
- * it. So the period is derived from that timeout, not set beside it: shortening the firmware's
- * timeout shortens the keyframe with it. Animated devices already re-send
+ * a tick, without waiting on a reconnect handshake. The keyframe is also every light's proof its
+ * host is alive, on every transport: the firmware shows steady blue after 5 s without one
+ * ({@link ESPNOW_LINK_TIMEOUT_MS}, `HOST_SILENCE_TIMEOUT_MS` in the firmware). 250 ms (not 1 s)
+ * so that timeout takes {@link KEYFRAMES_PER_LINK_TIMEOUT} consecutive lost keyframes rather than
+ * 5 on lossy ESP-NOW, and an ESP-NOW light that did lose the link relinks on the next keyframe to
+ * reach it. So the period is derived from that timeout, not set beside it: shortening the
+ * firmware's timeout shortens the keyframe with it. Animated devices already re-send
  * every {@link ANIM_TICK_MS}; this keyframe is their redundant-but-harmless backstop and the only
  * resend a steady device gets.
  */

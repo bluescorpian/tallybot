@@ -249,6 +249,9 @@ void loop() {
       break;
 
     case Mode::NOTX:
+      // Wired-only: once the USB host falls silent, nothing else will drive the LED — drop the
+      // last streamed colour for steady blue rather than hold it.
+      if (usbTallyReleased) ind::lostServer();
       break;
   }
 

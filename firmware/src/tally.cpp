@@ -7,6 +7,7 @@
 
 #include "indicators.h"
 #include "log.h"
+#include "usb.h"
 
 namespace {
 constexpr unsigned long kConnectTimeoutMs = 3000;
@@ -28,10 +29,13 @@ bool g_everHadServer = false;  // splits "first hunt" (cyan) from "lost the serv
 unsigned long g_lastBroadcast = 0;
 unsigned long g_lastHeartbeat = 0;
 unsigned long g_backoffStart = 0;
+unsigned long g_lastServerFrame = 0;  // the last decodable frame from the server (host-silence rule)
 
 void onPayload(const uint8_t* payload, size_t len) {
   ServerMessage msg;
-  if (decodeServerMessage(payload, len, &msg) && g_handler) g_handler(msg);
+  if (!decodeServerMessage(payload, len, &msg)) return;
+  g_lastServerFrame = millis();
+  if (g_handler) g_handler(msg);
 }
 
 bool parseHere(const char* msg, uint16_t* port) {
@@ -99,6 +103,7 @@ void tally::loop(unsigned long now) {
         g_tcp.write(hello, encodeHello(hello, g_mac));
         g_tcp.write(hello, encodeFirmware(hello, sizeof(hello), FIRMWARE_VERSION));
         g_lastHeartbeat = now;
+        g_lastServerFrame = millis();
         g_everHadServer = true;  // from now a "no server" signal means we LOST one
         g_state = CONNECTED;
         ind::unassigned();  // white breathe until the first SET_COLOR
@@ -126,6 +131,20 @@ void tally::loop(unsigned long now) {
         int n = g_tcp.read(chunk, sizeof(chunk));
         if (n <= 0) break;
         g_decoder.push(chunk, (size_t)n, onPayload);
+      }
+      // A half-open socket (PC asleep, a path dropped, a wedged sidecar) can stay "connected" long
+      // after the server stopped talking, so the server's own keyframes are the liveness signal, as
+      // on USB and ESP-NOW. Skipped while a USB host drives tally: the server then sends colour
+      // over USB only, so TCP silence is expected; once USB goes quiet too, this fires at once.
+      // millis(), not `now`: the read above may have stamped g_lastServerFrame after `now`.
+      if (!usb::tallyActive() && millis() - g_lastServerFrame >= HOST_SILENCE_TIMEOUT_MS) {
+        TLOG(LOG_LEVEL_WARN, "No frame from the server in %lums; reconnecting\n",
+             (unsigned long)HOST_SILENCE_TIMEOUT_MS);
+        g_tcp.stop();
+        ind::lostServer();
+        g_backoffStart = now;
+        g_state = BACKOFF;
+        break;
       }
       if (now - g_lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
         uint8_t hb[2];
