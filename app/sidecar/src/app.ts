@@ -25,7 +25,7 @@ import {
 import type { DeviceTransportEvents } from "./device-events.ts";
 import type { DeviceConfig } from "./store.ts";
 import type { DeviceFirmware, DeviceTransport, DeviceWifiState, LogLevelName, SidecarEvent, SourceScanHit, UiCommand } from "./ipc.ts";
-import { type Color, DEFAULT_BRIGHTNESS, macTail, supportsEspNow } from "./protocol.ts";
+import { type Color, DEFAULT_BRIGHTNESS, isIPv4, macTail, supportsEspNow } from "./protocol.ts";
 import { provisionedModeName, transportModeValue } from "./usb-transport.ts";
 
 // ── Collaborator ports (the concrete classes satisfy these structurally) ─────────
@@ -406,6 +406,10 @@ export class SidecarApp {
         this.#sync();
         break;
       case "setSource":
+        if (!isIPv4(command.ip)) {
+          this.#ipc.notice("info", `"${command.ip}" isn't an IPv4 address — can't connect to it.`);
+          break;
+        }
         await this.#store.setSourceIp(command.ip);
         this.#atem.connect(command.ip); // change event publishes the new connecting state
         break;

@@ -573,7 +573,7 @@ export function parseDiscoveryResponse(message: string): { port: number } | null
 
 /**
  * A dotted-quad IPv4 address, each octet 0–255, e.g. `192.168.10.240` — the form the ATEM
- * source IP takes.
+ * source IP takes. Shared by the settings form and the sidecar's `setSource` handler.
  */
 export function isIPv4(ip: string): boolean {
   const octets = ip.split(".");

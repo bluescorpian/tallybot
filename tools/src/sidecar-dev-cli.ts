@@ -138,8 +138,9 @@ async function main(): Promise<void> {
   if (!server) throw new Error("the wifi transport is selected, so the TCP server exists");
 
   await app.start();
-  // Bring the fake ATEM online (its IP is irrelevant — the sim has no network).
-  ipc.dispatch({ type: "setSource", ip: "simulated" });
+  // Bring the fake ATEM online. Its IP is irrelevant (the sim has no network), but setSource
+  // only takes an IPv4 address, so this is a documentation address (TEST-NET-1).
+  ipc.dispatch({ type: "setSource", ip: "192.0.2.1" });
 
   console.log(`tallybot sidecar (dev) — TCP ${server.tcpPort} / UDP ${server.discoveryPort}, state at ${stateFile}`);
   console.log(USAGE);
