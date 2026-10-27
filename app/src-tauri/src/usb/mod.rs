@@ -5,13 +5,15 @@
 //! framing, parses only HELLO (for detection + outbound routing by MAC), and relays
 //! everything else opaque over the **existing** shell↔sidecar NDJSON stdio bridge.
 //!
-//! Bridge vocabulary (all one-line JSON on the existing pipe):
+//! Bridge vocabulary (all one-line JSON on the existing pipe), [`BridgeMessage`]:
 //!   • shell → sidecar (written to the sidecar's stdin):
 //!       {"type":"usbDeviceConnected","mac":..,"version":..}
 //!       {"type":"usbDeviceDisconnected","mac":..}
 //!       {"type":"usbFrame","mac":..,"payloadHex":..}   // STATUS/LOG/RELAY/other device→host payloads
 //!   • sidecar → shell (read off the sidecar's stdout, intercepted before the UI):
 //!       {"type":"usbSend","mac":..,"payloadHex":..}     // SET_COLOR/SET_WIFI/SET_TRANSPORT/GET_STATUS/RELAY/SET_BRIDGE
+//! The sidecar's twin is `app/sidecar/src/usb-bridge.ts`; both are checked against
+//! `app/src-tauri/contracts/shell-contracts.json`.
 //!
 //! A board that never sends HELLO (no TallyBot firmware) isn't the sidecar's business: the
 //! shell reports it straight to the UI through `health` and releases its port.
@@ -34,7 +36,27 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicBool;
 use std::sync::{mpsc, Arc, Mutex};
 
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
+
+/// One shell↔sidecar USB bridge message (see the module docs).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum BridgeMessage {
+    UsbDeviceConnected { mac: String, version: u8 },
+    UsbDeviceDisconnected { mac: String },
+    #[serde(rename_all = "camelCase")]
+    UsbFrame { mac: String, payload_hex: String },
+    #[serde(rename_all = "camelCase")]
+    UsbSend { mac: String, payload_hex: String },
+}
+
+impl BridgeMessage {
+    /// The one-line JSON written to the sidecar.
+    pub fn line(&self) -> String {
+        serde_json::to_string(self).expect("a bridge message always serialises")
+    }
+}
 
 /// Espressif ESP32-C3 native USB-JTAG/serial. Bare and flashed boards both enumerate
 /// here — detection (HELLO vs silence) tells them apart, not the VID:PID.
@@ -96,9 +118,15 @@ pub fn handle_outbound(app: &AppHandle, line: &str) -> bool {
     if value.get("type").and_then(|t| t.as_str()) != Some("usbSend") {
         return false;
     }
-    let mac = value.get("mac").and_then(|m| m.as_str()).unwrap_or_default();
-    let hex = value.get("payloadHex").and_then(|h| h.as_str()).unwrap_or_default();
-    let Some(bytes) = from_hex(hex) else {
+    let (mac, hex) = match serde_json::from_value::<BridgeMessage>(value) {
+        Ok(BridgeMessage::UsbSend { mac, payload_hex }) => (mac, payload_hex),
+        _ => {
+            crate::log::diag!("[usb] dropped a malformed usbSend: {line}");
+            return true;
+        }
+    };
+    let mac = mac.as_str();
+    let Some(bytes) = from_hex(&hex) else {
         crate::log::diag!("[usb] dropped a send to {mac:?}: its payload isn't hex");
         return true;
     };
@@ -151,8 +179,8 @@ fn deregister_device(app: &AppHandle, mac: &str) {
         }
     }
     crate::health::set_light_port(app, mac, None);
-    let msg = serde_json::json!({ "type": "usbDeviceDisconnected", "mac": mac });
-    let _ = crate::sidecar::write_line(app, &msg.to_string());
+    let msg = BridgeMessage::UsbDeviceDisconnected { mac: mac.to_string() };
+    let _ = crate::sidecar::write_line(app, &msg.line());
 }
 
 /// Re-announce every detected device to the sidecar. Called when a (re)spawned sidecar
@@ -216,7 +244,7 @@ fn is_claimed(app: &AppHandle, path: &str) -> bool {
 }
 
 fn connected_message(mac: &str, version: u8) -> String {
-    serde_json::json!({ "type": "usbDeviceConnected", "mac": mac, "version": version }).to_string()
+    BridgeMessage::UsbDeviceConnected { mac: mac.to_string(), version }.line()
 }
 
 fn to_hex(bytes: &[u8]) -> String {
@@ -240,6 +268,23 @@ fn from_hex(s: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The bridge messages are what the shared contract fixture says the sidecar reads and writes.
+    #[test]
+    fn bridge_messages_match_the_shell_contracts() {
+        let c: serde_json::Value =
+            serde_json::from_str(include_str!("../../contracts/shell-contracts.json")).expect("contracts parse");
+        let mac = "aa:bb:cc:dd:ee:ff".to_string();
+        let to_sidecar = [
+            BridgeMessage::UsbDeviceConnected { mac: mac.clone(), version: 3 },
+            BridgeMessage::UsbDeviceDisconnected { mac: mac.clone() },
+            BridgeMessage::UsbFrame { mac: mac.clone(), payload_hex: "04016869".into() },
+        ];
+        let got: Vec<serde_json::Value> = to_sidecar.iter().map(|m| serde_json::from_str(&m.line()).unwrap()).collect();
+        assert_eq!(serde_json::Value::Array(got), c["usbBridge"]["toSidecar"]);
+        let sends: Vec<BridgeMessage> = serde_json::from_value(c["usbBridge"]["toShell"].clone()).expect("usbSend parses");
+        assert_eq!(sends, vec![BridgeMessage::UsbSend { mac, payload_hex: "01ff000080".into() }]);
+    }
 
     #[test]
     fn hex_roundtrips() {

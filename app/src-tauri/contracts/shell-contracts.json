@@ -1,0 +1,40 @@
+{
+  "//": "What the Rust shell sends the UI and the sidecar, as JSON, one example per shape. The shell's tests serialise its own values and compare them with these (flash.rs, updater.rs, health.rs, usb/mod.rs); the UI's (app/src/lib/shell-contracts.test.ts) and the sidecar's (app/sidecar/src/usb-bridge-contracts.test.ts) check their hand-written types against them. A rename on either side fails one of the two, so change this file with both.",
+  "flashStages": ["connect", "erase", "write", "verify", "restart", "rejoin"],
+  "flashFailures": ["no-response", "port-busy", "unplugged", "wrong-light", "wrong-chip", "rejoin", "settings-layout", "error"],
+  "flashStatus": [
+    { "revision": 1, "port": "/dev/ttyACM0", "targetMac": "aa:bb:cc:dd:ee:ff", "status": "running", "stage": "write", "progress": 0.5, "leavesBlank": true },
+    { "revision": 2, "port": "/dev/ttyACM0", "targetMac": null, "status": "done", "mac": "aa:bb:cc:dd:ee:ff", "leavesBlank": false },
+    { "revision": 3, "port": "/dev/ttyACM0", "targetMac": "aa:bb:cc:dd:ee:ff", "status": "failed", "stage": "connect", "failure": "settings-layout", "detail": "why", "leavesBlank": false },
+    { "revision": 4, "port": "/dev/ttyACM0", "targetMac": null, "status": "cancelled", "stage": "erase", "leavesBlank": true }
+  ],
+  "firmwareInfo": { "version": "1.1.0", "sha256": "00", "size": 1 },
+  "updatePhases": ["check", "download", "verify", "install"],
+  "updateInfo": {
+    "version": "1.2.0",
+    "date": "2026-10-01T00:00:00Z",
+    "notes": "notes",
+    "firmwareVersion": "1.2.0",
+    "installable": true,
+    "releaseUrl": "https://github.com/example/tallybot/releases/tag/v1.2.0"
+  },
+  "updateStatus": { "revision": 1, "failure": { "phase": "verify", "version": "1.2.0", "message": "bad signature" } },
+  "updateProgress": { "received": 10, "total": 100 },
+  "health": {
+    "revision": 1,
+    "sidecarDown": "exited",
+    "usbPortErrors": [{ "port": "/dev/ttyACM1", "message": "busy" }],
+    "unflashedPorts": ["/dev/ttyACM2"],
+    "lightPorts": [{ "mac": "aa:bb:cc:dd:ee:ff", "port": "/dev/ttyACM0" }],
+    "blankLights": [{ "mac": "11:22:33:44:55:66", "port": "/dev/ttyACM2" }],
+    "configDirMissing": "no config dir"
+  },
+  "usbBridge": {
+    "toSidecar": [
+      { "type": "usbDeviceConnected", "mac": "aa:bb:cc:dd:ee:ff", "version": 3 },
+      { "type": "usbDeviceDisconnected", "mac": "aa:bb:cc:dd:ee:ff" },
+      { "type": "usbFrame", "mac": "aa:bb:cc:dd:ee:ff", "payloadHex": "04016869" }
+    ],
+    "toShell": [{ "type": "usbSend", "mac": "aa:bb:cc:dd:ee:ff", "payloadHex": "01ff000080" }]
+  }
+}

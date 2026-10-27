@@ -191,3 +191,25 @@ fn update(app: &AppHandle, change: impl FnOnce(&mut Health) -> bool) {
     };
     crate::report_event(app, "health", snapshot);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The snapshot is what the shared contract fixture says the UI reads (`ShellHealth`).
+    #[test]
+    fn the_snapshot_matches_the_shell_contracts() {
+        let c: serde_json::Value =
+            serde_json::from_str(include_str!("../contracts/shell-contracts.json")).expect("contracts parse");
+        let health = Health {
+            revision: 1,
+            sidecar_down: Some("exited".into()),
+            usb_port_errors: vec![UsbPortError { port: "/dev/ttyACM1".into(), message: "busy".into() }],
+            unflashed_ports: vec!["/dev/ttyACM2".into()],
+            light_ports: vec![LightPort { mac: "aa:bb:cc:dd:ee:ff".into(), port: "/dev/ttyACM0".into() }],
+            blank_lights: vec![LightPort { mac: "11:22:33:44:55:66".into(), port: "/dev/ttyACM2".into() }],
+            config_dir_missing: Some("no config dir".into()),
+        };
+        assert_eq!(serde_json::to_value(&health).unwrap(), c["health"]);
+    }
+}

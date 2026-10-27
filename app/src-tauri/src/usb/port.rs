@@ -11,7 +11,7 @@ use serialport::SerialPort;
 use tauri::AppHandle;
 
 use super::protocol::{cobs_frame, parse_hello, CobsStream, MSG_GET_STATUS};
-use super::{deregister_device, is_claimed, register_device, to_hex};
+use super::{deregister_device, is_claimed, register_device, to_hex, BridgeMessage};
 use crate::log::diag;
 
 const BAUD: u32 = 115_200;
@@ -129,10 +129,6 @@ fn handle_frame(
         return; // benign re-HELLO (device repeats it until a host frame arrives)
     }
     let m = mac.as_ref().unwrap();
-    let msg = serde_json::json!({
-        "type": "usbFrame",
-        "mac": m,
-        "payloadHex": to_hex(&payload),
-    });
-    let _ = crate::sidecar::write_line(app, &msg.to_string());
+    let msg = BridgeMessage::UsbFrame { mac: m.clone(), payload_hex: to_hex(&payload) };
+    let _ = crate::sidecar::write_line(app, &msg.line());
 }

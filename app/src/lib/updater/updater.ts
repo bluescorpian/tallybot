@@ -50,7 +50,9 @@ export function downloadProgress(received: number, update: AppUpdate): number {
  * "Try again" does. `verify`: the download failed its signature check, which a retry can't fix.
  * An install failure on Windows is reported on the relaunch after it.
  */
-export type UpdatePhase = "check" | "download" | "verify" | "install";
+/** Which step of an update failed (`updater.rs` `Phase`). */
+export const UPDATE_PHASES = ["check", "download", "verify", "install"] as const;
+export type UpdatePhase = (typeof UPDATE_PHASES)[number];
 
 export type UpdaterState =
 	| { status: "idle" }

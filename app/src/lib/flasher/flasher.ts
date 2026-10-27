@@ -32,15 +32,17 @@ export type FlashStage = (typeof FLASH_STAGES)[number];
  *                 this firmware doesn't (nothing was written); a full write, which resets them, works
  *   error       — anything else; `detail` says what
  */
-export type FlashFailure =
-	| "no-response"
-	| "port-busy"
-	| "unplugged"
-	| "wrong-light"
-	| "wrong-chip"
-	| "rejoin"
-	| "settings-layout"
-	| "error";
+export const FLASH_FAILURES = [
+	"no-response",
+	"port-busy",
+	"unplugged",
+	"wrong-light",
+	"wrong-chip",
+	"rejoin",
+	"settings-layout",
+	"error",
+] as const;
+export type FlashFailure = (typeof FLASH_FAILURES)[number];
 
 /** How to write the image. */
 export interface FlashOptions {

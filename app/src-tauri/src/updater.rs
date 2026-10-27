@@ -325,3 +325,46 @@ fn describe(e: &UpdaterError) -> String {
         _ => e.to_string(),
     }
 }
+
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+
+    fn contracts() -> serde_json::Value {
+        serde_json::from_str(include_str!("../contracts/shell-contracts.json")).expect("contracts parse")
+    }
+
+    /// Every [`Phase`], by its wire name; adding a variant fails to compile here until it's listed.
+    fn all_phases() -> Vec<Phase> {
+        let all = vec![Phase::Check, Phase::Download, Phase::Verify, Phase::Install];
+        for p in &all {
+            match p {
+                Phase::Check | Phase::Download | Phase::Verify | Phase::Install => {}
+            }
+        }
+        all
+    }
+
+    /// What the UI reads from the updater (`updater/tauri.svelte.ts`) is what the shared contract
+    /// fixture says.
+    #[test]
+    fn the_updater_payloads_match_the_shell_contracts() {
+        let c = contracts();
+        assert_eq!(serde_json::to_value(all_phases()).unwrap(), c["updatePhases"]);
+        let info = UpdateInfo {
+            version: "1.2.0".into(),
+            date: Some("2026-10-01T00:00:00Z".into()),
+            notes: Some("notes".into()),
+            firmware_version: Some("1.2.0".into()),
+            installable: true,
+            release_url: "https://github.com/example/tallybot/releases/tag/v1.2.0".into(),
+        };
+        assert_eq!(serde_json::to_value(&info).unwrap(), c["updateInfo"]);
+        let status = UpdateStatus {
+            revision: 1,
+            failure: Some(UpdateFailure { phase: Phase::Verify, version: Some("1.2.0".into()), message: "bad signature".into() }),
+        };
+        assert_eq!(serde_json::to_value(&status).unwrap(), c["updateStatus"]);
+        assert_eq!(serde_json::to_value(Progress { received: 10, total: Some(100) }).unwrap(), c["updateProgress"]);
+    }
+}

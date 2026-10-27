@@ -15,8 +15,11 @@ import {
 	type UpdaterState,
 } from "./updater";
 
+// The shell's side of these is checked against `src-tauri/contracts/shell-contracts.json`, and
+// so are these types (`$lib/shell-contracts.test.ts`).
+
 /** `updater.rs` `UpdateInfo`. */
-interface UpdateInfo {
+export interface UpdateInfo {
 	version: string;
 	date: string | null;
 	notes: string | null;
@@ -26,9 +29,15 @@ interface UpdateInfo {
 }
 
 /** `updater.rs` `UpdateStatus`: the shell's record of the last failed step. */
-interface UpdateStatus {
+export interface UpdateStatus {
 	revision: number;
 	failure: { phase: UpdatePhase; version: string | null; message: string } | null;
+}
+
+/** `updater.rs` `Progress`: the `"update-progress"` event's payload. */
+export interface UpdateProgress {
+	received: number;
+	total: number | null;
 }
 
 /** Last version this install ran, to say "updated to x" once after an update. */
@@ -46,7 +55,7 @@ export class TauriUpdater implements Updater {
 	 */
 	async init(): Promise<void> {
 		this.currentVersion = await getVersion();
-		await listen<{ received: number; total: number | null }>("update-progress", ({ payload }) => {
+		await listen<UpdateProgress>("update-progress", ({ payload }) => {
 			const s = this.state;
 			if (s.status !== "downloading") return;
 			this.state = {

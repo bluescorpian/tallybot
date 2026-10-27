@@ -804,6 +804,63 @@ mod tests {
         }
     }
 
+    /// Every [`Stage`] and [`Failure`]; adding a variant fails to compile here until it's listed.
+    fn all_stages() -> Vec<Stage> {
+        use Stage::*;
+        let all = vec![Connect, Erase, Write, Verify, Restart, Rejoin];
+        for s in &all {
+            match s {
+                Connect | Erase | Write | Verify | Restart | Rejoin => {}
+            }
+        }
+        all
+    }
+
+    fn all_failures() -> Vec<Failure> {
+        use Failure::*;
+        let all = vec![NoResponse, PortBusy, Unplugged, WrongLight, WrongChip, Rejoin, SettingsLayout, Error];
+        for f in &all {
+            match f {
+                NoResponse | PortBusy | Unplugged | WrongLight | WrongChip | Rejoin | SettingsLayout | Error => {}
+            }
+        }
+        all
+    }
+
+    /// What the UI reads from a flash job (`flasher/tauri.svelte.ts`, `flasher.ts`) is what the
+    /// shared contract fixture says.
+    #[test]
+    fn the_flash_payloads_match_the_shell_contracts() {
+        let c: serde_json::Value =
+            serde_json::from_str(include_str!("../contracts/shell-contracts.json")).expect("contracts parse");
+        assert_eq!(serde_json::to_value(all_stages()).unwrap(), c["flashStages"]);
+        assert_eq!(serde_json::to_value(all_failures()).unwrap(), c["flashFailures"]);
+
+        let mac = Some("aa:bb:cc:dd:ee:ff".to_string());
+        let status = |revision, target_mac: Option<String>, event, leaves_blank| FlashStatus {
+            revision,
+            port: "/dev/ttyACM0".into(),
+            target_mac,
+            event,
+            leaves_blank,
+        };
+        let statuses = [
+            status(1, mac.clone(), FlashEvent::Running { stage: Stage::Write, progress: 0.5 }, true),
+            status(2, None, FlashEvent::Done { mac: "aa:bb:cc:dd:ee:ff".into() }, false),
+            status(
+                3,
+                mac.clone(),
+                FlashEvent::Failed { stage: Stage::Connect, failure: Failure::SettingsLayout, detail: "why".into() },
+                false,
+            ),
+            status(4, None, FlashEvent::Cancelled { stage: Stage::Erase }, true),
+        ];
+        assert_eq!(serde_json::to_value(statuses).unwrap(), c["flashStatus"]);
+
+        let info: FirmwareInfo = serde_json::from_value(c["firmwareInfo"].clone()).expect("manifest parses");
+        assert_eq!(serde_json::to_value(info).unwrap(), c["firmwareInfo"]);
+    }
+
     #[test]
     fn a_connect_failure_reads_as_its_cause() {
         let no_answer = || espflash::Error::from(std::io::Error::new(std::io::ErrorKind::TimedOut, "no sync"));

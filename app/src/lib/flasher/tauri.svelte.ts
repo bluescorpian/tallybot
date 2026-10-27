@@ -15,15 +15,18 @@ import {
 	type Flasher,
 } from "./flasher";
 
+// The shell's side of these is checked against `src-tauri/contracts/shell-contracts.json`, and
+// so are these types (`$lib/shell-contracts.test.ts`).
+
 /** `flash.rs` `FlashEvent`. */
-type FlashEvent =
+export type FlashEvent =
 	| { status: "running"; stage: FlashStage; progress: number }
 	| { status: "done"; mac: string }
 	| { status: "failed"; stage: FlashStage; failure: FlashFailure; detail: string }
 	| { status: "cancelled"; stage: FlashStage };
 
 /** `flash.rs` `FlashStatus`: the current or last job. `revision` orders pushes and pulls. */
-type FlashStatus = FlashEvent & { revision: number; port: string; targetMac: string | null; leavesBlank: boolean };
+export type FlashStatus = FlashEvent & { revision: number; port: string; targetMac: string | null; leavesBlank: boolean };
 
 export class TauriFlasher implements Flasher {
 	state = $state<FlashState>({ status: "idle" });
