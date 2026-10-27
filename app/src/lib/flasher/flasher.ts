@@ -21,19 +21,24 @@ export const FLASH_STAGES = ["connect", "erase", "write", "verify", "restart", "
 export type FlashStage = (typeof FLASH_STAGES)[number];
 
 /**
- * The failures worth a tailored fix, plus a catch-all:
+ * The failures worth a tailored fix, plus a catch-all (`flash.rs` `Failure`, which classifies them):
  *   no-response — the chip didn't enter download mode (fix: hold BOOT while plugging in)
  *   port-busy   — another program holds the serial port
  *   unplugged   — the cable came out mid-write (board left blank, recoverable)
  *   wrong-light — the board on the port isn't the light being updated (nothing was written)
+ *   wrong-chip  — the board isn't an ESP32-C3 TallyBot can install on (nothing was written)
+ *   rejoin      — installed, but the light didn't come back over USB (its firmware is fine)
  *   error       — anything else; `detail` says what
  */
-export type FlashFailure = "no-response" | "port-busy" | "unplugged" | "wrong-light" | "error";
+export type FlashFailure = "no-response" | "port-busy" | "unplugged" | "wrong-light" | "wrong-chip" | "rejoin" | "error";
 
 export type FlashState =
 	| { status: "idle" }
-	/** `progress` is 0–1 within the `write` stage, and 0 elsewhere. */
-	| { status: "running"; target: FlashTarget; stage: FlashStage; progress: number }
+	/**
+	 * `progress` is 0–1 within the `write` stage, and 0 elsewhere. `leavesBlank`: stopping now would
+	 * leave the board without firmware.
+	 */
+	| { status: "running"; target: FlashTarget; stage: FlashStage; progress: number; leavesBlank?: boolean }
 	/** `mac` is the light the board came back as (new for a blank board). */
 	| { status: "done"; target: FlashTarget; mac: string }
 	/**
@@ -53,7 +58,7 @@ export interface Flasher {
 	start(target: FlashTarget): void;
 	/**
 	 * Stop a running flash. Mid-write it leaves the board blank (recoverable by flashing again);
-	 * see `leavesBlank`.
+	 * the state's `leavesBlank` says when.
 	 */
 	cancel(): void;
 	/** Back to idle once the UI has shown the outcome. */
@@ -88,10 +93,3 @@ export function canReset(state: FlashState): boolean {
 	return state.status !== "running";
 }
 
-/**
- * Whether stopping or failing at `stage` leaves the board without firmware. Before erase nothing
- * was touched; once the write is done the new firmware is in place and comes back on its own.
- */
-export function leavesBlank(stage: FlashStage): boolean {
-	return stage === "erase" || stage === "write";
-}

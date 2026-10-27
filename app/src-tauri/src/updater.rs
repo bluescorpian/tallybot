@@ -16,16 +16,26 @@
 //! The last failure is state ([`UpdateStatus`], pulled with `update_status`), not only a rejected
 //! command: the UI that asked may have reloaded since, and an install failure outlives the process.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tauri::utils::config::BundleType;
 use time::format_description::well_known::Rfc3339;
 use tauri::{AppHandle, Manager};
-use tauri_plugin_updater::{Update, UpdaterExt};
+use tauri_plugin_updater::{Error as UpdaterError, Update, UpdaterExt};
 
 use crate::log::diag;
 use crate::report_event;
+
+/// How long a check may take. The plugin sets no timeout of its own, so a stalled connection left
+/// "Checking for updates…" up for good.
+const CHECK_TIMEOUT: Duration = Duration::from_secs(15);
+/// A download that receives nothing for this long has stalled, and fails. Not a cap on the whole
+/// download: a slow venue connection that keeps moving is left to finish.
+const DOWNLOAD_STALL: Duration = Duration::from_secs(30);
+/// How often the watchdog looks at the download.
+const STALL_POLL: Duration = Duration::from_secs(1);
 
 /// The release page for `version`, derived from the updater endpoint in tauri.conf.json
 /// (`<repo>/releases/latest/download/latest.json`) so the repo is named once.
@@ -57,6 +67,9 @@ pub struct UpdaterState {
 pub enum Phase {
     Check,
     Download,
+    /// The download arrived but failed its signature check: retrying fetches the same bytes, so
+    /// the UI offers the release page instead.
+    Verify,
     Install,
 }
 
@@ -194,7 +207,7 @@ fn install_target() -> (bool, Option<&'static str>) {
 #[tauri::command]
 pub async fn update_check(app: AppHandle) -> Result<Option<UpdateInfo>, String> {
     let (installable, target) = install_target();
-    let mut builder = app.updater_builder();
+    let mut builder = app.updater_builder().timeout(CHECK_TIMEOUT);
     if let Some(t) = target {
         builder = builder.target(t);
     }
@@ -202,7 +215,7 @@ pub async fn update_check(app: AppHandle) -> Result<Option<UpdateInfo>, String> 
         Ok(updater) => updater.check().await,
         Err(e) => Err(e),
     };
-    let found = checked.map_err(|e| fail(&app, Phase::Check, None, err(e)))?;
+    let found = checked.map_err(|e| fail(&app, Phase::Check, None, describe(&e)))?;
     succeeded(&app, Phase::Check);
     let state = app.state::<UpdaterState>();
     *state.bytes.lock().unwrap() = None;
@@ -222,19 +235,38 @@ pub async fn update_check(app: AppHandle) -> Result<Option<UpdateInfo>, String> 
 /// `"update-progress"` events; resolves once the installer is ready.
 #[tauri::command]
 pub async fn update_download(app: AppHandle) -> Result<(), String> {
-    let update = app.state::<UpdaterState>().update.lock().unwrap().clone().ok_or("No update to download")?;
+    let mut update = app.state::<UpdaterState>().update.lock().unwrap().clone().ok_or("No update to download")?;
+    // The check's timeout would cap the whole download; the stall watchdog below replaces it.
+    update.timeout = None;
     let mut received = 0usize;
     let progress_app = app.clone();
-    let bytes = update
-        .download(
-            move |chunk, total| {
-                received += chunk;
-                report_event(&progress_app, "update-progress", Progress { received, total });
-            },
-            || {},
-        )
-        .await
-        .map_err(|e| fail(&app, Phase::Download, Some(&update.version), err(e)))?;
+    let last_bytes = Arc::new(Mutex::new(Instant::now()));
+    let seen = last_bytes.clone();
+    let mut download = std::pin::pin!(update.download(
+        move |chunk, total| {
+            received += chunk;
+            *seen.lock().unwrap() = Instant::now();
+            report_event(&progress_app, "update-progress", Progress { received, total });
+        },
+        || {},
+    ));
+    let result = loop {
+        match tokio::time::timeout(STALL_POLL, &mut download).await {
+            Ok(result) => break result,
+            Err(_) if last_bytes.lock().unwrap().elapsed() >= DOWNLOAD_STALL => {
+                let message = format!(
+                    "The download stalled: nothing arrived for {} s. Check this PC's internet connection and try again.",
+                    DOWNLOAD_STALL.as_secs()
+                );
+                return Err(fail(&app, Phase::Download, Some(&update.version), message));
+            }
+            Err(_) => {} // still moving, or only just quiet
+        }
+    };
+    let bytes = result.map_err(|e| {
+        let phase = if is_signature_error(&e) { Phase::Verify } else { Phase::Download };
+        fail(&app, phase, Some(&update.version), describe(&e))
+    })?;
     succeeded(&app, Phase::Download);
     *app.state::<UpdaterState>().bytes.lock().unwrap() = Some(bytes);
     Ok(())
@@ -257,7 +289,7 @@ pub fn update_install(app: AppHandle) -> Result<(), String> {
     #[cfg(windows)]
     crate::shutdown(&app);
     if let Err(e) = update.install(bytes) {
-        let message = fail(&app, Phase::Install, Some(&update.version), err(e));
+        let message = fail(&app, Phase::Install, Some(&update.version), describe(&e));
         if cfg!(windows) {
             // The engine is already stopped, so come back up on the old version rather than
             // leave the board dead. The relaunched app reads why from the file and says so; the
@@ -272,6 +304,24 @@ pub fn update_install(app: AppHandle) -> Result<(), String> {
     app.restart();
 }
 
-fn err(e: impl std::fmt::Display) -> String {
-    e.to_string()
+/// A downloaded installer whose signature doesn't verify against the key in tauri.conf.json.
+fn is_signature_error(e: &UpdaterError) -> bool {
+    matches!(e, UpdaterError::Minisign(_) | UpdaterError::Base64(_) | UpdaterError::SignatureUtf8(_))
+}
+
+/// An updater error as the operator reads it: what failed in plain words, then the plugin's text.
+fn describe(e: &UpdaterError) -> String {
+    match e {
+        UpdaterError::Reqwest(r) if r.is_timeout() || r.is_connect() => {
+            format!("Couldn't reach the update server ({e}). Check this PC's internet connection.")
+        }
+        UpdaterError::Reqwest(r) if r.status().is_some() => {
+            format!("The update server refused the request ({e}).")
+        }
+        e if is_signature_error(e) => format!(
+            "The downloaded update didn't pass its signature check, so it wasn't installed ({e}). Download it from the release page instead."
+        ),
+        UpdaterError::Io(_) => format!("Couldn't write the update to this PC ({e}). Check there's free disk space."),
+        _ => e.to_string(),
+    }
 }

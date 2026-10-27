@@ -47,9 +47,10 @@ export function downloadProgress(received: number, update: AppUpdate): number {
 
 /**
  * Which step of an update failed (`updater.rs` `Phase`): it decides what the dialog says and what
- * "Try again" does. An install failure on Windows is reported on the relaunch after it.
+ * "Try again" does. `verify`: the download failed its signature check, which a retry can't fix.
+ * An install failure on Windows is reported on the relaunch after it.
  */
-export type UpdatePhase = "check" | "download" | "install";
+export type UpdatePhase = "check" | "download" | "verify" | "install";
 
 export type UpdaterState =
 	| { status: "idle" }

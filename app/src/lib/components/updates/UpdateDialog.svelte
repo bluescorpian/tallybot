@@ -99,7 +99,9 @@
 							: st.status === "error"
 								? st.phase === "install"
 									? `TallyBot ${update.version} didn't install`
-									: `Couldn't download TallyBot ${update.version}`
+									: st.phase === "verify"
+										? `TallyBot ${update.version} couldn't be verified`
+										: `Couldn't download TallyBot ${update.version}`
 								: `TallyBot ${update.version} is available`}
 					</Dialog.Title>
 					<Dialog.Description class="text-[0.8rem]">
@@ -163,8 +165,13 @@
 					<Button variant="ghost" onclick={() => (open = false)}>Hide</Button>
 				{:else if st.status === "error"}
 					<Button variant="ghost" onclick={() => (open = false)}>Close</Button>
-					<!-- the installer is used up by an install attempt: trying again starts from the download -->
-					<Button onclick={() => updater.download()}>{st.phase === "install" ? "Download again" : "Try again"}</Button>
+					{#if st.phase === "verify"}
+						<!-- the same bytes would fail the same check: the release page is the way forward -->
+						<Button onclick={() => void openUrl(update.releaseUrl)}>Get it from GitHub</Button>
+					{:else}
+						<!-- the installer is used up by an install attempt: trying again starts from the download -->
+						<Button onclick={() => updater.download()}>{st.phase === "install" ? "Download again" : "Try again"}</Button>
+					{/if}
 				{:else if st.status === "ready"}
 					{#if blocked}<span class="foot-note">{blocked}</span>{/if}
 					<Button variant="ghost" onclick={() => (open = false)}>Later</Button>

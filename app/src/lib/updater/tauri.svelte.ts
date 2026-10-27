@@ -92,8 +92,11 @@ export class TauriUpdater implements Updater {
 				const now = this.state;
 				this.state = { status: "ready", update: "update" in now && now.update ? now.update : update };
 			},
-			(err) => {
-				this.state = { status: "error", phase: "download", message: String(err), update };
+			async (err) => {
+				// The shell knows which step it was (a signature failure isn't a download failure).
+				const { failure } = await invoke<UpdateStatus>("update_status").catch(() => ({ failure: null }));
+				const phase = failure?.phase === "verify" ? "verify" : "download";
+				this.state = { status: "error", phase, message: String(err), update };
 			},
 		);
 	}

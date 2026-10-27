@@ -90,7 +90,8 @@ impl Stage {
     }
 }
 
-/// The failures the dialog explains with a tailored fix; anything else is `Error`.
+/// The failures the dialog explains with a tailored fix; anything else is `Error`. Decided here,
+/// from espflash's and serialport's error variants, so the UI only renders it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Failure {
@@ -102,6 +103,11 @@ pub enum Failure {
     Unplugged,
     /// The board on the port isn't the light the user asked to update.
     WrongLight,
+    /// The board answered, but isn't an ESP32-C3 (or one espflash can't drive): no retry helps.
+    WrongChip,
+    /// The firmware was written and the board reset, but the light never came back over USB. Its
+    /// firmware is fine, so the fix is a replug, not another install.
+    Rejoin,
     Error,
 }
 
@@ -116,8 +122,8 @@ pub struct FlashStatus {
     target_mac: Option<String>,
     #[serde(flatten)]
     event: FlashEvent,
-    /// The job failed or was stopped where it left the board without firmware
-    /// ([`Stage::leaves_blank`]); false while running and once done.
+    /// The board has no working firmware ([`Stage::leaves_blank`]): after a failure or stop, it was
+    /// left that way; while running, a stop now would leave it that way. False once done.
     leaves_blank: bool,
 }
 
@@ -142,8 +148,10 @@ fn publish(app: &AppHandle, port: &str, target_mac: Option<&str>, event: FlashEv
         let mut slot = state.status.lock().unwrap();
         let revision = slot.as_ref().map_or(0, |s| s.revision) + 1;
         let leaves_blank = match &event {
-            FlashEvent::Failed { stage, .. } | FlashEvent::Cancelled { stage } => stage.leaves_blank(),
-            FlashEvent::Running { .. } | FlashEvent::Done { .. } => false,
+            FlashEvent::Failed { stage, .. } | FlashEvent::Cancelled { stage } | FlashEvent::Running { stage, .. } => {
+                stage.leaves_blank()
+            }
+            FlashEvent::Done { .. } => false,
         };
         let status =
             FlashStatus { revision, port: port.to_string(), target_mac: target_mac.map(str::to_owned), event, leaves_blank };
@@ -232,8 +240,11 @@ pub fn flash_start(app: AppHandle, port: String, mac: Option<String>) -> Result<
                 true => FlashEvent::Done { mac },
                 false => FlashEvent::Failed {
                     stage: Stage::Rejoin,
-                    failure: Failure::Error,
-                    detail: format!("The firmware was installed, but {mac} didn't reconnect over USB."),
+                    failure: Failure::Rejoin,
+                    detail: format!(
+                        "The firmware was installed, but {mac} didn't reconnect over USB within {} s.",
+                        REJOIN_TIMEOUT.as_secs()
+                    ),
                 },
             },
             Err(event) => event,
@@ -286,8 +297,14 @@ fn run(app: &AppHandle, port: &str, expected: Option<&str>, cancel: &AtomicBool)
     let event = match result {
         Ok(Ok(())) => None,
         Err(_) if cancel.load(Ordering::SeqCst) => Some(FlashEvent::Cancelled { stage }),
-        Err(_) => Some(failed(stage, Failure::Error, "The flash stopped unexpectedly".into())),
+        Err(payload) => {
+            let detail = format!("The flash stopped unexpectedly: {}", panic_message(payload.as_ref()));
+            crate::log::diag!("[flash] {detail}");
+            Some(failed(stage, Failure::Error, detail))
+        }
         Ok(Err(e)) => {
+            // A digest mismatch is the post-write check failing, whatever stage the bar was on.
+            let stage = if matches!(e, espflash::Error::DigestMismatch(..)) { Stage::Verify } else { stage };
             let failure = if still_present(port) { Failure::Error } else { Failure::Unplugged };
             Some(failed(stage, failure, format!("espflash: {e}")))
         }
@@ -321,7 +338,10 @@ fn connect(port: &str) -> Result<Flasher, (Failure, String)> {
         .ok_or_else(|| (Failure::Unplugged, format!("{port} isn't connected")))?;
     let serial = serialport::new(port, 115_200).open_native().map_err(|e| {
         let failure = match e.kind() {
-            serialport::ErrorKind::NoDevice => Failure::PortBusy,
+            // serialport reports a port another program has open as `NoDevice` on Windows (the
+            // OS says access denied); a port that really went away is no longer enumerated.
+            serialport::ErrorKind::NoDevice if still_present(port) => Failure::PortBusy,
+            serialport::ErrorKind::NoDevice => Failure::Unplugged,
             _ => Failure::Error,
         };
         (failure, format!("Couldn't open {port}: {e}"))
@@ -338,8 +358,36 @@ fn connect(port: &str) -> Result<Flasher, (Failure, String)> {
         // The reset sequence may have left the chip in its ROM loader: reset it back out.
         let (e, mut connection) = *failed;
         let _ = connection.reset();
-        (Failure::NoResponse, format!("espflash: {e}"))
+        (connect_failure(&e, still_present(port)), format!("espflash: {e}"))
     })
+}
+
+/// Why espflash couldn't connect, by its error variant. Only a board that never answered in
+/// download mode gets the "hold BOOT" fix; one that answered as the wrong chip, a serial or
+/// driver fault, and a port that went away each read as what they are.
+fn connect_failure(e: &espflash::Error, port_present: bool) -> Failure {
+    use espflash::Error as E;
+    match e {
+        _ if !port_present => Failure::Unplugged,
+        E::ChipDetectError(_)
+        | E::ChipMismatch(..)
+        | E::UnsupportedChipRevision { .. }
+        | E::UnsupportedFlash(_)
+        | E::UnsupportedFeature { .. } => Failure::WrongChip,
+        // espflash's connection errors (no sync, a timeout, bad framing) all mean the ROM loader
+        // never answered properly, which is what holding BOOT fixes.
+        E::Connection(_) => Failure::NoResponse,
+        _ => Failure::Error,
+    }
+}
+
+/// A caught panic's message, when it carried one.
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|s| (*s).to_owned())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "no message".into())
 }
 
 /// Read the bundled image and check it against its manifest.

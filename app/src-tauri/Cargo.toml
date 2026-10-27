@@ -36,5 +36,7 @@ tauri-plugin-updater = "~2.12"
 # A second launch focuses the running window instead of starting a rival engine: two engines
 # fight over TCP 7000 and the serial ports.
 tauri-plugin-single-instance = "~2.3"
+# The update download's stall watchdog (updater.rs). Already built for tauri; only `time` is used.
+tokio = { version = "1", features = ["time"] }
 time = { version = "0.3", features = ["formatting"] }
 

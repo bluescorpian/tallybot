@@ -74,7 +74,7 @@
 	import { TRANSPORT_MODES, BRIDGE_LABEL, BRIDGE_DESC } from "$lib/components/board/transportModes";
 	import WifiCredentials, { cleanSsid } from "$lib/components/board/WifiCredentials.svelte";
 	import type { Flasher, FlashStage, FlashTarget } from "$lib/flasher/flasher";
-	import { FLASH_STAGES, leavesBlank } from "$lib/flasher/flasher";
+	import { FLASH_STAGES } from "$lib/flasher/flasher";
 	import type { AppUpdate } from "$lib/updater/updater";
 	import { shortMac } from "$lib/boardState";
 	import Cpu from "@lucide/svelte/icons/cpu";
@@ -674,6 +674,19 @@
 									The board on {portName} isn't {name ?? "the light you picked"}, so nothing was installed.
 									Plug in {name ?? "that light"} and try again.
 								</p>
+							{:else if st.failure === "wrong-chip"}
+								<h3>This board can't run TallyBot</h3>
+								<p>
+									The board on {portName} answered, but it isn't an ESP32-C3 that TallyBot can install
+									on. Nothing was installed. TallyBot lights are ESP32-C3 boards.
+								</p>
+							{:else if st.failure === "rejoin"}
+								<!-- the firmware is in place: another install wouldn't help, a replug might -->
+								<h3>Installed, but {name ?? "the light"} didn't come back</h3>
+								<p>
+									The new firmware {fw} is on the board, but it didn't reconnect over USB. Unplug it and
+									plug it back in; it should show up by itself.
+								</p>
 							{:else if st.failure === "error"}
 								<h3>The install didn't finish</h3>
 								<p>
@@ -683,6 +696,13 @@
 								<h3>The cable came out</h3>
 								<p>
 									The board was unplugged before the install finished. Plug it back in and try again.
+								</p>
+							{/if}
+							{#if st.leavesBlank && st.failure !== "unplugged"}
+								<!-- "unplugged" already says it: the board stopped mid-write -->
+								<p class="mt-1.5">
+									{job.kind === "light" ? name : "The board"} has no firmware now, so it stays dark until the
+									install succeeds.
 								</p>
 							{/if}
 						</div>
@@ -702,7 +722,7 @@
 									Nothing was changed.
 									{#if job.kind === "light" && fromVersion}{name} is still on {fromVersion}.{/if}
 								</p>
-							{:else if st.status === "cancelled" && !leavesBlank(st.stage)}
+							{:else if st.status === "cancelled" && !st.leavesBlank}
 								<p>
 									The new firmware {fw} was already installed, so {job.kind === "light" ? name : "it"}
 									should come back by itself in a moment.
@@ -729,7 +749,7 @@
 					<span></span>
 					<div class="foot-actions">
 						<Button variant="destructive" onclick={stop}
-							>{st.status === "running" && leavesBlank(st.stage) ? "Stop and leave it blank" : "Stop"}</Button
+							>{st.status === "running" && st.leavesBlank ? "Stop and leave it blank" : "Stop"}</Button
 						>
 						<Button onclick={() => (confirmStop = false)}>Keep going</Button>
 					</div>
@@ -795,10 +815,15 @@
 			{:else}
 				<span></span>
 				<div class="foot-actions">
-					<Button variant="ghost" onclick={() => (open = false)}>Close</Button>
-					<Button onclick={retry}>
-						{view === "cancelled" ? "Install again" : "Try again"}
-					</Button>
+					{#if st.status === "failed" && (st.failure === "rejoin" || st.failure === "wrong-chip")}
+						<!-- installing again can't fix either: the firmware is in place, or the board is the wrong kind -->
+						<Button onclick={() => (open = false)}>Close</Button>
+					{:else}
+						<Button variant="ghost" onclick={() => (open = false)}>Close</Button>
+						<Button onclick={retry}>
+							{view === "cancelled" ? "Install again" : "Try again"}
+						</Button>
+					{/if}
 				</div>
 			{/if}
 		</footer>

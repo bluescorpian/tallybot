@@ -9,8 +9,15 @@ import {
 	type FlashState,
 	type FlashTarget,
 	type Flasher,
-	leavesBlank,
 } from "$lib/flasher/flasher";
+
+/**
+ * The shell's rule for which stages leave a board without firmware (`Stage::leaves_blank` in
+ * `flash.rs`), which this fake stands in for: the real driver gets it in each event.
+ */
+export function leavesBlank(stage: FlashStage): boolean {
+	return stage === "erase" || stage === "write" || stage === "verify";
+}
 
 /**
  * The light firmware this mock app bundles: mirrors `firmware/VERSION`, which is versioned apart
@@ -34,6 +41,8 @@ const DETAIL: Record<FlashFailure, string> = {
 	"port-busy": "espflash: Failed to open serial port: Device or resource busy",
 	unplugged: "espflash: Serial port disconnected while writing (0x0002f000)",
 	"wrong-light": "The board on COM7 is 30:ae:a4:00:77:88",
+	"wrong-chip": "espflash: Chip provided with `-c/--chip` (esp32c3) does not match the detected chip (esp32)",
+	rejoin: "The firmware was installed, but 30:ae:a4:00:11:22 didn't reconnect over USB within 30 s.",
 	error: "espflash: Flash command failed",
 };
 
@@ -73,7 +82,7 @@ export class MockFlasher implements Flasher {
 		const fail = this.#failOnce;
 		this.#failOnce = null;
 		const enter = (stage: FlashStage) => {
-			this.state = { status: "running", target, stage, progress: 0 };
+			this.state = { status: "running", target, stage, progress: 0, leavesBlank: leavesBlank(stage) };
 			if (stage === "write") this.#animateWrite(target, DURATION.write);
 		};
 		let at = 0;
@@ -117,7 +126,7 @@ export class MockFlasher implements Flasher {
 		this.#tick = setInterval(() => {
 			const p = Math.min(1, (Date.now() - started) / ms);
 			if (this.state.status === "running" && this.state.stage === "write") {
-				this.state = { status: "running", target, stage: "write", progress: p };
+				this.state = { status: "running", target, stage: "write", progress: p, leavesBlank: true };
 			}
 			if (p >= 1) clearInterval(this.#tick);
 		}, 120);
@@ -135,5 +144,5 @@ export class MockFlasher implements Flasher {
 }
 
 function failsAt(f: FlashFailure): FlashStage {
-	return f === "unplugged" ? "write" : "connect";
+	return f === "unplugged" ? "write" : f === "rejoin" ? "rejoin" : "connect";
 }

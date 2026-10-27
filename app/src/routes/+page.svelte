@@ -198,7 +198,9 @@
 				message:
 					us.phase === "install"
 						? `${v} didn't install (${us.message}). TallyBot is still on ${updater.currentVersion}.`
-						: `${v} didn't download (${us.message}).`,
+						: us.phase === "verify"
+							? `${v} couldn't be verified, so it wasn't installed.`
+							: `${v} didn't download (${us.message}).`,
 				dismissible: true,
 				action: { label: "Open update", run: () => (updateOpen = true) },
 			});

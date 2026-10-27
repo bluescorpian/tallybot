@@ -17,7 +17,8 @@
 //   newerfw     — unflashed + outdated + update together: the flasher's review step says that
 //                 TallyBot ships newer firmware and offers "Update TallyBot first"
 //   enginedown  — the sidecar crashed and is restarting: the error notice + dimmed board
-// `?fail=noresponse|busy|unplugged` makes the next flash fail that way (a retry succeeds);
+// `?fail=noresponse|busy|unplugged|wrongchip|rejoin` makes the next flash fail that way (a retry
+// succeeds);
 // `?fail=bridge` makes the flasher's "Apply settings" stage fail once when the light was set
 // to be the bridge;
 // `?fail=download` makes the app-update download fail once; `?fail=wronglight` plugs the
@@ -29,7 +30,7 @@ import type { AppState, Device, DeviceFirmware, Input, Tally, TransportMode } fr
 import type { Backend, BoardHealth } from "$lib/backend";
 import type { FlashSession } from "$lib/flasher/session.svelte";
 import type { LightSettings } from "$lib/components/flasher/FlasherDialog.svelte";
-import { leavesBlank, type FlashFailure } from "$lib/flasher/flasher";
+import type { FlashFailure } from "$lib/flasher/flasher";
 import { MockFlasher } from "./flasher.svelte";
 import { MockUpdater } from "./updater.svelte";
 
@@ -167,9 +168,15 @@ export class MockBoard implements Backend {
 		});
 		// The flasher ships the firmware bundled with this app, which a mock app update replaces.
 		this.flasher = new MockFlasher({
-			failOnce: ({ noresponse: "no-response", busy: "port-busy", unplugged: "unplugged" } as const)[
-				fail as "noresponse" | "busy" | "unplugged"
-			] as FlashFailure | undefined,
+			failOnce: (
+				{
+					noresponse: "no-response",
+					busy: "port-busy",
+					unplugged: "unplugged",
+					wrongchip: "wrong-chip",
+					rejoin: "rejoin",
+				} as const
+			)[fail as "noresponse" | "busy" | "unplugged" | "wrongchip" | "rejoin"] as FlashFailure | undefined,
 			bundled: () => this.updater.bundledFirmware,
 			boardMac: (port) => this.#unflashed.find((b) => b.port === port)?.mac ?? null,
 		});
@@ -410,7 +417,7 @@ export class MockBoard implements Backend {
 				return;
 			}
 			if (!d) return;
-			if (leavesBlank(s.stage)) {
+			if (s.leavesBlank) {
 				const blank = { port: t.port, mac: d.mac };
 				d.transport = "wifi"; // what the engine reports for a light it can't reach
 				if (pulled) this.#pulled = blank;
