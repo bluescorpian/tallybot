@@ -124,10 +124,14 @@ async function buildStack(stateFile: string, transports: TransportChoice = ["wif
   };
 }
 
-/** Bring the (fake) ATEM online via the same setSource path the settings UI uses. */
+/**
+ * Bring the (fake) ATEM online via the same setSource path the settings UI uses. The sim has
+ * no network, but setSource only accepts an IPv4 address, so this sends a documentation-range
+ * one. The wait is bounded: a refused setSource fails here instead of hanging the run.
+ */
 async function connectSource(stack: Stack): Promise<void> {
-  stack.command({ type: "setSource", ip: "simulated" });
-  await once(stack.atem, "connected");
+  stack.command({ type: "setSource", ip: "192.0.2.1" });
+  await once(stack.atem, "connected", { signal: AbortSignal.timeout(1500) });
 }
 
 /** Resolve with the next SET_COLOR a client receives that matches `predicate`. */
