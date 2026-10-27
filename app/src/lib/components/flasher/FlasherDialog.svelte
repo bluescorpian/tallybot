@@ -800,7 +800,9 @@
 						<Button variant="ghost" onclick={() => toSummary(null)}>Later</Button>
 					{/if}
 					<Button
-						disabled={(job?.kind === "blank" || !keep) && form.transport === "wifi" && credentialsProblem(form.ssid, form.password) !== null}
+						disabled={(job?.kind === "blank" || !keep) &&
+							form.transport === "wifi" &&
+							(cleanSsid(form.ssid) === "" || credentialsProblem(form.ssid, form.password) !== null)}
 						onclick={() =>
 							toSummary(
 								job?.kind === "light" && keep ? currentSettings : { ...$state.snapshot(form), ssid: cleanSsid(form.ssid) },
