@@ -199,8 +199,7 @@ test("a device discovers the server over UDP and connects over TCP", async () =>
     try {
       const gotSetup = nextColor(client, is(SETUP_COLOR)); // unassigned → setup colour
       client.connect(found.host, found.port);
-      await gotSetup;
-      assert.deepEqual(stack.server.connectedMacs(), ["aa:bb:cc:dd:ee:01"]);
+      await gotSetup; // the sidecar addressed it by MAC, so the server registered it
     } finally {
       client.close();
     }

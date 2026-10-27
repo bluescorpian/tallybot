@@ -60,7 +60,6 @@ test("a relayed HELLO surfaces as deviceConnected with the light's MAC and versi
 
   usb.relay(BRIDGE, LIGHT, helloInner(3));
   assert.deepEqual(connected, [{ mac: LIGHT, version: 3 }]);
-  assert.deepEqual(espnow.connectedMacs(), [LIGHT]);
 });
 
 test("an unsupported relayed version raises deviceUnsupported (still connects)", () => {
@@ -95,14 +94,14 @@ test("heartbeats keep a relayed light alive past the timeout; silence expires it
     clock.advance(700);
     await sweepOnce(espnow);
     assert.deepEqual(disconnected, [], "still alive — beat was within the window");
-    assert.deepEqual(espnow.connectedMacs(), [LIGHT]);
     assert.equal(logs.length, 0, "a live light is not logged");
 
     // Now go silent past the timeout (last seen at the t=800 beat; 1800 ms silent by the sweep).
     clock.advance(1100);
     await sweepOnce(espnow);
     assert.deepEqual(disconnected, [{ mac: LIGHT }], "expired after the timeout");
-    assert.deepEqual(espnow.connectedMacs(), []);
+    await sweepOnce(espnow);
+    assert.deepEqual(disconnected, [{ mac: LIGHT }], "expired once, not on every sweep");
 
     // The drop is logged once, naming the light and its 1.8 s of silence.
     assert.equal(logs.length, 1);
@@ -164,11 +163,9 @@ test("the bridge disconnecting from USB drops all relayed lights at once", () =>
 
   usb.relay(BRIDGE, LIGHT, helloInner(3));
   usb.relay(BRIDGE, LIGHT2, helloInner(3));
-  assert.deepEqual(espnow.connectedMacs().sort(), [LIGHT, LIGHT2].sort());
 
   usb.drop(BRIDGE); // cable pulled
   assert.deepEqual(disconnected.sort(), [LIGHT, LIGHT2].sort(), "every relayed light dropped");
-  assert.deepEqual(espnow.connectedMacs(), []);
 
   // A non-bridge USB drop must NOT touch relayed lights.
   usb.relay(BRIDGE, LIGHT, helloInner(3));
@@ -209,14 +206,18 @@ test("sendColor wraps SET_COLOR in a RELAY envelope to the bridge, and fails wit
 test("repeated HELLOs from the same light refresh it without duplicating", () => {
   const usb = new FakeUsb();
   const espnow = new EspNowTransport(usb.asUsb());
+  espnow.setBridgeMac(BRIDGE);
   const connected: Array<{ mac: string; version: number }> = [];
   espnow.on("deviceConnected", (i) => connected.push(i));
+  const disconnected: string[] = [];
+  espnow.on("deviceDisconnected", ({ mac }) => disconnected.push(mac));
 
   usb.relay(BRIDGE, LIGHT, helloInner(3));
   usb.relay(BRIDGE, LIGHT, helloInner(3));
   usb.relay(BRIDGE, LIGHT, helloInner(3));
-  assert.deepEqual(espnow.connectedMacs(), [LIGHT], "one light, however many HELLOs");
   assert.equal(connected.length, 3, "each HELLO re-announces (reconnect semantics)");
+  usb.drop(BRIDGE);
+  assert.deepEqual(disconnected, [LIGHT], "one light to drop, however many HELLOs");
 });
 
 test("a HEARTBEAT from an unknown light is ignored (HELLO must come first)", () => {
@@ -227,7 +228,6 @@ test("a HEARTBEAT from an unknown light is ignored (HELLO must come first)", () 
 
   usb.relay(BRIDGE, LIGHT, HEARTBEAT); // never said HELLO — no version to record
   assert.deepEqual(connected, []);
-  assert.deepEqual(espnow.connectedMacs(), []);
 });
 
 test("a relayed FIRMWARE is reported for a light whose HELLO was seen, and ignored before it", () => {
@@ -251,13 +251,15 @@ test("orphan HEARTBEATs warn once per MAC, and a HELLO re-arms the warning", () 
   const logs: LogEntry[] = [];
   espnow.on("log", (e) => logs.push(e));
   const warnedMacs = () => logs.filter((e) => e.level === "warn").map((e) => e.mac);
+  const connected: string[] = [];
+  espnow.on("deviceConnected", ({ mac }) => connected.push(mac));
 
   usb.relay(BRIDGE, LIGHT, HEARTBEAT);
   usb.relay(BRIDGE, LIGHT, HEARTBEAT);
   usb.relay(BRIDGE, LIGHT, HEARTBEAT);
   usb.relay(BRIDGE, LIGHT2, HEARTBEAT);
   assert.deepEqual(warnedMacs(), [LIGHT, LIGHT2], "one warning per MAC, not per HEARTBEAT");
-  assert.deepEqual(espnow.connectedMacs(), [], "still ignored");
+  assert.deepEqual(connected, [], "still ignored");
 
   // LIGHT says HELLO, then is forgotten (bridge unplugged) — its next orphan HEARTBEAT is news again.
   usb.relay(BRIDGE, LIGHT, helloInner(3));
@@ -340,7 +342,6 @@ test("a LOG from a known light keeps it alive past the timeout, like a HEARTBEAT
     clock.advance(700);
     await sweepOnce(espnow);
     assert.deepEqual(disconnected, [], "the LOG refreshed liveness");
-    assert.deepEqual(espnow.connectedMacs(), [LIGHT]);
   } finally {
     await espnow.stop();
   }
@@ -351,10 +352,12 @@ test("a corrupt relayed inner payload is surfaced as an error, not a crash", () 
   const espnow = new EspNowTransport(usb.asUsb());
   const errors: Error[] = [];
   espnow.on("error", (e) => errors.push(e));
+  const connected: string[] = [];
+  espnow.on("deviceConnected", ({ mac }) => connected.push(mac));
 
   usb.relay(BRIDGE, LIGHT, Uint8Array.of(0x7f)); // unknown inner type
   assert.equal(errors.length, 1);
-  assert.deepEqual(espnow.connectedMacs(), [], "nothing connected from a bad frame");
+  assert.deepEqual(connected, [], "nothing connected from a bad frame");
 });
 
 // Confirm the RELAY envelope decodes back into something the bridge could re-emit. Belt-and-braces

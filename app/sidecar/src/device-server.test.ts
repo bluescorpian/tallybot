@@ -97,7 +97,7 @@ test("a HELLO registers the device by MAC, with its version", async () => {
     socket.write(helloFrame("aa:bb:cc:dd:ee:ff", 1));
     const [info] = (await connected) as [{ mac: string; version: number }];
     assert.deepEqual(info, { mac: "aa:bb:cc:dd:ee:ff", version: 1 });
-    assert.deepEqual(server.connectedMacs(), ["aa:bb:cc:dd:ee:ff"]);
+    assert.equal(server.sendColor("aa:bb:cc:dd:ee:ff", COLORS.idle, 128), true, "addressable by its MAC");
   } finally {
     socket.destroy();
     await server.stop();
@@ -112,7 +112,7 @@ test("a HELLO below the minimum version also fires deviceUnsupported", async () 
     socket.write(helloFrame("aa:bb:cc:dd:ee:ff", 0)); // below MIN_SUPPORTED (1)
     const [info] = (await unsupported) as [{ mac: string; version: number; reason: string }];
     assert.deepEqual(info, { mac: "aa:bb:cc:dd:ee:ff", version: 0, reason: "device-too-old" });
-    assert.deepEqual(server.connectedMacs(), ["aa:bb:cc:dd:ee:ff"], "it's still tracked, just flagged");
+    assert.equal(server.sendColor("aa:bb:cc:dd:ee:ff", COLORS.idle, 128), true, "it's still reachable, just flagged");
   } finally {
     socket.destroy();
     await server.stop();
@@ -187,7 +187,7 @@ test("a device that goes silent past the timeout is dropped, with a warn line in
     // Send nothing further: the per-device timer should fire and close the socket.
     const [info] = (await disconnected) as [{ mac: string }];
     assert.deepEqual(info, { mac: "aa:bb:cc:dd:ee:ff" });
-    assert.deepEqual(server.connectedMacs(), []);
+    assert.equal(server.sendColor("aa:bb:cc:dd:ee:ff", COLORS.idle, 128), false, "no longer addressable");
     assert.deepEqual(
       logs.map(({ mac, level }) => ({ mac, level })),
       [{ mac: "aa:bb:cc:dd:ee:ff", level: "warn" }],
@@ -215,7 +215,7 @@ test("heartbeats keep a device alive past the timeout", async () => {
     await new Promise((resolve) => setTimeout(resolve, 250)); // ~3 timeouts' worth
     clearInterval(beat);
     assert.equal(disconnected, false, "regular heartbeats should keep the connection alive");
-    assert.deepEqual(server.connectedMacs(), ["aa:bb:cc:dd:ee:ff"]);
+    assert.equal(server.sendColor("aa:bb:cc:dd:ee:ff", COLORS.idle, 128), true);
   } finally {
     socket.destroy();
     await server.stop();
@@ -243,7 +243,6 @@ test("a reconnect for a known MAC replaces the old socket without a spurious dis
     await secondConnected;
     await once(first, "close"); // the old socket is destroyed by the server
 
-    assert.deepEqual(server.connectedMacs(), ["aa:bb:cc:dd:ee:ff"], "still exactly one device");
     assert.equal(disconnects, 0, "replacing a stale socket is not a disconnect");
 
     // Commands now reach the live (second) socket.

@@ -29,11 +29,11 @@ test("usbDeviceConnected → deviceConnected; disconnect → deviceDisconnected"
 
   bridge.feed({ type: "usbDeviceConnected", mac: MAC, version: 2 });
   assert.deepEqual(connected, [{ mac: MAC, version: 2 }]);
-  assert.ok(usb.has(MAC));
+  assert.equal(usb.sendColor(MAC, COLORS.idle, 128), true);
 
   bridge.feed({ type: "usbDeviceDisconnected", mac: MAC });
   assert.deepEqual(disconnected, [{ mac: MAC }]);
-  assert.ok(!usb.has(MAC));
+  assert.equal(usb.sendColor(MAC, COLORS.idle, 128), false);
 });
 
 test("an old firmware version raises deviceUnsupported", () => {
