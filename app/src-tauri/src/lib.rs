@@ -17,9 +17,12 @@
 //!
 //! The `flash` module installs the firmware bundled with this app onto a board on USB,
 //! borrowing its port from the `usb` module for the duration; `updater` updates the app itself.
+//! Every diagnostic line goes through `log::diag!`, which also keeps it in `shell.log`: a release
+//! build has no console.
 
 mod flash;
 mod health;
+mod log;
 mod sidecar;
 mod updater;
 mod usb;
@@ -67,6 +70,12 @@ pub fn run() {
         .manage(FlashState::default())
         .manage(UpdaterState::default())
         .setup(|app| {
+            // The shell's log sits beside the sidecar's state and log (`log.rs`); first, so the
+            // supervisors below have a file for their lines from the start.
+            match app.path().app_config_dir() {
+                Ok(dir) => log::init(&dir),
+                Err(e) => log::diag!("[log] no app config dir ({e}); logging to stderr only"),
+            }
             sidecar::start(app.handle().clone()); // spawn + respawn-on-crash supervisor
             usb::start(app.handle().clone()); // poll for ESP32-C3 serial ports + relay
             Ok(())

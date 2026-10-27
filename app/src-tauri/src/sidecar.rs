@@ -23,6 +23,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent, TerminatedPayload};
 use tauri_plugin_shell::ShellExt;
 
+use crate::log::diag;
 use crate::{health, usb};
 
 /// First restart delay; doubles per consecutive quick crash.
@@ -128,7 +129,7 @@ fn supervise(app: &AppHandle) {
 
         if take_restart(app) {
             // The operator asked for this: not a crash, so no backoff and no escalation.
-            eprintln!("[sidecar] restart requested; restarting now");
+            diag!("[sidecar] restart requested; restarting now");
             attempt = 0;
             health::set_sidecar_down(app, Some("restart requested".into()));
             continue;
@@ -136,7 +137,7 @@ fn supervise(app: &AppHandle) {
 
         attempt = next_attempt(attempt, started.elapsed());
         let delay = restart_delay(attempt);
-        eprintln!("[sidecar] {reason}; restarting in {delay:?}");
+        diag!("[sidecar] {reason}; restarting in {delay:?}");
         health::set_sidecar_down(app, Some(reason));
 
         let mut slept = Duration::ZERO;
@@ -177,12 +178,12 @@ fn spawn(app: &AppHandle) -> Result<Receiver<CommandEvent>, Box<dyn std::error::
             .join("../../tools/src/sidecar-fake-main.ts")
             .to_string_lossy()
             .into_owned();
-        eprintln!("[sidecar] spawning FAKE (dev) ATEM entry: {entry}");
+        diag!("[sidecar] spawning FAKE (dev) ATEM entry: {entry}");
         app.shell()
             .command("node")
             .args(["--experimental-strip-types", &entry])
     } else {
-        eprintln!("[sidecar] spawning packaged sidecar binary (externalBin)");
+        diag!("[sidecar] spawning packaged sidecar binary (externalBin)");
         // Per Tauri docs: pass just the filename, not the configured `externalBin` path.
         // The CLI places `binaries/tallybot-sidecar-<triple>` next to the exe as
         // `tallybot-sidecar`; the resolver looks there (`<exe_dir>/tallybot-sidecar`).
@@ -196,7 +197,7 @@ fn spawn(app: &AppHandle) -> Result<Receiver<CommandEvent>, Box<dyn std::error::
         // simply don't set it and the sidecar falls back to its own XDG-style default.
         match app.path().app_config_dir() {
             Ok(dir) => cmd = cmd.env("TALLYBOT_STATE_FILE", dir.join("state.json")),
-            Err(e) => eprintln!("[sidecar] no app config dir ({e}); using sidecar default state path"),
+            Err(e) => diag!("[sidecar] no app config dir ({e}); using sidecar default state path"),
         }
         cmd
     };
@@ -242,9 +243,9 @@ fn pump(app: &AppHandle, mut rx: Receiver<CommandEvent>) -> String {
                 }
             }
             CommandEvent::Stderr(line) => {
-                eprint!("[sidecar] {}", String::from_utf8_lossy(&line));
+                diag!("[sidecar] {}", String::from_utf8_lossy(&line));
             }
-            CommandEvent::Error(err) => eprintln!("[sidecar] error: {err}"),
+            CommandEvent::Error(err) => diag!("[sidecar] error: {err}"),
             CommandEvent::Terminated(payload) => return describe_exit(&payload),
             _ => {}
         }

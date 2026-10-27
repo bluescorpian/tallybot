@@ -12,6 +12,7 @@ use tauri::AppHandle;
 
 use super::protocol::{cobs_frame, parse_hello, CobsStream, MSG_GET_STATUS};
 use super::{deregister_device, is_claimed, register_device, to_hex};
+use crate::log::diag;
 
 const BAUD: u32 = 115_200;
 /// Read timeout — a timeout is the normal idle case, not an error. Short enough to keep
@@ -49,7 +50,7 @@ pub fn run(app: &AppHandle, path: &str, mut port: Box<dyn SerialPort>, stop: &At
     let opened = Instant::now();
     let mut buf = [0u8; 256];
 
-    eprintln!("[usb] {path} opened");
+    diag!("[usb] {path} opened");
 
     // Identity probe: a device that already saw a host stops its unsolicited HELLO loop, so
     // reopening the port (an app restart) would otherwise leave it undetected until its own
@@ -57,19 +58,19 @@ pub fn run(app: &AppHandle, path: &str, mut port: Box<dyn SerialPort>, stop: &At
     // firmware reply HELLO (then STATUS) at once, and the probe itself refreshes the device's
     // host-liveness clock so a quick restart never breaks the session. A bare board ignores it.
     if let Err(e) = port.write_all(&cobs_frame(&[MSG_GET_STATUS])) {
-        eprintln!("[usb] probe {path} failed: {e}");
+        diag!("[usb] probe {path} failed: {e}");
     }
 
     while !stop.load(Ordering::Relaxed) {
         // The flasher wants the port: let go, as if the device had been unplugged.
         if is_claimed(app, path) {
-            eprintln!("[usb] {path} claimed by the flasher");
+            diag!("[usb] {path} claimed by the flasher");
             break;
         }
         // Drain outbound: COBS-frame each payload and write it.
         while let Ok(payload) = rx.try_recv() {
             if let Err(e) = port.write_all(&cobs_frame(&payload)) {
-                eprintln!("[usb] write {path} failed: {e}");
+                diag!("[usb] write {path} failed: {e}");
             }
         }
 
@@ -86,7 +87,7 @@ pub fn run(app: &AppHandle, path: &str, mut port: Box<dyn SerialPort>, stop: &At
             Err(e) => {
                 // Read error ⇒ the port went away (unplug). This is the host-side liveness
                 // signal the protocol relies on (USB has no HEARTBEAT).
-                eprintln!("[usb] {path} closed: {e}");
+                diag!("[usb] {path} closed: {e}");
                 break;
             }
         }
@@ -94,7 +95,7 @@ pub fn run(app: &AppHandle, path: &str, mut port: Box<dyn SerialPort>, stop: &At
         // A bare board never sends HELLO. Let go of it: holding the port would lock out the
         // web flasher the UI points the operator at.
         if mac.is_none() && opened.elapsed() > DETECT_TIMEOUT {
-            eprintln!("[usb] {path} sent no HELLO; unflashed, releasing the port");
+            diag!("[usb] {path} sent no HELLO; unflashed, releasing the port");
             return Outcome::Unflashed;
         }
     }
@@ -102,7 +103,7 @@ pub fn run(app: &AppHandle, path: &str, mut port: Box<dyn SerialPort>, stop: &At
     if let Some(m) = &mac {
         deregister_device(app, m);
     }
-    eprintln!("[usb] {path} thread exiting");
+    diag!("[usb] {path} thread exiting");
     Outcome::Closed
 }
 
@@ -118,7 +119,7 @@ fn handle_frame(
     if mac.is_none() {
         if let Some(hello) = parse_hello(&payload) {
             register_device(app, &hello.mac, hello.version, path, tx.clone());
-            eprintln!("[usb] {path} is {} (protocol v{})", hello.mac, hello.version);
+            diag!("[usb] {path} is {} (protocol v{})", hello.mac, hello.version);
             *mac = Some(hello.mac);
         }
         return; // pre-HELLO non-HELLO frames are ignored

@@ -24,6 +24,7 @@ use tauri::{AppHandle, Manager};
 
 use super::{port, ESP32C3_PID, ESP32C3_VID, UsbState};
 use crate::health;
+use crate::log::diag;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(1500);
 const POLL_STEP: Duration = Duration::from_millis(100);
@@ -38,7 +39,7 @@ pub fn start(app: AppHandle) {
             state.claimed.clone(),
         ),
         None => {
-            eprintln!("[usb] UsbState not managed; serial disabled");
+            diag!("[usb] UsbState not managed; serial disabled");
             return;
         }
     };
@@ -74,7 +75,7 @@ pub fn start(app: AppHandle) {
                         tracked.lock().unwrap().remove(&path);
                         let message = open_error_message(&path, &e);
                         match failures.fail(&path, &message) {
-                            FailureAction::Log => eprintln!("[usb] open {path} failed: {e}"),
+                            FailureAction::Log => diag!("[usb] open {path} failed: {e}"),
                             FailureAction::Surface => {
                                 health::set_usb_port_error(&app, &path, Some(message))
                             }

@@ -21,6 +21,8 @@ use time::format_description::well_known::Rfc3339;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
+use crate::log::diag;
+
 const RELEASES: &str = "https://github.com/bluescorpian/tallybot/releases";
 
 /// The update found by the last check, and its installer once downloaded.
@@ -127,7 +129,7 @@ pub fn update_install(app: AppHandle) -> Result<(), String> {
         if cfg!(windows) {
             // The engine is already stopped, so come back up on the old version rather than
             // leave the board dead; the update is offered again on the next check.
-            eprintln!("[updater] install failed: {e}; restarting");
+            diag!("[updater] install failed: {e}; restarting");
             app.restart();
         }
         return Err(err(e));
