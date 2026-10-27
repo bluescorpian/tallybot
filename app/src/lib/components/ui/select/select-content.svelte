@@ -21,8 +21,11 @@
 </script>
 
 <SelectPortal {...portalProps}>
+	<!-- Off: bits-ui otherwise makes the whole content user-select: text while the pointer
+	     is down, defeating the app's selection policy (docs/design.md, "Text selection"). -->
 	<SelectPrimitive.Content
 		bind:ref
+		preventOverflowTextSelection={false}
 		{sideOffset}
 		{preventScroll}
 		data-slot="select-content"

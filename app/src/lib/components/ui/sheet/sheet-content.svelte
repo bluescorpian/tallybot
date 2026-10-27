@@ -33,8 +33,11 @@
 
 <SheetPortal {...portalProps}>
 	<SheetOverlay class={overlayClass} />
+	<!-- Off: bits-ui otherwise makes the whole content user-select: text while the pointer
+	     is down, defeating the app's selection policy (docs/design.md, "Text selection"). -->
 	<SheetPrimitive.Content
 		bind:ref
+		preventOverflowTextSelection={false}
 		data-slot="sheet-content"
 		data-side={side}
 		class={cn(

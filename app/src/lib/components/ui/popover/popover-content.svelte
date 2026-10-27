@@ -17,8 +17,11 @@
 </script>
 
 <PopoverPortal {...portalProps}>
+	<!-- Off: bits-ui otherwise makes the whole content user-select: text while the pointer
+	     is down, defeating the app's selection policy (docs/design.md, "Text selection"). -->
 	<PopoverPrimitive.Content
 		bind:ref
+		preventOverflowTextSelection={false}
 		data-slot="popover-content"
 		{sideOffset}
 		{align}
