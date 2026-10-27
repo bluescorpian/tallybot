@@ -139,7 +139,6 @@
 	// The engine's faults (sidecar/src/faults.ts). Not while it's down: they're the dead process's.
 	const faults = $derived(engineDown ? [] : (appState.faults ?? []));
 	let dismissed = $state<Record<string, string>>({});
-	let dismissedNotice = $state<unknown>(null);
 	const banners = $derived.by<Banner[]>(() => {
 		const list: Banner[] = [];
 		if (engineDown) {
@@ -267,9 +266,8 @@
 					: undefined,
 			});
 		}
-		const n = backend.notice;
-		if (n && n !== dismissedNotice) {
-			list.push({ key: "notice", level: n.level, message: n.message, dismissible: true });
+		for (const n of backend.notices) {
+			list.push({ key: `notice:${n.id}`, level: n.level, message: n.message, dismissible: true });
 		}
 		return list.filter((b) => dismissed[b.key] !== b.message);
 	});
@@ -286,7 +284,7 @@
 		}
 	});
 	function dismiss(banner: Banner) {
-		if (banner.key === "notice") dismissedNotice = backend.notice;
+		if (banner.key.startsWith("notice:")) backend.dismissNotice(Number(banner.key.slice("notice:".length)));
 		else dismissed = { ...dismissed, [banner.key]: banner.message };
 	}
 </script>

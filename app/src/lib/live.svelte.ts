@@ -34,8 +34,11 @@ export class LiveBackend implements Backend {
 	get engineDown() {
 		return sidecar.stale;
 	}
-	get notice() {
-		return sidecar.notice;
+	get notices() {
+		return sidecar.notices;
+	}
+	dismissNotice(id: number) {
+		sidecar.dismissNotice(id);
 	}
 	readonly engine: EngineControls = {
 		get source() {

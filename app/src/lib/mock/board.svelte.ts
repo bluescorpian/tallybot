@@ -137,7 +137,8 @@ export class MockBoard implements Backend {
 	readonly flasher: MockFlasher;
 	readonly updater: MockUpdater;
 	readonly engine = null;
-	readonly notice = null;
+	readonly notices = [];
+	dismissNotice() {}
 	readonly engineDown: boolean;
 
 	/** ATEM source lifecycle. */

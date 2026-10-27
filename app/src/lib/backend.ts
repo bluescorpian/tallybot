@@ -2,11 +2,11 @@
 // health, and the flasher and updater drivers. Two implementations: `LiveBackend`
 // ($lib/live.svelte.ts, under Tauri) and `MockBoard` ($lib/mock/board.svelte.ts, in a plain
 // browser: the design preview and the `?demo=` states). The page picks one once.
-import type { AppState, NoticeEvent, SourceScanEvent } from "$ipc";
+import type { AppState, SourceScanEvent } from "$ipc";
 import type { FlashBackend } from "$lib/flasher/session.svelte";
 import type { Flasher } from "$lib/flasher/flasher";
 import type { Updater } from "$lib/updater/updater";
-import type { autostart, ShellHealth } from "$lib/ipc.svelte";
+import type { autostart, Notice, ShellHealth } from "$lib/ipc.svelte";
 
 /** The shell-side health the page shows (see `ShellHealth`), without its ordering counter. */
 export type BoardHealth = Omit<ShellHealth, "revision">;
@@ -26,8 +26,9 @@ export interface Backend extends FlashBackend {
 	readonly health: BoardHealth;
 	/** The engine is down and restarting: `state` is stale and mustn't be shown as live. */
 	readonly engineDown: boolean;
-	/** The engine's latest out-of-band notice (firmware-outdated, offline-flash, …). */
-	readonly notice: NoticeEvent | null;
+	/** The engine's out-of-band notices (firmware-outdated, offline-flash, …), oldest first. */
+	readonly notices: readonly Notice[];
+	dismissNotice(id: number): void;
 	readonly flasher: Flasher;
 	readonly updater: Updater;
 	/** Null when there's no real engine to control (the mock). */

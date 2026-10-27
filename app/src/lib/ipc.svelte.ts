@@ -46,6 +46,15 @@ export interface ShellHealth {
 	blankLights: { mac: string; port: string }[];
 }
 
+/** A sidecar notice as the page lists it: `id` tells two apart, so one can be dismissed alone. */
+export type Notice = NoticeEvent & { id: number };
+
+/** `sidecarDown` while the engine is down because we asked (`sidecar.rs`, the restart path). */
+const RESTART_REASON = "restart requested";
+
+/** Notices kept at once; an older one past this is dropped (they're one-shot refusals). */
+const MAX_NOTICES = 4;
+
 const HEALTHY: ShellHealth = {
 	revision: 0,
 	sidecarDown: null,
@@ -66,8 +75,12 @@ export const isTauri =
 class SidecarStore {
 	/** Latest full snapshot, or null until the first `state` event arrives. */
 	state = $state<AppState | null>(null);
-	/** Most recent out-of-band notice (firmware-outdated, offline-flash, …). */
-	notice = $state<NoticeEvent | null>(null);
+	/**
+	 * Out-of-band notices (firmware-outdated, offline-flash, …), oldest first, until dismissed. A
+	 * list, so a second one (two outdated lights) doesn't replace the first unseen.
+	 */
+	notices = $state<Notice[]>([]);
+	#noticeSeq = 0;
 	/** Latest scan progress/result, for the settings "Scan" UI. */
 	scan = $state<SourceScanEvent | null>(null);
 	/** Shell-side health (sidecar down, USB ports that won't open). */
@@ -95,9 +108,12 @@ class SidecarStore {
 					this.stale = false;
 					for (const resolve of this.#awaitingFresh.splice(0)) resolve();
 					break;
-				case "notice":
-					this.notice = event;
+				case "notice": {
+					// the same message again is one notice, moved to the end, not two
+					const rest = this.notices.filter((n) => n.message !== event.message);
+					this.notices = [...rest, { ...event, id: ++this.#noticeSeq }].slice(-MAX_NOTICES);
 					break;
+				}
 				case "sourceScan":
 					this.scan = event;
 					break;
@@ -129,10 +145,19 @@ class SidecarStore {
 		this.#unlisten = [];
 	}
 
+	dismissNotice(id: number): void {
+		this.notices = this.notices.filter((n) => n.id !== id);
+	}
+
 	#applyHealth(health: ShellHealth): void {
 		if (health.revision < this.health.revision) return;
 		this.health = health;
 		if (health.sidecarDown !== null) this.stale = true;
+		// The restarted engine died before its first snapshot (the shell names any other reason
+		// than our own request): stop waiting for one. The "engine stopped" banner says why.
+		if (health.sidecarDown !== null && health.sidecarDown !== RESTART_REASON) {
+			for (const resolve of this.#awaitingFresh.splice(0)) resolve();
+		}
 	}
 
 	#send(command: UiCommand): void {
@@ -182,7 +207,8 @@ class SidecarStore {
 	}
 	/**
 	 * Replace the running sidecar with a fresh one (Settings → Restart). Resolves once the
-	 * new process has sent its first snapshot; while it's down the health banner says so.
+	 * new process has sent its first snapshot, or has died before sending one; while it's down
+	 * the health banner says so (and why).
 	 */
 	async restart(): Promise<void> {
 		if (!isTauri) return;

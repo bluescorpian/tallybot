@@ -68,7 +68,8 @@ function probe(ip: string, timeoutMs: number): Promise<SourceScanHit | null> {
 /**
  * Sweep every host on the local subnet(s) and return the ATEMs that answered, sorted
  * numerically by IP. `log` (defaults to stderr) traces progress for troubleshooting;
- * it never writes to stdout, which is reserved for the NDJSON protocol.
+ * it never writes to stdout, which is reserved for the NDJSON protocol. Throws, with a reason
+ * for the operator, when there is nothing to sweep: that isn't "no switchers found".
  */
 export async function scanNetwork(
   log: (message: string) => void = (m) => process.stderr.write(`${m}\n`),
@@ -83,7 +84,7 @@ export async function scanNetwork(
   }
   if (!candidates.length) {
     log("scan: no non-internal IPv4 interface found to scan");
-    return [];
+    throw new Error("This PC isn't connected to a network, so there's nothing to scan. Connect it to the switcher's network and try again.");
   }
   log(`scan: probing ${candidates.length} address(es) across ${bases.size} subnet(s) …`);
 

@@ -69,13 +69,14 @@ export interface Flasher {
  * Whether a light should be offered a firmware update: the app bundles firmware (`bundled`, null
  * when this build carries none) and the light runs an older one. Firmware too old to report its
  * version (`legacy`) is older than anything bundled; a light not yet heard from (`unknown`) isn't
- * flagged on a guess.
+ * flagged on a guess. A reported version that isn't x.y.z can't be compared, so it's offered the
+ * bundled firmware rather than read as current.
  */
 export function firmwareOutdated(bundled: string | null, firmware: DeviceFirmware): boolean {
 	if (bundled === null) return false;
 	switch (firmware.kind) {
 		case "reported":
-			return isNewer(bundled, firmware.version);
+			return !/^\d+\.\d+\.\d+$/.test(firmware.version) || isNewer(bundled, firmware.version);
 		case "legacy":
 			return true;
 		case "unknown":

@@ -386,6 +386,10 @@ void espnow::loopLight(unsigned long now) {
     g_lastHeartbeat = now;
     uint8_t hb[1] = {MSG_HEARTBEAT};  // raw payload per datagram — no length prefix, no COBS
     sendRaw(g_bridge, hb, sizeof(hb));
+    // FIRMWARE again: the ones sent with HELLO are fire-and-forget too, and a lost one would
+    // leave the app not knowing this light's firmware for the whole session.
+    uint8_t fw[32];
+    sendRaw(g_bridge, fw, encodeFirmwarePayload(fw, sizeof(fw), FIRMWARE_VERSION));
   }
 }
 

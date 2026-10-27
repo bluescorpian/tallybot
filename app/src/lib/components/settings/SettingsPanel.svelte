@@ -174,7 +174,7 @@
 
 	// ── Scan (assistive secondary path) ──────────────────────────────────────────
 	type Hit = { ip: string; product: string | null };
-	let scan = $state<"idle" | "scanning" | "results" | "none">("idle");
+	let scan = $state<"idle" | "scanning" | "results" | "none" | "error">("idle");
 	let hits = $state<Hit[]>([]);
 	let picked = $state<string | null>(null);
 	let scanTimer: ReturnType<typeof setTimeout> | undefined;
@@ -210,7 +210,8 @@
 		}
 		if (scan !== "scanning") return;
 		hits = scanResult.found.map((h) => ({ ip: h.ip, product: h.product }));
-		scan = !scanResult.error && hits.length ? "results" : "none";
+		// a sweep that couldn't run says why; "none found" is only for one that ran
+		scan = scanResult.error ? "error" : hits.length ? "results" : "none";
 	});
 
 	function pick(hit: Hit) {
@@ -286,7 +287,7 @@
 							</div>
 						{/if}
 
-						<!-- scan states: scanning / results / none -->
+						<!-- scan states: scanning / results / none / error -->
 						{#if scan === "scanning"}
 							<div class="field-msg">
 								<LoaderCircle class="size-3.5 animate-spin" />
@@ -333,6 +334,10 @@
 						{:else if scan === "none"}
 							<div class="field-msg muted">
 								No switchers found on the local subnet.
+							</div>
+						{:else if scan === "error"}
+							<div class="field-msg muted" role="alert">
+								<span class="select-text">The scan didn't run: {scanResult?.error}</span>
 							</div>
 						{/if}
 

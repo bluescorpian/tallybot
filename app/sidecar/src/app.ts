@@ -656,11 +656,15 @@ export class SidecarApp {
    * The one place a device's {@link DeviceFirmware} is decided. A reported version wins (and
    * outlives a disconnect, see {@link #firmware}); a device that is connected — so has sent its
    * HELLO — without one runs firmware that predates FIRMWARE; anything else hasn't been heard from.
+   * Except over ESP-NOW: its datagrams are fire-and-forget, so a lost FIRMWARE is no evidence of
+   * old firmware, and such a light stays unknown (never offered an update on a guess) until one
+   * arrives or it's cabled.
    */
   #firmwareOf(mac: string): DeviceFirmware {
     const version = this.#firmware.get(mac);
     if (version !== undefined) return { kind: "reported", version };
-    return this.#online.has(mac) ? { kind: "legacy" } : { kind: "unknown" };
+    if (!this.#online.has(mac)) return { kind: "unknown" };
+    return this.#provisioning.transportOf(mac) === "espnow" ? { kind: "unknown" } : { kind: "legacy" };
   }
 
   #sync(): void {

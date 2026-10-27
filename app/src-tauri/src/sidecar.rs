@@ -131,6 +131,7 @@ fn supervise(app: &AppHandle) {
             // The operator asked for this: not a crash, so no backoff and no escalation.
             diag!("[sidecar] restart requested; restarting now");
             attempt = 0;
+            // The UI's restart() tells this reason from a crash by this exact text (ipc.svelte.ts).
             health::set_sidecar_down(app, Some("restart requested".into()));
             continue;
         }
