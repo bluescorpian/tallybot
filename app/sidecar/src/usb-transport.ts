@@ -48,7 +48,8 @@ export interface UsbStatus {
   mac: string;
   /** The device's *provisioned* transport mode (open enum: 0 No-TX, 1 WiFi, …). */
   mode: number;
-  wifiState: DeviceWifiState;
+  /** Null for a state byte this sidecar doesn't know (newer firmware). */
+  wifiState: DeviceWifiState | null;
   /** RSSI in dBm, or null when not applicable (0 on the wire). */
   rssi: number | null;
   /** The device's stored SSID read from its NVS (`""` when no creds) — device-truth, persisted host-side. */
@@ -183,7 +184,8 @@ export class UsbTransport extends EventEmitter {
       this.emit("status", {
         mac: frame.mac,
         mode: decoded.transport,
-        wifiState: WIFI_STATE_NAME[decoded.wifiState] ?? "idle",
+        // A state byte this sidecar doesn't know (newer firmware) is unknown, not a confident "idle".
+        wifiState: WIFI_STATE_NAME[decoded.wifiState] ?? null,
         rssi: decoded.rssi === 0 ? null : decoded.rssi,
         ssid: decoded.ssid,
         channel: decoded.channel,

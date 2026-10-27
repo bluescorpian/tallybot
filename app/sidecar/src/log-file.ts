@@ -6,7 +6,7 @@
  * {@link RotatingLogFile.write} is synchronous and infallible — it timestamps the line and queues
  * it — while a single async drain appends queued lines in batches. Any filesystem error drops the
  * batch and the next write retries from scratch, so a full or failing disk costs lines, never
- * tally. The queue itself is capped, so a disk that stalls can't grow memory without bound.
+ * tally; the first batch that lands again says how many were lost. The queue itself is capped, so a disk that stalls can't grow memory without bound.
  *
  * Rotation is `name` → `name.1` → … → `name.<keep>`, checked before each append; the oldest is
  * overwritten by the rename. Total disk use is about `maxBytes × (keep + 1)` at most, barring a
@@ -34,6 +34,9 @@ export class RotatingLogFile {
   #pending: string[] = [];
   #pendingBytes = 0;
   #dropped = 0;
+  /** Lines in batches whose write failed since the last batch that landed, and the last error. */
+  #lost = 0;
+  #lostWhy = "";
   /** Current size of the live file; `undefined` until (re)learned from disk. */
   #size: number | undefined;
   #drain: Promise<void> | undefined;
@@ -71,6 +74,13 @@ export class RotatingLogFile {
         this.#pendingBytes += Buffer.byteLength(note);
         this.#dropped = 0;
       }
+      if (this.#lost > 0) {
+        const note = `${timestamp(new Date())} [log] ${this.#lost} line(s) lost: writing the log failed (${this.#lostWhy})\n`;
+        this.#pending.unshift(note);
+        this.#pendingBytes += Buffer.byteLength(note);
+        this.#lost = 0;
+      }
+      const lines = this.#pending.length;
       const chunk = this.#pending.join("");
       const bytes = this.#pendingBytes;
       this.#pending = [];
@@ -88,9 +98,11 @@ export class RotatingLogFile {
         }
         await appendFile(this.path, chunk);
         this.#size += bytes;
-      } catch {
-        // Drop the batch; relearn the file's state on the next one.
+      } catch (err) {
+        // Drop the batch, but say so in the next one that lands; relearn the file's state then.
         this.#size = undefined;
+        this.#lost += lines;
+        this.#lostWhy = (err as NodeJS.ErrnoException).code ?? String(err);
       }
     }
   }

@@ -328,7 +328,7 @@ fn give_up(flasher: &mut Flasher, event: FlashEvent) -> Result<String, FlashEven
 
 fn connect(port: &str) -> Result<Flasher, (Failure, String)> {
     let info = serialport::available_ports()
-        .unwrap_or_default()
+        .map_err(|e| (Failure::Error, format!("Couldn't list the serial ports: {e}")))?
         .into_iter()
         .find(|p| p.port_name == port)
         .and_then(|p| match p.port_type {
@@ -407,8 +407,10 @@ fn resource(app: &AppHandle, rel: &str) -> Option<PathBuf> {
     path.exists().then_some(path)
 }
 
+/// Whether `port` is still enumerated. An enumeration error answers yes: it's no evidence the
+/// board went away, and "unplugged" would send the operator to a cable that's fine.
 fn still_present(port: &str) -> bool {
-    serialport::available_ports().unwrap_or_default().iter().any(|p| p.port_name == port)
+    serialport::available_ports().map_or(true, |ports| ports.iter().any(|p| p.port_name == port))
 }
 
 fn wait_for_rejoin(app: &AppHandle, mac: &str) -> bool {

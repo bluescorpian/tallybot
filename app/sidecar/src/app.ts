@@ -71,7 +71,7 @@ export interface ProvisioningPort {
     listener: (status: {
       mac: string;
       mode: number;
-      wifiState: DeviceWifiState;
+      wifiState: DeviceWifiState | null;
       rssi: number | null;
       ssid: string;
       channel: number | null;
@@ -284,7 +284,7 @@ export class SidecarApp {
   /** Latest USB STATUS per device — surfaced for the provisioning wizard (mode + join progress). */
   readonly #usbStatus = new Map<
     string,
-    { mode: number; wifiState: DeviceWifiState; rssi: number | null }
+    { mode: number; wifiState: DeviceWifiState | null; rssi: number | null }
   >();
   /**
    * MACs whose latest STATUS confirmed bridge mode (its trailing `bridging` byte). The store holds the *designation*;

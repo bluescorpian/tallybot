@@ -47,9 +47,25 @@ pub fn start(app: AppHandle) {
     thread::spawn(move || {
 
         let mut failures = OpenFailures::default();
+        let mut enumeration_failing = false;
 
         while !stop.load(Ordering::Relaxed) {
-            let ports = serialport::available_ports().unwrap_or_default();
+            // A failed enumeration says nothing about which ports exist: read as an empty list it
+            // would clear every port error and unpark every board. Skip the poll and keep the
+            // last picture instead (logged once per run of failures).
+            let ports = match serialport::available_ports() {
+                Ok(ports) => {
+                    enumeration_failing = false;
+                    ports
+                }
+                Err(e) => {
+                    if !enumeration_failing {
+                        crate::log::diag!("[usb] couldn't list serial ports ({e}); keeping the last known ports");
+                    }
+                    enumeration_failing = true;
+                    Vec::new()
+                }
+            };
             let mut present = HashSet::new();
             for info in ports {
                 let serialport::SerialPortType::UsbPort(usb) = &info.port_type else {
@@ -98,6 +114,10 @@ pub fn start(app: AppHandle) {
                     }
                     tracked.lock().unwrap().remove(&path); // free it for re-open on replug
                 });
+            }
+            if enumeration_failing {
+                thread::sleep(POLL_INTERVAL);
+                continue;
             }
             // A port that failed and then went away (unplugged) is no longer a problem.
             for path in failures.retain_present(&present) {

@@ -98,20 +98,41 @@ pub fn handle_outbound(app: &AppHandle, line: &str) -> bool {
     }
     let mac = value.get("mac").and_then(|m| m.as_str()).unwrap_or_default();
     let hex = value.get("payloadHex").and_then(|h| h.as_str()).unwrap_or_default();
-    if let Some(bytes) = from_hex(hex) {
-        if let Some(state) = app.try_state::<UsbState>() {
-            if let Ok(devices) = state.devices.lock() {
-                if let Some(device) = devices.get(mac) {
-                    let _ = device.tx.send(bytes);
-                }
+    let Some(bytes) = from_hex(hex) else {
+        crate::log::diag!("[usb] dropped a send to {mac:?}: its payload isn't hex");
+        return true;
+    };
+    let Some(state) = app.try_state::<UsbState>() else { return true };
+    let Ok(devices) = state.devices.lock() else { return true };
+    match devices.get(mac) {
+        // A dead channel means the port's thread just exited; its disconnect is on its way.
+        Some(device) => {
+            if device.tx.send(bytes).is_err() {
+                crate::log::diag!("[usb] dropped a send to {mac}: its port just closed");
+            }
+        }
+        // The sidecar's colour stream keeps sending to a light until it hears it left, 4 a
+        // second: say so once per MAC, not per frame (cleared when that MAC registers again).
+        None => {
+            if unknown_sends().lock().is_ok_and(|mut seen| seen.insert(mac.to_string())) {
+                crate::log::diag!("[usb] dropping sends to {mac}: no such light on USB");
             }
         }
     }
     true
 }
 
+/// MACs whose unroutable sends were already logged (see [`handle_outbound`]).
+fn unknown_sends() -> &'static Mutex<HashSet<String>> {
+    static SEEN: std::sync::OnceLock<Mutex<HashSet<String>>> = std::sync::OnceLock::new();
+    SEEN.get_or_init(Default::default)
+}
+
 /// Register a detected device under its MAC and announce it to the sidecar (on HELLO).
 fn register_device(app: &AppHandle, mac: &str, version: u8, path: &str, tx: mpsc::Sender<Vec<u8>>) {
+    if let Ok(mut seen) = unknown_sends().lock() {
+        seen.remove(mac);
+    }
     if let Some(state) = app.try_state::<UsbState>() {
         if let Ok(mut devices) = state.devices.lock() {
             devices.insert(mac.to_string(), UsbDevice { tx, version });

@@ -149,7 +149,8 @@ void setCountry() {
   c.nchan = 13;
   c.max_tx_power = 84;  // 21 dBm in 0.25dBm units — don't constrain (we run full power)
   c.policy = WIFI_COUNTRY_POLICY_MANUAL;
-  esp_wifi_set_country(&c);
+  esp_err_t err = esp_wifi_set_country(&c);
+  if (err != ESP_OK) TLOG(LOG_LEVEL_WARN, "esp_wifi_set_country failed: 0x%x (channels 12-13 may be off)\n", (unsigned)err);
 }
 }  // namespace
 

@@ -47,3 +47,15 @@ jobs:
             "https://github.com/$GH_REPO/releases/download/$tag" release.json > latest.json
           cat latest.json
           gh release upload "$tag" latest.json --clobber
+      # Installed apps treat a missing latest.json as "no update" and say nothing (a failed launch
+      # check is deliberately quiet), so the release would sit published and unreachable. Say so
+      # where the run is read, not only as a red cross.
+      - name: Report a missing manifest
+        if: failure()
+        env:
+          tag: ${{ steps.tag.outputs.tag }}
+        run: |
+          msg="latest.json was not written for ${tag:-the release}: installed apps won't be offered it. Fix the cause and re-run this workflow (it can be run by hand)."
+          echo "::error title=No update manifest::$msg"
+          echo "### No update manifest" >> "$GITHUB_STEP_SUMMARY"
+          echo "$msg" >> "$GITHUB_STEP_SUMMARY"
