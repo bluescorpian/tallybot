@@ -243,9 +243,12 @@ fn spawn(app: &AppHandle) -> Result<Receiver<CommandEvent>, Box<dyn std::error::
 }
 
 /// Pump one child's events until it exits; returns an operator-facing reason.
-/// Stdout lines become `"sidecar"` events; stderr is mirrored to our own stderr.
+/// Stdout lines become `"sidecar"` events; stderr goes to the shell's log. The sidecar's last
+/// `fatal:` line (its own record of why it is exiting) is kept for the reason, so the banner
+/// says what went wrong rather than only "exited with code 1".
 fn pump(app: &AppHandle, mut rx: Receiver<CommandEvent>) -> String {
     let mut spoke = false;
+    let mut fatal: Option<String> = None;
     while let Some(event) = rx.blocking_recv() {
         match event {
             // The shell plugin delivers stdout one line at a time — one NDJSON
@@ -266,14 +269,43 @@ fn pump(app: &AppHandle, mut rx: Receiver<CommandEvent>) -> String {
                 }
             }
             CommandEvent::Stderr(line) => {
-                diag!("[sidecar] {}", String::from_utf8_lossy(&line));
+                let text = String::from_utf8_lossy(&line);
+                diag!("[sidecar] {text}");
+                if let Some(cause) = fatal_cause(&text) {
+                    fatal = Some(cause);
+                }
             }
             CommandEvent::Error(err) => diag!("[sidecar] error: {err}"),
-            CommandEvent::Terminated(payload) => return describe_exit(&payload),
+            CommandEvent::Terminated(payload) => return with_cause(describe_exit(&payload), fatal.as_deref()),
             _ => {}
         }
     }
-    "stopped responding".into()
+    with_cause("stopped responding".into(), fatal.as_deref())
+}
+
+/// The longest cause the down reason carries; the full text is in both logs.
+const MAX_CAUSE_CHARS: usize = 160;
+
+/// The cause from a sidecar `fatal: …` stderr line (`app/sidecar/src/diagnostics.ts` and the
+/// entries' `main().catch` write them), trimmed to one short line; None for any other line.
+fn fatal_cause(line: &str) -> Option<String> {
+    let cause = line.trim().strip_prefix("fatal:")?.trim();
+    if cause.is_empty() {
+        return None;
+    }
+    let mut short: String = cause.chars().take(MAX_CAUSE_CHARS).collect();
+    if short.len() < cause.len() {
+        short.push('…');
+    }
+    Some(short)
+}
+
+/// An exit description with the sidecar's own last word appended, when it left one.
+fn with_cause(exit: String, cause: Option<&str>) -> String {
+    match cause {
+        Some(cause) => format!("{exit}: {cause}"),
+        None => exit,
+    }
 }
 
 /// The consecutive-quick-crash count after a crash, given how long the sidecar had run.

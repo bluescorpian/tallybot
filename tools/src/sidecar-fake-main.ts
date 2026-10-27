@@ -25,7 +25,7 @@ import { DEV_STATE_FILE } from "./dev-config.ts";
 
 import { AtemSource } from "../../app/sidecar/src/atem.ts";
 import { loadRuntimeConfig } from "../../app/sidecar/src/config.ts";
-import { startDiagnostics } from "../../app/sidecar/src/diagnostics.ts";
+import { describeFatal, startDiagnostics } from "../../app/sidecar/src/diagnostics.ts";
 import { IpcBridge } from "../../app/sidecar/src/ipc-bridge.ts";
 import { macTail } from "../../app/sidecar/src/protocol.ts";
 import { scanNetwork } from "../../app/sidecar/src/scanner.ts";
@@ -77,6 +77,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-  diag(`fatal: ${(err as Error).stack ?? String(err)}`);
+  diag(`fatal: ${describeFatal(err)}`);
   exitAfterFlush(1);
 });

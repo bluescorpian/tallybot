@@ -207,7 +207,10 @@ export class ConfigStore {
 
   // ── Persistence ──────────────────────────────────────────────────────────────
 
-  /** Wait for any in-flight and queued writes to finish (shutdown / tests). */
+  /**
+   * Wait for any in-flight and queued writes to finish (shutdown / tests). Never rejects: each
+   * write's failure belongs to the mutation that queued it.
+   */
   flush(): Promise<void> {
     return this.#writeChain;
   }
@@ -230,8 +233,12 @@ export class ConfigStore {
       devices,
     };
     const json = `${JSON.stringify(payload, null, 2)}\n`;
-    this.#writeChain = this.#writeChain.then(() => this.#writeAtomically(json));
-    return this.#writeChain;
+    // This write's own result goes to its caller (it rejects if the write failed), but the chain
+    // carries on past a failure: every write is the whole working set, so the next one retries
+    // everything a failed one lost. A chain left rejected would skip every later write.
+    const write = this.#writeChain.then(() => this.#writeAtomically(json));
+    this.#writeChain = write.catch(() => {});
+    return write;
   }
 
   async #writeAtomically(json: string): Promise<void> {

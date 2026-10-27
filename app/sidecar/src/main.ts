@@ -18,7 +18,7 @@ import { Atem } from "atem-connection";
 
 import { type AtemLike, AtemSource } from "./atem.ts";
 import { loadRuntimeConfig, xdgStateFile } from "./config.ts";
-import { startDiagnostics } from "./diagnostics.ts";
+import { describeFatal, startDiagnostics } from "./diagnostics.ts";
 import { IpcBridge } from "./ipc-bridge.ts";
 import { macTail } from "./protocol.ts";
 import { scanNetwork } from "./scanner.ts";
@@ -61,6 +61,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-  diag(`fatal: ${(err as Error).stack ?? String(err)}`);
+  diag(`fatal: ${describeFatal(err)}`);
   exitAfterFlush(1);
 });

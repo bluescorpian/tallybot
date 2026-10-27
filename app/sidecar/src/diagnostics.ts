@@ -25,8 +25,14 @@ export interface Diagnostics {
   exitAfterFlush(code: number): void;
 }
 
+/** A thrown value as a `fatal:` line's text: the stack when there is one. */
+export function describeFatal(err: unknown): string {
+  return err instanceof Error ? (err.stack ?? err.message) : String(err);
+}
+
 /**
- * Open the log at `logPath` and route every `console` method through {@link Diagnostics.diag}.
+ * Open the log at `logPath`, route every `console` method through {@link Diagnostics.diag}, and
+ * make an uncaught exception or unhandled rejection a recorded exit.
  *
  * stdout is the NDJSON IPC channel the Tauri shell parses; one stray library log line on it
  * corrupts the stream. `atem-connection`/`threadedClass` log via console.log/info/debug, so call
@@ -53,6 +59,21 @@ export function startDiagnostics(logPath: string): Diagnostics {
     setTimeout(exit, 1000).unref();
     void logFile.flush().then(exit);
   };
+
+  // Node's own handler for these prints to fd 2 and exits at once, bypassing `diag`, so the log
+  // file (the release build's only record) would never say why the engine died. Record it as a
+  // `fatal:` line (the shell shows its first line in the "engine stopped" banner) and exit after
+  // the flush. Exiting is still right: after an unexpected throw the engine's state can't be
+  // trusted, and the shell restarts it.
+  let dying = false;
+  const fatal = (kind: string) => (err: unknown): void => {
+    if (dying) return; // a second failure while flushing is noise; the first is the cause
+    dying = true;
+    diag(`fatal: ${kind}: ${describeFatal(err)}`);
+    exitAfterFlush(1);
+  };
+  process.on("uncaughtException", fatal("uncaught exception"));
+  process.on("unhandledRejection", fatal("unhandled rejection"));
 
   return { logFile, diag, exitAfterFlush };
 }

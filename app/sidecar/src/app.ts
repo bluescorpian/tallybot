@@ -23,7 +23,7 @@ import {
   computeEngine,
 } from "./engine.ts";
 import type { DeviceTransportEvents } from "./device-events.ts";
-import { FaultBook, type FaultReport } from "./faults.ts";
+import { FaultBook, type FaultReport, describeError } from "./faults.ts";
 import type { DeviceConfig } from "./store.ts";
 import type { DeviceFirmware, DeviceTransport, DeviceWifiState, LogLevelName, SidecarEvent, SourceScanHit, UiCommand } from "./ipc.ts";
 import {
@@ -314,7 +314,7 @@ export class SidecarApp {
     this.#faults = new FaultBook(this.#log);
     this.#source = deps.atem.snapshot();
 
-    this.#ipc.on("command", (command) => void this.#handleCommand(command));
+    this.#ipc.on("command", (command) => void this.#run(command));
 
     this.#server.on("deviceConnected", ({ mac, version }) => {
       this.#online.set(mac, version);
@@ -374,7 +374,7 @@ export class SidecarApp {
       // (clear any stale entry); only write on a change, since STATUS now streams. setSsid mutates
       // the in-memory config synchronously, so the #sync() below already reflects it.
       const stored = this.#store.device(mac)?.ssid ?? "";
-      if (ssid !== stored) void this.#store.setSsid(mac, ssid === "" ? null : ssid);
+      if (ssid !== stored) void this.#save(this.#store.setSsid(mac, ssid === "" ? null : ssid));
       this.#sync(); // the wizard reads mode/wifiState/rssi off the snapshot
     });
     this.#provisioning.on("log", ({ mac, level, text }) => {
@@ -430,14 +430,49 @@ export class SidecarApp {
 
   // ── Commands from the UI ─────────────────────────────────────────────────────
 
+  /**
+   * Handle one command, so that whatever it throws is told to the operator and logged, never left
+   * to reject: an unhandled rejection is fatal, and one bad command must not stop the engine
+   * mid-show. Never rejects.
+   */
+  async #run(command: UiCommand): Promise<void> {
+    try {
+      await this.#handleCommand(command);
+    } catch (err) {
+      this.#log(`command ${command.type} failed: ${(err as Error).stack ?? describeError(err)}`);
+      this.#ipc.notice("error", `TallyBot couldn't do that (${command.type}: ${describeError(err)}). Try again; if it keeps failing, restart the engine in Settings.`);
+    }
+  }
+
+  /**
+   * Wait for a config write and report how it went: a failed one raises the `state.write` fault,
+   * the next one that lands clears it (each write is the whole config, so it saves what the failed
+   * one lost). The change itself already took effect in memory, so the caller carries on either
+   * way, which is why this never rejects.
+   */
+  async #save(write: Promise<void>): Promise<void> {
+    try {
+      await write;
+    } catch (err) {
+      this.#report({
+        key: "state.write",
+        level: "error",
+        message: `TallyBot couldn't save its settings (${describeError(err)}). Changes work for now, but are lost if TallyBot restarts before a save succeeds.`,
+        cause: err,
+      });
+      return;
+    }
+    if (this.#faults.clear("state.write")) this.#sync();
+  }
+
   async #handleCommand(command: UiCommand): Promise<void> {
     switch (command.type) {
       case "assignDevice":
-        await this.#store.assign(command.mac, command.inputId);
+        await this.#save(this.#store.assign(command.mac, command.inputId));
         this.#sync();
         break;
       case "unassignDevice":
-        await this.#store.unassign(command.mac);
+        await this.#save(this.#store.unassign(command.mac));
         this.#sync();
         break;
       case "identifyDevice":
@@ -445,7 +480,7 @@ export class SidecarApp {
         else this.#ipc.notice("info", `Tally ${macTail(command.mac, 2)} is offline — can't flash it.`);
         break;
       case "setBrightness":
-        await this.#store.setBrightness(command.mac, command.brightness);
+        await this.#save(this.#store.setBrightness(command.mac, command.brightness));
         this.#sync();
         break;
       case "setSource":
@@ -453,7 +488,7 @@ export class SidecarApp {
           this.#ipc.notice("info", `"${command.ip}" isn't an IPv4 address — can't connect to it.`);
           break;
         }
-        await this.#store.setSourceIp(command.ip);
+        await this.#save(this.#store.setSourceIp(command.ip));
         this.#faults.clear("atem"); // a new attempt; its own errors will say if it fails too
         this.#atem.connect(command.ip); // change event publishes the new connecting state
         break;
@@ -463,7 +498,7 @@ export class SidecarApp {
           // device's confirming STATUS. (That STATUS now echoes the NVS SSID too and reconciles to
           // the same value.) A failed join still renders its own `failed` view, and the stored SSID
           // pre-fills the retry form.
-          await this.#store.setSsid(command.mac, command.ssid);
+          await this.#save(this.#store.setSsid(command.mac, command.ssid));
           this.#sync();
         } else {
           this.#ipc.notice("info", `Tally ${macTail(command.mac, 2)} isn't on USB — can't provision WiFi.`);
@@ -480,7 +515,7 @@ export class SidecarApp {
         }
         if (this.#provisioning.setTransport(command.mac, transportModeValue(command.mode))) {
           // No-TX has no network — drop any remembered SSID so a re-plug doesn't show a stale one.
-          if (command.mode === "notx") await this.#store.setSsid(command.mac, null);
+          if (command.mode === "notx") await this.#save(this.#store.setSsid(command.mac, null));
           this.#sync();
         } else {
           this.#ipc.notice("info", `Tally ${macTail(command.mac, 2)} isn't on USB — can't set its transport.`);
@@ -516,7 +551,7 @@ export class SidecarApp {
       this.#sync();
       return;
     }
-    await this.#store.setBridgeMac(mac);
+    await this.#save(this.#store.setBridgeMac(mac));
     // Stand the old bridge down so two devices never both relay (only matters while it's cabled).
     if (previous !== null) {
       this.#bridgeConfirmed.delete(previous);
