@@ -145,21 +145,15 @@ test("the snapshot mirrors source connection, ip, inputs, and gate", () => {
   assert.deepEqual(state.programGate, INACTIVE_GATE);
 });
 
-test("firmwareOutdated is set only below MIN_SUPPORTED, never for an unseen version", () => {
-  const source = connectedSource();
-  const { state } = computeEngine(source, INACTIVE_GATE, [
-    device({ mac: "00:00:00:00:00:01", protocolVersion: 0 }), // below MIN_SUPPORTED (1)
-    device({ mac: "00:00:00:00:00:02", protocolVersion: 1 }), // current
-    device({ mac: "00:00:00:00:00:03", protocolVersion: null }), // never connected
-  ]);
-  assert.equal(state.devices[0]!.firmwareOutdated, true);
-  assert.equal(state.devices[1]!.firmwareOutdated, false);
-  assert.equal(state.devices[2]!.firmwareOutdated, false);
-});
-
 test("the device snapshot carries identity, assignment, and brightness through", () => {
   const { state } = computeEngine(connectedSource(), INACTIVE_GATE, [
-    device({ mac: "aa:bb:cc:dd:ee:ff", macTail: "dd:ee:ff", inputId: 2, brightness: 200 }),
+    device({
+      mac: "aa:bb:cc:dd:ee:ff",
+      macTail: "dd:ee:ff",
+      inputId: 2,
+      brightness: 200,
+      firmware: { kind: "reported", version: "1.2.0" },
+    }),
   ]);
   assert.deepEqual(state.devices[0], {
     mac: "aa:bb:cc:dd:ee:ff",
@@ -168,8 +162,7 @@ test("the device snapshot carries identity, assignment, and brightness through",
     inputId: 2,
     brightness: 200,
     protocolVersion: 1,
-    firmwareVersion: null,
-    firmwareOutdated: false,
+    firmware: { kind: "reported", version: "1.2.0" },
     transport: "wifi",
     wifiState: null,
     rssi: null,

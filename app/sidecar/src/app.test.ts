@@ -15,7 +15,7 @@ import {
 } from "./app.ts";
 import type { SourceSnapshot } from "./engine.ts";
 import type { DeviceConfig } from "./store.ts";
-import type { DeviceTransport, DeviceWifiState, SidecarEvent, StateEvent } from "./ipc.ts";
+import type { DeviceTransport, DeviceWifiState, LogLevelName, SidecarEvent, StateEvent } from "./ipc.ts";
 import { type Color, COLORS, DEFAULT_BRIGHTNESS, SETUP_COLOR, Transport } from "./protocol.ts";
 
 // ── In-memory fakes for the orchestrator's ports ─────────────────────────────────
@@ -78,7 +78,7 @@ class FakeIpc extends EventEmitter implements IpcPort {
   send(event: SidecarEvent): void {
     this.events.push(event);
   }
-  notice(level: "info" | "warn" | "error", message: string): void {
+  notice(level: LogLevelName, message: string): void {
     this.notices.push({ level, message });
   }
   close(): void {}
@@ -490,20 +490,21 @@ test("setSource persists the IP and connects the ATEM", async () => {
   assert.deepEqual(atem.connects, ["10.0.0.9"]);
 });
 
-test("Device.firmwareVersion is null until the device reports one, and survives a reconnect", async () => {
-  const { app, server, ipc } = setup();
+test("Device.firmware is unknown until heard from, then the reported version, which survives a reconnect", async () => {
+  const { app, server, store, ipc } = setup();
+  await store.assign(MAC, 1); // a light the app remembers but hasn't heard from this run
   await app.start();
-  const firmwareOf = () => ipc.lastState()!.state.devices.find((d) => d.mac === MAC)!.firmwareVersion;
+  const firmwareOf = () => ipc.lastState()!.state.devices.find((d) => d.mac === MAC)!.firmware;
+
+  assert.deepEqual(firmwareOf(), { kind: "unknown" }, "not heard from since startup");
 
   server.connectDevice(MAC);
-  assert.equal(firmwareOf(), null, "pre-1.1 firmware never reports one");
-
   server.emit("firmware", { mac: MAC, version: "1.1.0" });
-  assert.equal(firmwareOf(), "1.1.0");
+  assert.deepEqual(firmwareOf(), { kind: "reported", version: "1.1.0" });
 
   server.disconnectDevice(MAC);
   server.connectDevice(MAC); // its FIRMWARE hasn't arrived yet on the new link
-  assert.equal(firmwareOf(), "1.1.0");
+  assert.deepEqual(firmwareOf(), { kind: "reported", version: "1.1.0" }, "a reconnect mustn't flash outdated");
 });
 
 test("an unsupported-firmware device raises a warning notice", async () => {

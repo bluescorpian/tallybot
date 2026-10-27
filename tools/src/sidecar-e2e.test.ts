@@ -384,7 +384,11 @@ test("main.ts's default composition carries USB, ESP-NOW relay, firmware, STATUS
       await eventually("the USB device in a snapshot", () => (device(stack, bridge)?.transport === "usb" ? true : undefined));
 
       stack.shell(usbFrame(bridge, Uint8Array.of(DeviceMessageType.FIRMWARE, ...text("1.2.0"))));
-      await eventually("the USB device's firmware version", () => (device(stack, bridge)?.firmwareVersion === "1.2.0" ? true : undefined));
+      const firmware = await eventually("the USB device's firmware version", () => {
+        const f = device(stack, bridge)?.firmware;
+        return f?.kind === "reported" ? f : undefined;
+      });
+      assert.deepEqual(firmware, { kind: "reported", version: "1.2.0" });
 
       // STATUS: provisioned for WiFi, idle, no RSSI, no stored SSID.
       stack.shell(usbFrame(bridge, Uint8Array.of(DeviceMessageType.STATUS, Transport.WIFI, WifiState.IDLE, 0, 0)));

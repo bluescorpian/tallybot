@@ -24,7 +24,7 @@ const sampleState: AppState = {
       inputId: 1,
       brightness: 128,
       protocolVersion: 1,
-      firmwareOutdated: false,
+      firmware: { kind: "reported", version: "1.1.0" },
       transport: "wifi",
       wifiState: null,
       rssi: null,
