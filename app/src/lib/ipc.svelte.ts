@@ -95,6 +95,15 @@ class SidecarStore {
 				case "sourceScan":
 					this.scan = event;
 					break;
+				case "deviceLog":
+					// Every line is in the engine's log file; the ones the operator must see arrive as
+					// faults in the snapshot.
+					break;
+				default: {
+					// A new event type must be handled above, not dropped here.
+					const unhandled: never = event;
+					console.warn("unhandled sidecar event", unhandled);
+				}
 			}
 		}));
 		// Listen before pulling, so no change falls between the two; `revision` keeps a

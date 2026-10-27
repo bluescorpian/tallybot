@@ -23,6 +23,7 @@ import {
   computeEngine,
 } from "./engine.ts";
 import type { DeviceTransportEvents } from "./device-events.ts";
+import { FaultBook, type FaultReport } from "./faults.ts";
 import type { DeviceConfig } from "./store.ts";
 import type { DeviceFirmware, DeviceTransport, DeviceWifiState, LogLevelName, SidecarEvent, SourceScanHit, UiCommand } from "./ipc.ts";
 import {
@@ -257,6 +258,8 @@ export class SidecarApp {
   readonly #refreshMs: number;
   readonly #scanNetwork: (log: (message: string) => void) => Promise<SourceScanHit[]>;
   readonly #dev: boolean;
+  /** What the operator must see that only the sidecar knows (`faults.ts`); rides every snapshot. */
+  readonly #faults: FaultBook;
 
   /** True while a subnet sweep is in flight — a second "Scan" is ignored until it ends. */
   #scanning = false;
@@ -308,6 +311,7 @@ export class SidecarApp {
     this.#refreshMs = deps.refreshMs ?? REFRESH_PERIOD_MS;
     this.#scanNetwork = deps.scanNetwork;
     this.#dev = deps.dev ?? false;
+    this.#faults = new FaultBook(this.#log);
     this.#source = deps.atem.snapshot();
 
     this.#ipc.on("command", (command) => void this.#handleCommand(command));
@@ -347,7 +351,16 @@ export class SidecarApp {
       this.#log(`device ${mac} runs firmware ${version}`);
       this.#sync();
     });
-    this.#server.on("error", (err) => this.#log(`device server error: ${err.message}`));
+    // A light's connection failing (a frame it sent that can't be decoded, a socket or discovery
+    // error): one fault, replaced by the next, that the operator can dismiss. Nothing clears it on
+    // its own, because nothing reports the transport healthy again.
+    this.#server.on("error", (err) =>
+      this.#report({
+        key: "transport",
+        level: "warn",
+        message: `A tally light connection reported an error (${err.message}). TallyBot keeps running; a light that stays wrong may need unplugging and plugging back in.`,
+      }),
+    );
 
     // USB provisioning + diagnostics.
     this.#provisioning.on("status", ({ mac, mode, wifiState, rssi, ssid, bridge }) => {
@@ -370,9 +383,25 @@ export class SidecarApp {
 
     this.#atem.on("change", (snapshot) => {
       this.#source = snapshot;
+      // A source that answers, or one the operator stopped wanting, has no connect fault left.
+      if (snapshot.connection !== "connecting") this.#faults.clear("atem");
       this.#sync();
     });
-    this.#atem.on("error", (err) => this.#log(`ATEM error: ${err.message}`));
+    // While connecting, an error is the reason it isn't connecting, and the operator needs it (a
+    // refused or unreachable address reads very differently from a wrong IP). Once connected the
+    // library recovers on its own and tally is still flowing, so a mid-session error is logged only.
+    this.#atem.on("error", (err) => {
+      const { connection, ip } = this.#source;
+      if (connection === "connected" || ip === null) {
+        this.#log(`ATEM error: ${err.message}`);
+        return;
+      }
+      this.#report({
+        key: "atem",
+        level: "warn",
+        message: `Can't connect to the ATEM at ${ip}: ${err.message}. Check the IP address, and that this PC is on the same network as the switcher.`,
+      });
+    });
   }
 
   /** Start the device server and connect to the saved ATEM, then emit a first snapshot. */
@@ -425,6 +454,7 @@ export class SidecarApp {
           break;
         }
         await this.#store.setSourceIp(command.ip);
+        this.#faults.clear("atem"); // a new attempt; its own errors will say if it fails too
         this.#atem.connect(command.ip); // change event publishes the new connecting state
         break;
       case "provisionWifi":
@@ -580,7 +610,15 @@ export class SidecarApp {
   #sync(): void {
     const { state, colors } = computeEngine(this.#source, this.#gate, this.#deviceRecords());
     this.#applyColors(colors);
-    this.#ipc.send({ type: "state", state: this.#dev ? { ...state, dev: true } : state });
+    const faults = this.#faults.list();
+    this.#ipc.send({ type: "state", state: { ...state, faults, ...(this.#dev ? { dev: true } : {}) } });
+  }
+
+  // ── Faults ─────────────────────────────────────────────────────────────────────
+
+  /** Raise (or replace) a fault: logged always, published when it changed (see {@link FaultBook}). */
+  #report(report: FaultReport): void {
+    if (this.#faults.raise(report)) this.#sync();
   }
 
   /**

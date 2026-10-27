@@ -100,8 +100,8 @@
 	// The board is left-aligned, so that corner is empty dot-grid at any width; a card there
 	// keeps its action and × next to the text and never pushes the board down.
 	// The engine being down is an error that stays until it's back (not dismissible:
-	// it's the reason the board is dark). USB port errors (from the shell) are dismissible
-	// and return only if their message changes; a sidecar notice (firmware-outdated,
+	// it's the reason the board is dark). USB port errors (from the shell) and the engine's
+	// faults are dismissible and return only if their message changes; a sidecar notice (firmware-outdated,
 	// offline-flash, …) is dismissed as that one event, so a later notice shows again.
 	// An unflashed board (shell health) points at the web flasher until it's unplugged.
 	interface Banner {
@@ -135,6 +135,8 @@
 		return () => clearTimeout(timer);
 	});
 	const openWebFlasher = () => backend.openExternal(FLASHER_URL);
+	// The engine's faults (sidecar/src/faults.ts). Not while it's down: they're the dead process's.
+	const faults = $derived(engineDown ? [] : (appState.faults ?? []));
 	let dismissed = $state<Record<string, string>>({});
 	let dismissedNotice = $state<unknown>(null);
 	const banners = $derived.by<Banner[]>(() => {
@@ -150,7 +152,18 @@
 				dismissible: false,
 			});
 		}
-		if (unreachableIp !== null) {
+		// Like the USB port errors: dismissible, and back only if the message changes. The ATEM's
+		// own reason, when it gave one, replaces the timed guess below.
+		for (const f of faults) {
+			list.push({
+				key: `fault:${f.key}`,
+				level: f.level,
+				message: f.message,
+				dismissible: true,
+				action: f.key === "atem" ? { label: "Settings", run: () => (settingsOpen = true) } : undefined,
+			});
+		}
+		if (unreachableIp !== null && !faults.some((f) => f.key === "atem")) {
 			list.push({
 				key: "unreachable",
 				level: "warn",

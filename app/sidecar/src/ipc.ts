@@ -149,12 +149,34 @@ export interface ProgramGate {
   source: string | null;
 }
 
+/**
+ * A condition the operator must see that the sidecar knows about: the ATEM refusing a
+ * connection, the state file failing to save, a light logging an error. A fault is *state*, not
+ * an event: it stays in every snapshot until its condition clears, so a UI that starts late or
+ * reloads still sees it (a one-shot message is a {@link NoticeEvent}). Raised and cleared in one
+ * place, `SidecarApp`'s fault book (`faults.ts`), and every one is also written to the log.
+ */
+export interface Fault {
+  /** The condition, unique within {@link AppState.faults}: `atem`, `state.write`, `device:<mac>:log`, … */
+  key: string;
+  level: "warn" | "error";
+  /** Operator-facing: what failed and, where there is one, what to do. */
+  message: string;
+  /** The light the fault belongs to, or null for one about the app as a whole. */
+  mac: string | null;
+}
+
 /** The full state snapshot the engine produces and the UI renders. */
 export interface AppState {
   source: Source;
   inputs: Input[];
   devices: Device[];
   programGate: ProgramGate;
+  /**
+   * Every live {@link Fault}, oldest first. Added by the orchestrator, not the pure engine;
+   * absent reads as none (a snapshot built outside the orchestrator).
+   */
+  faults?: Fault[];
   /**
    * True when the sidecar is running against the fake ATEM (the dev entry point,
    * `tools/src/sidecar-fake-main.ts`). The UI uses it to make the board's input keys
