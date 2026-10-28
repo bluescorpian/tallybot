@@ -15,7 +15,7 @@ const EMPTY_STATE: AppState = {
 	devices: [],
 	programGate: { active: false, source: null },
 	faults: [],
-	espnow: { channel: ESPNOW_CHANNEL, bridgeTxPower: "full", legacyLights: [] },
+	espnow: { channel: ESPNOW_CHANNEL, bridgeTxPower: "full", legacyLights: [], unseenLights: [] },
 };
 
 export class LiveBackend implements Backend {

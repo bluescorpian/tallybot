@@ -151,19 +151,35 @@ export interface Device {
  */
 export type BridgeTxPower = "full" | "reduced";
 
-/** The rig-wide ESP-NOW settings the sidecar persists beside the bridge designation. */
+/** The rig-wide ESP-NOW settings, held by the sidecar beside the bridge designation. */
 export interface EspNowSettings {
-  /** The channel the bridge runs on and every newly provisioned ESP-NOW light is given (1–13). */
+  /**
+   * The channel the bridge runs on and every newly provisioned ESP-NOW light is given (1–13).
+   * Persisted in the state file.
+   */
   channel: number;
-  /** The designated bridge's transmit power (sent to v4 bridges only). */
+  /**
+   * The designated bridge's transmit power (sent to v4 bridges only). Runtime-only: "full" on
+   * every app launch, never written to the state file.
+   */
   bridgeTxPower: BridgeTxPower;
   /**
    * MACs of the ESP-NOW lights the sidecar knows of (its state file) whose firmware predates
    * channel hunting (protocol < 4): they stay on their stored channel, so after a channel change
-   * each needs re-cabling (or a firmware update) to follow. Every MAC is also in
-   * {@link AppState.devices}.
+   * each needs re-cabling (or a firmware update) to follow. Excludes the designated bridge, which
+   * SET_BRIDGE retunes. Every MAC is also in {@link AppState.devices}.
    */
   legacyLights: string[];
+  /**
+   * MACs of known devices whose protocol version is unknown: nothing has been heard from them
+   * since this TallyBot started recording versions (the released app's state file has none), and
+   * they aren't known WiFi or No-TX devices (no SSID recorded, no STATUS reporting another
+   * transport). Each may be an ESP-NOW light too old to follow a channel change; the UI says it
+   * hasn't been seen since the update and may not follow. A device leaves this list once it
+   * connects. Excludes the designated bridge. Disjoint from {@link legacyLights}; every MAC is also
+   * in {@link AppState.devices}.
+   */
+  unseenLights: string[];
 }
 
 /**

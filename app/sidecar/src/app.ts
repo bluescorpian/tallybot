@@ -74,10 +74,10 @@ export interface ProvisioningPort {
   /** Provision WiFi creds over USB and trigger a validating join. */
   provisionWifi(mac: string, ssid: string, password: string): boolean;
   /**
-   * Set the device's unplugged transport mode (a wire {@link Transport} value); `channel` rides
-   * with ESP-NOW (the session channel).
+   * Set the device's unplugged transport mode (a wire {@link Transport} value). `channel` is the
+   * session channel for ESP-NOW (required: the encoder throws without it) and null otherwise.
    */
-  setTransport(mac: string, mode: number, channel?: number): boolean;
+  setTransport(mac: string, mode: number, channel: number | null): boolean;
   /**
    * Enter/leave ESP-NOW bridge mode on a USB device on `channel` (runtime-only on the device —
    * re-asserted by the host), at `txPower` quarter-dBm when given. Sent only to version ≥ 3
@@ -126,8 +126,6 @@ export interface StorePort {
   readonly bridgeMac: string | null;
   /** The rig's ESP-NOW channel (1–13). Persisted. */
   readonly espnowChannel: number;
-  /** The designated bridge's transmit power. Persisted. */
-  readonly bridgeTxPower: BridgeTxPower;
   device(mac: string): DeviceConfig | undefined;
   devices(): Array<[string, DeviceConfig]>;
   setSourceIp(ip: string | null): Promise<void>;
@@ -135,7 +133,6 @@ export interface StorePort {
   setBridgeMac(mac: string | null): Promise<void>;
   /** Set the rig's ESP-NOW channel; throws outside 1–13. */
   setEspnowChannel(channel: number): Promise<void>;
-  setBridgeTxPower(txPower: BridgeTxPower): Promise<void>;
   /** Record a device's reported protocol version / provisioned transport (writes only on a change). */
   noteReported(mac: string, report: DeviceReport): Promise<void>;
   assign(mac: string, inputId: number): Promise<void>;
@@ -321,6 +318,11 @@ export class SidecarApp {
    * this is the device-confirmed flag the UI surfaces as `Device.bridge`. Cleared on disconnect.
    */
   readonly #bridgeConfirmed = new Set<string>();
+  /**
+   * The designated bridge's transmit power. Runtime-only, like bridge mode on the device: every
+   * launch starts at full, so a setting that hurts the rig dies with the session.
+   */
+  #bridgeTxPower: BridgeTxPower = "full";
 
   /** Stops the animation clock, or null when nothing is currently animated. */
   #stopAnim: (() => void) | null = null;
@@ -357,6 +359,9 @@ export class SidecarApp {
       // A reconnect is a fresh start: the light's last complaint was about the session before.
       this.#faults.clear(deviceLogFault(mac));
       this.#lastColor.delete(mac); // reconnect may skip the disconnect event; always re-push
+      // A device that left USB but is still reachable (it reverts to TCP or ESP-NOW) has no live
+      // STATUS any more, so what the last one said (mode, join progress, channel, bridging) is stale.
+      if (this.#provisioning.transportOf(mac) !== "usb") this.#dropUsbState(mac);
       // Pull a fresh STATUS so an already-provisioned device reports its mode/ssid-state at once,
       // rather than waiting for a spontaneous frame (no-op for non-USB devices).
       this.#provisioning.requestStatus(mac);
@@ -377,8 +382,7 @@ export class SidecarApp {
     this.#server.on("deviceDisconnected", ({ mac }) => {
       this.#online.delete(mac);
       this.#lastColor.delete(mac); // forget it, so a reconnect is sent its colour afresh
-      this.#usbStatus.delete(mac); // stale once it's gone
-      this.#bridgeConfirmed.delete(mac); // device-confirmed bridge flag is stale once it's gone
+      this.#dropUsbState(mac); // stale once it's gone
       this.#log(`device disconnected: ${mac}`);
       this.#sync();
     });
@@ -580,7 +584,7 @@ export class SidecarApp {
           break;
         }
         const mode = transportModeValue(command.mode);
-        const channel = mode === Transport.ESPNOW ? this.#store.espnowChannel : undefined;
+        const channel = mode === Transport.ESPNOW ? this.#store.espnowChannel : null;
         if (this.#provisioning.setTransport(command.mac, mode, channel)) {
           // No-TX has no network — drop any remembered SSID so a re-plug doesn't show a stale one.
           if (command.mode === "notx") await this.#save(this.#store.setSsid(command.mac, null));
@@ -654,7 +658,7 @@ export class SidecarApp {
     if (version === undefined || !supportsEspNow(version)) return;
     const txPower =
       enabled && supportsChannelSelection(version)
-        ? this.#store.bridgeTxPower === "reduced"
+        ? this.#bridgeTxPower === "reduced"
           ? BRIDGE_TX_POWER.REDUCED
           : BRIDGE_TX_POWER.FULL
         : undefined;
@@ -696,14 +700,14 @@ export class SidecarApp {
     this.#sync();
   }
 
-  /** Set the bridge's transmit power: persist it and apply it at once to a cabled v4 bridge. */
+  /** Set the bridge's transmit power for this session and apply it at once to a cabled v4 bridge. */
   async #setBridgeTxPower(txPower: BridgeTxPower): Promise<void> {
     if (txPower !== "full" && txPower !== "reduced") {
       this.#ipc.notice("warn", `Unknown bridge transmit power "${String(txPower)}".`);
       return;
     }
-    if (txPower !== this.#store.bridgeTxPower) {
-      await this.#save(this.#store.setBridgeTxPower(txPower));
+    if (txPower !== this.#bridgeTxPower) {
+      this.#bridgeTxPower = txPower;
       this.#log(`bridge transmit power set to ${txPower}`);
       const mac = this.#store.bridgeMac;
       const version = mac === null ? undefined : this.#online.get(mac);
@@ -720,23 +724,38 @@ export class SidecarApp {
     this.#sync();
   }
 
+  /** Forget what a device's USB STATUS said, once it's off USB (or gone). */
+  #dropUsbState(mac: string): void {
+    this.#usbStatus.delete(mac);
+    this.#bridgeConfirmed.delete(mac);
+  }
+
   /** Record what a device reported, reporting a failed write like any other save. */
   #noteReported(mac: string, report: DeviceReport): void {
     void this.#save(this.#store.noteReported(mac, report));
   }
 
-  /** The snapshot's ESP-NOW settings, with every known ESP-NOW light too old to hunt channels. */
+  /**
+   * The snapshot's ESP-NOW settings, with the known lights that may not follow a channel change:
+   * ESP-NOW lights too old to hunt channels, and lights whose version is unknown because nothing
+   * has been heard from them since the state file gained versions (an entry the released app wrote
+   * records neither version nor transport). A device known to be on WiFi (an SSID recorded, or its
+   * STATUS reporting WiFi) or No-TX isn't an ESP-NOW light, so it's in neither list. The designated
+   * bridge is in neither either: SET_BRIDGE moves it whenever it's cabled.
+   */
   #espnowSettings(): EspNowSettings {
-    const legacyLights = this.#store
-      .devices()
-      .filter(
-        ([, config]) =>
-          config.transport === Transport.ESPNOW &&
-          config.protocolVersion !== undefined &&
-          !supportsChannelSelection(config.protocolVersion),
-      )
-      .map(([mac]) => mac);
-    return { channel: this.#store.espnowChannel, bridgeTxPower: this.#store.bridgeTxPower, legacyLights };
+    const legacyLights: string[] = [];
+    const unseenLights: string[] = [];
+    for (const [mac, config] of this.#store.devices()) {
+      if (mac === this.#store.bridgeMac) continue;
+      if (config.protocolVersion === undefined) {
+        const maybeEspNow = config.transport === undefined || config.transport === Transport.ESPNOW;
+        if (maybeEspNow && config.ssid === undefined) unseenLights.push(mac);
+      } else if (config.transport === Transport.ESPNOW && !supportsChannelSelection(config.protocolVersion)) {
+        legacyLights.push(mac);
+      }
+    }
+    return { channel: this.#store.espnowChannel, bridgeTxPower: this.#bridgeTxPower, legacyLights, unseenLights };
   }
 
   /**

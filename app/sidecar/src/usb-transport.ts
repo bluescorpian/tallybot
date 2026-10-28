@@ -20,7 +20,6 @@ import { type DeviceTransportEvents, announceDevice } from "./device-events.ts";
 import type { DeviceWifiState, TransportMode } from "./ipc.ts";
 import {
   type Color,
-  ESPNOW_CHANNEL,
   Transport,
   WifiState,
   getStatusPayload,
@@ -114,23 +113,21 @@ export class UsbTransport extends EventEmitter {
   }
 
   /**
-   * Set the device's unplugged transport mode (a {@link Transport} value). ESP-NOW also carries
-   * the channel byte (the caller passes the session channel; {@link ESPNOW_CHANNEL} when it
-   * doesn't); No-TX/WiFi send the bare `[type][mode]`.
+   * Set the device's unplugged transport mode (a {@link Transport} value). ESP-NOW carries the
+   * channel byte, so the caller must pass the session channel (the encoder throws without one);
+   * No-TX/WiFi pass null and send the bare `[type][mode]`.
    */
-  setTransport(mac: string, mode: number, channel?: number): boolean {
-    const espnowChannel = mode === Transport.ESPNOW ? (channel ?? ESPNOW_CHANNEL) : undefined;
-    return this.#send(mac, setTransportPayload(mode, espnowChannel));
+  setTransport(mac: string, mode: number, channel: number | null): boolean {
+    return this.#send(mac, setTransportPayload(mode, mode === Transport.ESPNOW ? (channel ?? undefined) : undefined));
   }
 
   /**
-   * Enter (or leave) ESP-NOW bridge mode on `channel` ({@link ESPNOW_CHANNEL} when not given),
-   * at `txPower` quarter-dBm when given. Runtime-only on the device — the sidecar persists the
+   * Enter (or leave) ESP-NOW bridge mode on `channel` (the session channel), at `txPower` quarter-dBm when given. Runtime-only on the device — the sidecar persists the
    * designation and re-asserts it on every USB (re)connect (see {@link SidecarApp}). The caller
    * sends it only to version ≥ 3 devices, and `txPower` only to version ≥ 4 ones; the device
    * confirms via the STATUS `bridging` byte.
    */
-  setBridge(mac: string, enabled: boolean, channel: number = ESPNOW_CHANNEL, txPower?: number): boolean {
+  setBridge(mac: string, enabled: boolean, channel: number, txPower?: number): boolean {
     return this.#send(mac, setBridgePayload(enabled, channel, txPower));
   }
 

@@ -17,7 +17,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
-import type { BridgeTxPower } from "./ipc.ts";
 import { DEFAULT_BRIGHTNESS, ESPNOW_CHANNEL, Transport, isEspnowChannel, isMac } from "./protocol.ts";
 
 /** One device's persisted configuration. */
@@ -63,29 +62,24 @@ interface PersistedShape {
   bridgeMac: string | null;
   /** The rig's ESP-NOW channel (1–13), session-level like `bridgeMac`. */
   espnowChannel: number;
-  /** The designated bridge's transmit power, session-level like `bridgeMac`. */
-  bridgeTxPower: BridgeTxPower;
   devices: Record<string, DeviceConfig>;
 }
 
-/** The session-level settings, as loaded and held in memory. */
+/**
+ * The session-level settings, as loaded and held in memory. Everything here is persisted, so a
+ * runtime-only setting (the bridge's transmit power) lives in the orchestrator instead.
+ */
 interface Session {
   sourceIp: string | null;
   bridgeMac: string | null;
   espnowChannel: number;
-  bridgeTxPower: BridgeTxPower;
 }
 
 const DEFAULT_SESSION: Session = {
   sourceIp: null,
   bridgeMac: null,
   espnowChannel: ESPNOW_CHANNEL,
-  bridgeTxPower: "full",
 };
-
-function isBridgeTxPower(value: unknown): value is BridgeTxPower {
-  return value === "full" || value === "reduced";
-}
 
 function isByte(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 255;
@@ -120,7 +114,6 @@ function coerceShape(value: unknown): { session: Session; devices: Map<string, D
     sourceIp?: unknown;
     bridgeMac?: unknown;
     espnowChannel?: unknown;
-    bridgeTxPower?: unknown;
     devices?: unknown;
   };
   const sourceIp = typeof raw.sourceIp === "string" ? raw.sourceIp : null;
@@ -132,7 +125,6 @@ function coerceShape(value: unknown): { session: Session; devices: Map<string, D
     typeof raw.espnowChannel === "number" && isEspnowChannel(raw.espnowChannel)
       ? raw.espnowChannel
       : ESPNOW_CHANNEL;
-  const bridgeTxPower = isBridgeTxPower(raw.bridgeTxPower) ? raw.bridgeTxPower : "full";
   if (typeof raw.devices === "object" && raw.devices !== null) {
     for (const [mac, entry] of Object.entries(raw.devices)) {
       // Drop keys that aren't a full MAC. Devices are keyed by their 6-octet MAC;
@@ -143,7 +135,7 @@ function coerceShape(value: unknown): { session: Session; devices: Map<string, D
       if (device) devices.set(mac, device);
     }
   }
-  return { session: { sourceIp, bridgeMac, espnowChannel, bridgeTxPower }, devices };
+  return { session: { sourceIp, bridgeMac, espnowChannel }, devices };
 }
 
 export class ConfigStore {
@@ -199,11 +191,6 @@ export class ConfigStore {
     return this.#session.espnowChannel;
   }
 
-  /** The designated bridge's transmit power ("full" until one is set). */
-  get bridgeTxPower(): BridgeTxPower {
-    return this.#session.bridgeTxPower;
-  }
-
   /** The persisted config for one device, if any. */
   device(mac: string): DeviceConfig | undefined {
     return this.#devices.get(mac);
@@ -234,11 +221,6 @@ export class ConfigStore {
   setEspnowChannel(channel: number): Promise<void> {
     if (!isEspnowChannel(channel)) throw new RangeError(`not an ESP-NOW channel (1–13): ${channel}`);
     this.#session.espnowChannel = channel;
-    return this.#persist();
-  }
-
-  setBridgeTxPower(txPower: BridgeTxPower): Promise<void> {
-    this.#session.bridgeTxPower = txPower;
     return this.#persist();
   }
 

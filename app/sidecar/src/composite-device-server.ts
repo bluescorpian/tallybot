@@ -108,7 +108,7 @@ export class CompositeDeviceServer extends EventEmitter implements DeviceServerP
     return this.#usb?.provisionWifi(mac, ssid, password) ?? false;
   }
 
-  setTransport(mac: string, mode: number, channel?: number): boolean {
+  setTransport(mac: string, mode: number, channel: number | null): boolean {
     return this.#usb?.setTransport(mac, mode, channel) ?? false;
   }
 

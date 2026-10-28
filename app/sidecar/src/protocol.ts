@@ -412,13 +412,15 @@ export function setWifiPayload(ssid: string, password: string): Uint8Array {
 
 /**
  * SET_TRANSPORT payload (USB only). `mode` is a {@link Transport} value. `[type][mode]` for
- * No-TX/WiFi; `[type][mode][channel]` when a channel is given (ESP-NOW callers pass the session
- * channel) — the device persists the channel, defaulting to {@link ESPNOW_CHANNEL} when the byte is
- * absent. A channel outside 1–13 throws: the device would ignore the whole frame.
+ * No-TX/WiFi; `[type][mode][channel]` when a channel is given. ESP-NOW requires one (the session
+ * channel), so a forgotten channel throws rather than letting the device fall back to
+ * {@link ESPNOW_CHANNEL}, which it does when the byte is absent. A channel outside 1–13 throws: the
+ * device would ignore the whole frame.
  */
 export function setTransportPayload(mode: number, channel?: number): Uint8Array {
   assertByte("mode", mode);
   if (channel === undefined) {
+    if (mode === Transport.ESPNOW) throw new RangeError("SET_TRANSPORT(ESPNOW) needs a channel");
     return Uint8Array.of(ServerMessageType.SET_TRANSPORT, mode);
   }
   assertEspnowChannel(channel);
