@@ -251,9 +251,12 @@
 			return;
 		}
 		if (!watching || scanResult === before) return;
-		hits = scanResult.found.map((h) => ({ ip: h.ip, product: h.product }));
+		// Built in a local: reading `hits` back after writing it would make it a dependency, and the
+		// effect would re-run on its own write until Svelte gives up (effect_update_depth_exceeded).
+		const found = scanResult.found.map((h) => ({ ip: h.ip, product: h.product }));
+		hits = found;
 		// a sweep that couldn't run says why; "none found" is only for one that ran
-		scan = scanResult.error ? "error" : hits.length ? "results" : "none";
+		scan = scanResult.error ? "error" : found.length ? "results" : "none";
 	});
 
 	function pick(hit: Hit) {
