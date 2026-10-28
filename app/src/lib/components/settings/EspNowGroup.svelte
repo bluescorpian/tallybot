@@ -250,9 +250,14 @@
 					<Info class="size-3.5 shrink-0" />
 					<div>
 						<p>
-							Saving moves the rig to channel {channel}. Wireless lights follow it at once; one
-							that is off or out of range finds the rig within about 40 seconds once it can hear
-							it.
+							{#if bridge}
+								Saving moves the rig to channel {channel}. Wireless lights follow it at once; one
+								that is off or out of range finds the rig within about 40 seconds once it can hear
+								it.
+							{:else}
+								Saving moves the rig to channel {channel}. No bridge is running, so wireless lights
+								find the rig within about 40 seconds of one starting, once they can hear it.
+							{/if}
 						</p>
 						{#if settings.legacyLights.length}
 							<p>

@@ -708,8 +708,7 @@ export class SidecarApp {
   /**
    * Set the rig's ESP-NOW channel: refuse one the firmware would refuse, persist it, and retune
    * the cabled bridge at once. Uncabled v4 lights follow the bridge's announcement, else by
-   * hunting; older ones can't (the
-   * snapshot's `espnow.legacyLights` names them for the UI's warning).
+   * hunting; older ones can't (the snapshot's `espnow.legacyLights` names them for the UI's warning).
    */
   async #setEspNowChannel(channel: number): Promise<void> {
     if (!isEspnowChannel(channel)) {

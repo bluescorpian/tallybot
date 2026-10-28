@@ -57,7 +57,8 @@ export function channelCongestion(accessPoints: readonly WifiAccessPoint[]): Cha
 
 /**
  * The lowest-scoring of {@link SUGGESTED_CHANNELS}. A tie keeps `current` when it is one of the
- * tied channels (moving a rig costs every light a hunt), and otherwise goes to the lowest channel.
+ * tied channels (a light that misses a move has to hunt for it, and an older one
+ * has to be moved by cable), and otherwise goes to the lowest channel.
  */
 export function suggestChannel(congestion: readonly ChannelCongestion[], current: number): number {
   let best: ChannelCongestion | null = null;

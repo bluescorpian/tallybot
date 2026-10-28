@@ -218,9 +218,10 @@ unsigned long g_lastRadioTry = 0;
 
 // Channel hunt: a light unlinked for CHANNEL_HUNT_AFTER_MS sweeps 1..13 (CHANNEL_DWELL_MS each,
 // one TALLY_FIND per channel), then spends one DISCOVERY_INTERVAL_MS back on its home channel,
-// and repeats until a bridge answers. A linked light follows a channel move on the bridge's
-// announcement or beacon (g_moveTo); the hunt is how one that was off or out of range then finds
-// it. Before the threshold it stays on the home channel, so an ordinary dropout relinks as before.
+// and repeats until a bridge answers. A linked light follows a channel move on its bridge's
+// announcement or beacon; the hunt is how one that was off or out of range then finds it. Before
+// the threshold it stays on the home channel (or one a bridge it hears names), so an ordinary
+// dropout relinks as before.
 uint8_t g_homeChannel = ESPNOW_CHANNEL;  // the persisted channel (settings::espnowChannel)
 unsigned long g_unlinkedSince = 0;       // when this outage (or the first search) began
 bool g_hunting = false;                  // this outage has passed CHANNEL_HUNT_AFTER_MS
@@ -233,17 +234,19 @@ uint8_t g_bridgeTxPower = BRIDGE_TX_POWER_FULL;
 
 // ── Bridge channel move and beacon ─────────────────────────────────────────────
 // A SET_BRIDGE that moves a running bridge to another channel doesn't retune at once: the bridge
-// first broadcasts "TALLY_HERE:<port>:<new channel>" on the old one kMoveAnnouncements times,
-// kMoveAnnounceMs apart (a broadcast gets no MAC retries, hence the repeats), so its linked lights
+// first broadcasts "TALLY_HERE:<port>:<new channel>" on the old one MOVE_ANNOUNCEMENTS times,
+// MOVE_ANNOUNCE_MS apart (a broadcast gets no MAC retries, hence the repeats), so its linked lights
 // follow straight away instead of hunting. A light linked one channel off, hearing the bridge
 // through the overlap, never times out and so never hunts; the beacon (the same string naming the
 // bridge's own channel, every DISCOVERY_INTERVAL_MS) moves it, and any light that missed every
 // announcement but still hears the bridge.
-constexpr uint8_t kMoveAnnouncements = 5;
-constexpr unsigned long kMoveAnnounceMs = 100;
+using espnow::MOVE_ANNOUNCE_MS;
+using espnow::MOVE_ANNOUNCEMENTS;
 uint8_t g_moveTo = 0;          // the channel a pending move goes to (0: none pending)
 uint8_t g_moveSent = 0;        // announcements sent for it
 unsigned long g_lastAnnounce = 0;
+unsigned long g_retunedAt = 0;  // when the last move retuned (bridgeSettled)
+bool g_retuned = false;         // a move has retuned this bridge stint (g_retunedAt is valid)
 unsigned long g_lastBeacon = 0;
 
 void sendRaw(const uint8_t* peer, const uint8_t* payload, size_t len) {
@@ -433,15 +436,16 @@ void endHunt() {
 }
 
 // Advance a pending move (see g_moveTo). Not while a scan owns the radio: it can't be retuned then,
-// and an announcement would go out on whichever channel the sweep is on. The scan re-pins the old
-// channel, and the move carries on from there.
+// and an announcement would go out on whichever channel the sweep is on. A scan waits for a move
+// (espnow::bridgeSettled), so this only happens to one held past its cap or a move started mid-scan:
+// the scan re-pins the old channel, and the move carries on from there.
 void serviceMove() {
   if (!g_moveTo || scan::radioBusy()) return;
   // millis(), not the loop's `now`: enterBridge stamps g_lastAnnounce from inside the USB RX pump,
   // maybe after the loop-top `now`, and the unsigned subtraction would wrap.
-  if (millis() - g_lastAnnounce < kMoveAnnounceMs) return;
+  if (millis() - g_lastAnnounce < MOVE_ANNOUNCE_MS) return;
   g_lastAnnounce = millis();
-  if (g_moveSent < kMoveAnnouncements) {
+  if (g_moveSent < MOVE_ANNOUNCEMENTS) {
     sendHere(kBroadcast, g_moveTo);
     g_moveSent++;
     return;
@@ -456,6 +460,8 @@ void serviceMove() {
     return;
   }
   TLOG(LOG_LEVEL_INFO, "Bridge retuned to channel %u\n", to);
+  g_retunedAt = millis();
+  g_retuned = true;
   g_lastBeacon = millis() - DISCOVERY_INTERVAL_MS;  // beacon on the new channel at once
 }
 
@@ -538,17 +544,13 @@ void espnow::loopLight(unsigned long now) {
       // flushes the rest of the ring, all heard on this channel).
       if (hereChannel != 0 && hereChannel != g_channel && !tune(hereChannel)) continue;
       if (!adoptBridge(f.src)) continue;
-      // A beacon, unlike a reply, didn't answer a TALLY_FIND the bridge heard, so the bridge may not
-      // have us as a peer and would drop the sidecar's frames to us. A unicast TALLY_FIND registers
-      // us; its reply names the channel we're now on, so it changes nothing here.
-      sendRaw(g_bridge, (const uint8_t*)DISCOVERY_REQUEST, strlen(DISCOVERY_REQUEST));
       g_linked = true;
       g_everHadBridge = true;
       g_gotFrame = false;
       endHunt();  // the radio is on the bridge's channel (named, or the one this reply was heard on)
       reportRelink(now);  // before g_lastRx moves: the gap runs from the last frame to this one
       g_lastRx = now;
-      g_lastHello = now - kHelloIntervalMs;  // HELLO on the next tick
+      g_lastHello = now - kHelloIntervalMs;  // HELLO (and the TALLY_FIND below) on the next tick
       ind::unassigned();  // white breathe until the first SET_COLOR (state-5 hand-off)
       TLOG(LOG_LEVEL_INFO, "Linked to bridge %02x:%02x:%02x:%02x:%02x:%02x\n", g_bridge[0],
            g_bridge[1], g_bridge[2], g_bridge[3], g_bridge[4], g_bridge[5]);
@@ -604,6 +606,12 @@ void espnow::loopLight(unsigned long now) {
   if (!g_gotFrame) {  // re-send HELLO every 1s until the bridge's first frame arrives
     if (now - g_lastHello >= kHelloIntervalMs) {
       g_lastHello = now;
+      // A beacon or announcement, unlike a reply, didn't answer a TALLY_FIND the bridge heard, so
+      // the bridge may not have us as a peer and would drop the sidecar's frames to us. A unicast
+      // TALLY_FIND registers us. Repeated with each HELLO, as a light that tuned ahead of a moving
+      // bridge sends it before the bridge arrives. Its reply names the bridge's channel (or the
+      // move's target), so a linked light changes nothing or follows the move.
+      sendRaw(g_bridge, (const uint8_t*)DISCOVERY_REQUEST, strlen(DISCOVERY_REQUEST));
       sendHello();
     }
     return;
@@ -644,7 +652,7 @@ void espnow::enterBridge(uint8_t channel, uint8_t txPower) {
       // A new target restarts the announcements, so the last ones heard name where it is going.
       g_moveTo = channel;
       g_moveSent = 0;
-      g_lastAnnounce = millis() - kMoveAnnounceMs;  // the first goes on the next tick
+      g_lastAnnounce = millis() - MOVE_ANNOUNCE_MS;  // the first goes on the next tick
       TLOG(LOG_LEVEL_INFO, "Bridge moving to channel %u; announcing it on %u first\n", channel, g_channel);
     }
     if (txPower != g_bridgeTxPower) applyTxPower(txPower);
@@ -663,6 +671,7 @@ void espnow::enterBridge(uint8_t channel, uint8_t txPower) {
   }
   resetBridgeStats(millis());  // the light role's sends also bumped the counters
   g_moveTo = 0;
+  g_retuned = false;
   g_lastBeacon = millis() - DISCOVERY_INTERVAL_MS;  // beacon on the first tick
   g_role = Role::BRIDGE;
   TLOG(LOG_LEVEL_INFO, "Bridge mode on (channel %u)\n", channel);
@@ -685,6 +694,12 @@ void espnow::exitBridge() {
 }
 
 bool espnow::bridgeActive() { return g_role == Role::BRIDGE; }
+
+bool espnow::bridgeSettled(unsigned long settleMs) {
+  if (g_role != Role::BRIDGE) return true;
+  if (g_moveTo) return false;
+  return !g_retuned || millis() - g_retunedAt >= settleMs;
+}
 
 // A scan sweeps the radio across channels 1–13 and nothing documents where it leaves an unassociated
 // STA, so the bridge always re-pins. tune() also drops frames queued mid-sweep, heard off-channel.
@@ -731,6 +746,10 @@ void espnow::loopBridge(unsigned long now) {
       sendHere(f.src, g_moveTo ? g_moveTo : g_channel);
       continue;
     }
+    // Another bridge's beacon or move announcement (a second rig in range): discovery, not a peer
+    // frame. Relayed up, it would be an unknown type to the sidecar's decoder.
+    size_t herePrefix = strlen(DISCOVERY_RESPONSE_PREFIX);
+    if (f.len >= herePrefix && memcmp(f.data, DISCOVERY_RESPONSE_PREFIX, herePrefix) == 0) continue;
     // Any other peer frame: wrap as RELAY-up [type][srcMAC×6][inner…] and forward up the USB pipe,
     // unread. srcMAC comes from the receive callback so MAC-less inner payloads stay attributable.
     uint8_t out[7 + kMaxFrame];

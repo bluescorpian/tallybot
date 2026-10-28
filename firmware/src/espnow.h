@@ -39,6 +39,15 @@ void loopLight(unsigned long now);
 void enterBridge(uint8_t channel, uint8_t txPower);
 void exitBridge();              // SET_BRIDGE 0 / USB session end: deinit + restore radio per NVS mode
 bool bridgeActive();
+// A channel move announces MOVE_ANNOUNCEMENTS times, MOVE_ANNOUNCE_MS apart, and retunes one
+// interval after the last: MOVE_MS from the SET_BRIDGE (a new target mid-move starts it again).
+constexpr uint8_t MOVE_ANNOUNCEMENTS = 5;
+constexpr unsigned long MOVE_ANNOUNCE_MS = 100;
+constexpr unsigned long MOVE_MS = MOVE_ANNOUNCEMENTS * MOVE_ANNOUNCE_MS;
+// False while a bridge's channel move is pending, or less than `settleMs` after it retuned: lights
+// that followed the announcement are on the new channel without a frame from the bridge since. True
+// when not a bridge. A scan waits for it (scan.cpp), so its time off-channel isn't added to theirs.
+bool bridgeSettled(unsigned long settleMs);
 // After a WiFi scan: back on the bridge channel. True when re-pinned (or not a bridge). A refusal
 // (the driver may still be scanning) is retried by the caller; lastTry leaves bridge mode instead.
 bool repinBridge(bool lastTry);

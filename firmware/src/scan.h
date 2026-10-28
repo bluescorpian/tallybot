@@ -9,7 +9,7 @@
 // the scan (the driver won't scan while connecting); an idle or associated STA is left as it is.
 // While the driver scans, nothing may retune the radio (radioBusy()); afterwards a bridge is
 // re-pinned to its channel, a paused join resumes, and a radio the scan had to switch on is switched
-// off again. The SCAN_RESULTs are then paced to the USB TX buffer. A scan that fails sends no SCAN_RESULT at all, only an ERROR log.
+// off again. On a bridge moving channel, the scan first waits for the move to settle (scan.cpp). The SCAN_RESULTs are then paced to the USB TX buffer. A scan that fails sends no SCAN_RESULT at all, only an ERROR log.
 namespace scan {
 
 void begin();      // register the scan-done event handler (once, at boot)

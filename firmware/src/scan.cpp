@@ -33,6 +33,16 @@ constexpr unsigned long kLinkMarginMs = 500;  // event latency, a lost keyframe,
 // host vanishing (the SCAN_WIFI restarted that timer) can't tear the radio down mid-scan.
 static_assert(kScanTimeoutMs + kStopSettleMs + 2 * kKeyframeMs + kLinkMarginMs <= HOST_SILENCE_TIMEOUT_MS,
               "a bridge's worst-case time off its channel would let its lights' links time out");
+// That bound holds only from a light's last keyframe: a light that followed a bridge's channel move
+// (espnow.h) heard none from the move's first announcement until the bridge arrived. So a SCAN_WIFI
+// on a bridge mid-move, or just after it, waits until the bridge has spent two keyframe periods on
+// its new channel. A new move target restarts the move, so the wait is capped; past the cap the scan
+// starts anyway (it then pauses the move, at the old budget's risk). The hold comes before the radio
+// phases, so it adds to their time inside the USB session timeout.
+constexpr unsigned long kMoveSettleMs = 2 * kKeyframeMs;
+constexpr unsigned long kMoveHoldMs = espnow::MOVE_MS + kMoveSettleMs;
+static_assert(kMoveHoldMs + kScanTimeoutMs + kStopSettleMs <= HOST_SILENCE_TIMEOUT_MS,
+              "a scan held for a bridge's channel move could outlast the USB session timeout");
 constexpr unsigned long kStopRetryMs = 50;  // a bridge's quiet re-pin attempts while stopping
 // While STARTING with the join paused, how often to repeat the pause's disconnect.
 constexpr unsigned long kJoinKickMs = 500;
@@ -46,13 +56,14 @@ constexpr uint16_t kMaxResults = 255;        // index/total are single bytes
 
 enum class Phase {
   IDLE,
+  HOLDING,   // a bridge is mid channel move (or just after): the scan waits for it (kMoveHoldMs)
   STARTING,  // the driver refused to start (a WiFi join in progress); retried each tick
   SCANNING,  // the driver is sweeping channels
   STOPPING,  // the scan was stopped (timeout); waiting for the driver to let go before the hand-back
   SENDING,   // the radio is back; SCAN_RESULTs go out as the USB TX buffer has room
 };
 Phase g_phase = Phase::IDLE;
-unsigned long g_phaseStart = 0;  // the SCAN_WIFI (STARTING/SCANNING), the stop (STOPPING) or the first frame (SENDING)
+unsigned long g_phaseStart = 0;  // the SCAN_WIFI (HOLDING), the scan's start (STARTING/SCANNING), the stop (STOPPING) or the first frame (SENDING)
 unsigned long g_scanStart = 0;   // the driver accepted the scan
 esp_err_t g_startErr = ESP_OK;   // the driver's last refusal, for the give-up line
 bool g_radioWasOff = false;      // the scan switched STA on (No-TX), so it switches it off after
@@ -158,6 +169,15 @@ void sendNext() {
   TLOG(LOG_LEVEL_INFO, "SCAN_WIFI: sent %u access points\n", g_total);
   finish();
 }
+
+// The scan proper, after any hold: the radio phases are timed from here.
+void startScan() {
+  g_radioWasOff = wifi::scanRadioUp();
+  g_joinPaused = false;
+  g_retried = false;
+  g_phaseStart = millis();
+  tryStart();
+}
 }  // namespace
 
 void scan::begin() { WiFi.onEvent(onScanDone, ARDUINO_EVENT_WIFI_SCAN_DONE); }
@@ -167,11 +187,13 @@ void scan::request() {
     TLOG(LOG_LEVEL_INFO, "SCAN_WIFI ignored: a scan is already running\n");
     return;
   }
-  g_radioWasOff = wifi::scanRadioUp();
-  g_joinPaused = false;
-  g_retried = false;
+  if (espnow::bridgeSettled(kMoveSettleMs)) {
+    startScan();
+    return;
+  }
+  g_phase = Phase::HOLDING;
   g_phaseStart = millis();
-  tryStart();
+  TLOG(LOG_LEVEL_INFO, "SCAN_WIFI held: the bridge is moving channel\n");
 }
 
 bool scan::active() { return g_phase != Phase::IDLE; }
@@ -202,6 +224,14 @@ void scan::abort() {
 void scan::loop() {
   switch (g_phase) {
     case Phase::IDLE:
+      return;
+    case Phase::HOLDING:
+      if (espnow::bridgeSettled(kMoveSettleMs)) {
+        startScan();
+      } else if (millis() - g_phaseStart >= kMoveHoldMs) {
+        TLOG(LOG_LEVEL_WARN, "SCAN_WIFI: the bridge is still moving after %lums; scanning anyway\n", kMoveHoldMs);
+        startScan();
+      }
       return;
     case Phase::STARTING:
       if (millis() - g_phaseStart >= kScanTimeoutMs) {

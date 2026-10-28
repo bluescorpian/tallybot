@@ -157,9 +157,10 @@ inline bool isEspnowChannel(unsigned ch) { return ch >= ESPNOW_CHANNEL_MIN && ch
 // so this is 20 lost keyframes.
 #define HOST_SILENCE_TIMEOUT_MS 5000
 // An ESP-NOW light unlinked this long hunts channels 1–13 for its bridge, listening this long on
-// each; before it, the light relinks only on its stored channel. Long enough that an ordinary
-// dropout never hunts: a linked light follows a channel move on the bridge's announcement or
-// beacon, so the hunt only covers a light that was off or out of range when the rig moved.
+// each; before it, the light stays on its stored channel, leaving it only for a channel a bridge it
+// hears names (a reply or beacon heard through an overlapping neighbour). Long enough that an
+// ordinary dropout never hunts: a linked light follows a channel move on its bridge's announcement
+// or beacon, so the hunt only covers a light that was off or out of range when the rig moved.
 #define CHANNEL_HUNT_AFTER_MS 30000
 #define CHANNEL_DWELL_MS 150
 // Server-side, for reference only (the firmware doesn't enforce these):

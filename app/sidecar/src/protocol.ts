@@ -141,9 +141,10 @@ export const HEARTBEAT_TIMEOUT_MS = 30_000;
 /** How often the server broadcasts its presence (server). */
 export const ANNOUNCE_INTERVAL_MS = 5_000;
 /**
- * An ESP-NOW light unlinked this long starts hunting channels 1–13 for its bridge; before it,
- * the light only relinks on its stored channel (firmware, v4). Long enough that an ordinary
- * dropout never hunts: a linked light follows a channel move on the bridge's own announcement or
+ * An ESP-NOW light unlinked this long starts hunting channels 1–13 for its bridge (firmware, v4);
+ * before it, the light stays on its stored channel, leaving it only for a channel a bridge it hears
+ * names (a reply or beacon heard through an overlapping neighbour). Long enough that an ordinary
+ * dropout never hunts: a linked light follows a channel move on its own bridge's announcement or
  * beacon, so the hunt only covers a light that was off or out of range when the rig moved.
  */
 export const CHANNEL_HUNT_AFTER_MS = 30_000;
