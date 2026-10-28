@@ -34,14 +34,15 @@ void loopLight(unsigned long now);
 
 // ── Bridge role (runtime, any NVS transport underneath) ────────────────────────
 // SET_BRIDGE 1: radio up on `channel` at `txPower` (quarter-dBm), suppress association, start
-// relaying. While already bridging, retunes / re-powers in place when either differs.
+// relaying and beaconing. While already bridging, re-powers in place at once, and moves to a new
+// channel in place after announcing it on the old one for about half a second (loopBridge).
 void enterBridge(uint8_t channel, uint8_t txPower);
 void exitBridge();              // SET_BRIDGE 0 / USB session end: deinit + restore radio per NVS mode
 bool bridgeActive();
 // After a WiFi scan: back on the bridge channel. True when re-pinned (or not a bridge). A refusal
 // (the driver may still be scanning) is retried by the caller; lastTry leaves bridge mode instead.
 bool repinBridge(bool lastTry);
-void loopBridge(unsigned long now);  // `now` paces only the 1 s diagnostics line (liveness is the sidecar's)
+void loopBridge(unsigned long now);  // drain, relay up, beacon, channel move; `now` paces only the 1 s diagnostics line
 void relay(const ServerMessage& msg);  // RELAY from USB → esp_now_send(targetMAC, inner)
 
 }  // namespace espnow

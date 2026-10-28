@@ -129,6 +129,9 @@
 // server's "TALLY_HERE:<port>" (the UDP reply has no channel). The channel is there because
 // adjacent 2.4GHz channels overlap and the receive callback reports no RX channel, so a light
 // listening on 5 can hear a bridge on 6: a v4 light tunes to the named channel before it links.
+// A v4 bridge also broadcasts the same string: every DISCOVERY_INTERVAL_MS naming its channel (the
+// beacon), and, when SET_BRIDGE moves it, a few times on the old channel naming the new one (the
+// announcement). A linked light follows its own bridge's named channel.
 // Lights ignore the port (meaningless over ESP-NOW); v3 lights prefix-match and ignore the rest.
 // The strings' first byte is ASCII 'T' (0x54), outside the binary type-byte range, so they're
 // never confused with a message payload.
@@ -154,8 +157,10 @@ inline bool isEspnowChannel(unsigned ch) { return ch >= ESPNOW_CHANNEL_MIN && ch
 // so this is 20 lost keyframes.
 #define HOST_SILENCE_TIMEOUT_MS 5000
 // An ESP-NOW light unlinked this long hunts channels 1–13 for its bridge, listening this long on
-// each; before it, the light relinks only on its stored channel.
-#define CHANNEL_HUNT_AFTER_MS 10000
+// each; before it, the light relinks only on its stored channel. Long enough that an ordinary
+// dropout never hunts: a linked light follows a channel move on the bridge's announcement or
+// beacon, so the hunt only covers a light that was off or out of range when the rig moved.
+#define CHANNEL_HUNT_AFTER_MS 30000
 #define CHANNEL_DWELL_MS 150
 // Server-side, for reference only (the firmware doesn't enforce these):
 //   HEARTBEAT_TIMEOUT_MS 30000 — server drops a device silent this long

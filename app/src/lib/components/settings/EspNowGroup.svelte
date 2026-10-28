@@ -250,8 +250,9 @@
 					<Info class="size-3.5 shrink-0" />
 					<div>
 						<p>
-							Saving moves the rig to channel {channel}. Wireless lights go blue for about 15
-							seconds while they find it.
+							Saving moves the rig to channel {channel}. Wireless lights follow it at once; one
+							that is off or out of range finds the rig within about 40 seconds once it can hear
+							it.
 						</p>
 						{#if settings.legacyLights.length}
 							<p>

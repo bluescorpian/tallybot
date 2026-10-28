@@ -142,9 +142,11 @@ export const HEARTBEAT_TIMEOUT_MS = 30_000;
 export const ANNOUNCE_INTERVAL_MS = 5_000;
 /**
  * An ESP-NOW light unlinked this long starts hunting channels 1–13 for its bridge; before it,
- * the light only relinks on its stored channel (firmware, v4).
+ * the light only relinks on its stored channel (firmware, v4). Long enough that an ordinary
+ * dropout never hunts: a linked light follows a channel move on the bridge's own announcement or
+ * beacon, so the hunt only covers a light that was off or out of range when the rig moved.
  */
-export const CHANNEL_HUNT_AFTER_MS = 10_000;
+export const CHANNEL_HUNT_AFTER_MS = 30_000;
 /** How long a hunting light listens for TALLY_HERE on each channel it tries (firmware, v4). */
 export const CHANNEL_DWELL_MS = 150;
 

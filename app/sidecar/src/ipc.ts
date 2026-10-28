@@ -462,8 +462,8 @@ export interface SetBridgeCommand {
  * Set the rig's ESP-NOW channel (an integer in 1–13; anything else is refused with a notice).
  * The sidecar persists it, retunes a cabled bridge at once (a v4 bridge in place, an older one by
  * leaving and re-entering bridge mode), and gives it to every light provisioned for ESP-NOW from
- * then on. Uncabled v4 lights find the new channel by hunting; {@link EspNowSettings.legacyLights}
- * can't.
+ * then on. Uncabled v4 lights follow a v4 bridge's announcement of the move, or find the new
+ * channel by hunting; {@link EspNowSettings.legacyLights} can't.
  */
 export interface SetEspNowChannelCommand {
   type: "setEspNowChannel";
