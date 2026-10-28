@@ -14,8 +14,15 @@ import {
   SidecarApp,
 } from "./app.ts";
 import type { SourceSnapshot } from "./engine.ts";
-import type { DeviceConfig } from "./store.ts";
-import type { DeviceTransport, DeviceWifiState, LogLevelName, SidecarEvent, StateEvent } from "./ipc.ts";
+import type { DeviceConfig, DeviceReport } from "./store.ts";
+import type {
+  BridgeTxPower,
+  DeviceTransport,
+  DeviceWifiState,
+  LogLevelName,
+  SidecarEvent,
+  StateEvent,
+} from "./ipc.ts";
 import { type Color, COLORS, DEFAULT_BRIGHTNESS, SETUP_COLOR, Transport } from "./protocol.ts";
 
 // ── In-memory fakes for the orchestrator's ports ─────────────────────────────────
@@ -97,6 +104,8 @@ class FakeIpc extends EventEmitter implements IpcPort {
 class FakeStore implements StorePort {
   sourceIp: string | null = null;
   bridgeMac: string | null = null;
+  espnowChannel = 1;
+  bridgeTxPower: BridgeTxPower = "full";
   /** When set, every write fails with it (the change still lands in memory, as ConfigStore's does). */
   failWrites: Error | null = null;
   readonly #devices = new Map<string, DeviceConfig>();
@@ -112,6 +121,18 @@ class FakeStore implements StorePort {
   }
   setBridgeMac(mac: string | null): Promise<void> {
     this.bridgeMac = mac;
+    return this.#written();
+  }
+  setEspnowChannel(channel: number): Promise<void> {
+    this.espnowChannel = channel;
+    return this.#written();
+  }
+  setBridgeTxPower(txPower: BridgeTxPower): Promise<void> {
+    this.bridgeTxPower = txPower;
+    return this.#written();
+  }
+  noteReported(mac: string, report: DeviceReport): Promise<void> {
+    Object.assign(this.#ensure(mac), report);
     return this.#written();
   }
   assign(mac: string, inputId: number): Promise<void> {
@@ -158,6 +179,9 @@ class FakeProvisioning extends EventEmitter implements ProvisioningPort {
   readonly provisioned: Array<{ mac: string; ssid: string; password: string }> = [];
   readonly transports: Array<{ mac: string; mode: number }> = [];
   readonly bridges: Array<{ mac: string; enabled: boolean }> = [];
+  /** Every SET_TRANSPORT / SET_BRIDGE call with all its arguments, for the channel and power tests. */
+  readonly transportCalls: Array<{ mac: string; mode: number; channel: number | undefined }> = [];
+  readonly bridgeCalls: Array<{ mac: string; enabled: boolean; channel: number; txPower: number | undefined }> = [];
   readonly statusRequested: string[] = [];
   /** MACs currently reachable over USB (drives `transportOf` + the boolean returns). */
   readonly wired = new Set<string>();
@@ -173,14 +197,16 @@ class FakeProvisioning extends EventEmitter implements ProvisioningPort {
     this.provisioned.push({ mac, ssid, password });
     return true;
   }
-  setTransport(mac: string, mode: number): boolean {
+  setTransport(mac: string, mode: number, channel?: number): boolean {
     if (!this.wired.has(mac)) return false;
     this.transports.push({ mac, mode });
+    this.transportCalls.push({ mac, mode, channel });
     return true;
   }
-  setBridge(mac: string, enabled: boolean): boolean {
+  setBridge(mac: string, enabled: boolean, channel: number, txPower?: number): boolean {
     if (!this.wired.has(mac)) return false;
     this.bridges.push({ mac, enabled });
+    this.bridgeCalls.push({ mac, enabled, channel, txPower });
     return true;
   }
   requestStatus(mac: string): boolean {

@@ -28,10 +28,12 @@ const sampleState: AppState = {
       transport: "wifi",
       wifiState: null,
       rssi: null,
+      espnowChannel: null,
     },
   ],
   programGate: { active: false, source: null },
   faults: [{ key: "atem", level: "warn", message: "Can't connect to the ATEM at 192.168.1.50.", mac: null }],
+  espnow: { channel: 1, bridgeTxPower: "full", legacyLights: [] },
 };
 
 test("serializeMessage produces a single NDJSON line", () => {

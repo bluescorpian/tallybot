@@ -169,6 +169,7 @@ test("the device snapshot carries identity, assignment, and brightness through",
     provisionedMode: null,
     ssid: null,
     bridge: false,
+    espnowChannel: null,
   });
 });
 
