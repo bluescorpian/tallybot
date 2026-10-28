@@ -65,24 +65,41 @@ struct Rendered {
 };
 Rendered g_rendered;
 
-// SET_BRIDGE and SET_WIFI reconfigure the radio, which must not happen while the driver scans (a
-// retune mid-scan is refused, a join is cut short), so they wait for it. Each carries the whole
-// setting, so only the latest of each kind is kept, in arrival order.
-ServerMessage g_deferred[2];
+// The config commands (SET_WIFI, SET_TRANSPORT, SET_BRIDGE) wait for a scan: SET_WIFI and
+// SET_BRIDGE reconfigure the radio, which must not happen while the driver scans (a retune mid-scan
+// is refused, a join is cut short), and SET_TRANSPORT is held with them because the three write
+// overlapping settings (SET_WIFI also sets the transport), so only their arrival order gives the
+// host's intended result. Every one is kept and replayed once, in that order; none is merged, since
+// a SET_TRANSPORT's channel write must survive a later one without it. While any wait, a new one
+// queues behind them even if the scan has ended, so none can overtake. SET_COLOR, RELAY and
+// GET_STATUS never wait.
+constexpr size_t kMaxDeferred = 8;  // a host sends these one at a time, on an operator's action
+ServerMessage g_deferred[kMaxDeferred];
 size_t g_deferredCount = 0;
 
+const char* configName(ServerMessage::Kind kind) {
+  switch (kind) {
+    case ServerMessage::SET_WIFI:
+      return "SET_WIFI";
+    case ServerMessage::SET_TRANSPORT:
+      return "SET_TRANSPORT";
+    case ServerMessage::SET_BRIDGE:
+      return "SET_BRIDGE";
+    default:
+      return nullptr;
+  }
+}
+
 bool deferWhileScanning(const ServerMessage& msg) {
-  if (!scan::radioBusy() || (msg.kind != ServerMessage::SET_BRIDGE && msg.kind != ServerMessage::SET_WIFI))
-    return false;
-  for (size_t i = 0; i < g_deferredCount; i++) {
-    if (g_deferred[i].kind != msg.kind) continue;
-    for (size_t j = i + 1; j < g_deferredCount; j++) g_deferred[j - 1] = g_deferred[j];
-    g_deferredCount--;
-    break;
+  const char* name = configName(msg.kind);
+  if (!name || (!scan::radioBusy() && g_deferredCount == 0)) return false;
+  if (g_deferredCount == kMaxDeferred) {
+    // The host sees it unapplied in the STATUS that follows the scan.
+    TLOG(LOG_LEVEL_ERROR, "%s dropped: %u commands already wait for the scan\n", name, (unsigned)kMaxDeferred);
+    return true;
   }
   g_deferred[g_deferredCount++] = msg;
-  TLOG(LOG_LEVEL_INFO, "%s held until the scan finishes\n",
-       msg.kind == ServerMessage::SET_BRIDGE ? "SET_BRIDGE" : "SET_WIFI");
+  TLOG(LOG_LEVEL_INFO, "%s held until the scan finishes\n", name);
   return true;
 }
 }  // namespace
@@ -157,9 +174,11 @@ void control::dispatchUsb(const ServerMessage& msg) {
     dispatch(msg);
 }
 
+// The queue empties before any is dispatched, so dispatch() applies each rather than holding it
+// again; nothing here can start a scan (SCAN_WIFI is never held), so none is held twice.
 void control::runDeferred() {
   if (g_deferredCount == 0 || scan::radioBusy()) return;
-  ServerMessage pending[2];
+  static ServerMessage pending[kMaxDeferred];  // static: ~1 KB, off the loop task's stack
   size_t n = g_deferredCount;
   for (size_t i = 0; i < n; i++) pending[i] = g_deferred[i];
   g_deferredCount = 0;

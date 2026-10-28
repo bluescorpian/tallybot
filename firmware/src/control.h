@@ -13,7 +13,7 @@ namespace control {
 
 void dispatch(const ServerMessage& msg);
 void dispatchUsb(const ServerMessage& msg);  // a USB host's command: dispatch() plus the USB-only SCAN_WIFI
-void runDeferred();                          // replay radio commands that arrived mid-scan, once it's done
+void runDeferred();                          // replay config commands held during a scan, in order, once it's done
 void emitStatus();                        // build + send a STATUS frame now
 void maybeEmitStatus(unsigned long now);  // throttled; sends only on change while a host is cabled
 

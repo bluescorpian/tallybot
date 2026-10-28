@@ -20,22 +20,43 @@ constexpr uint32_t kChannelMs = 120;
 // the silence as a failure. Shorter than the USB session timeout, so the host vanishing can't tear
 // the radio down mid-scan (the SCAN_WIFI itself restarts that timer).
 constexpr unsigned long kScanTimeoutMs = 4000;
-static_assert(kScanTimeoutMs < HOST_SILENCE_TIMEOUT_MS, "a scan must end before the USB session can time out");
 // Give up sending SCAN_RESULTs a host isn't reading.
 constexpr unsigned long kEmitTimeoutMs = 3000;
+// After esp_wifi_scan_stop, how long to wait for the scan to end (SCAN_DONE, or on a bridge the
+// radio accepting its channel again): nothing documents that the stop is synchronous.
+constexpr unsigned long kStopSettleMs = 500;
+static_assert(kScanTimeoutMs + kStopSettleMs < HOST_SILENCE_TIMEOUT_MS,
+              "a scan must end, stopped or not, before the USB session can time out");
+constexpr unsigned long kStopRetryMs = 50;  // a bridge's quiet re-pin attempts while stopping
+// While STARTING, how often to cancel a connect that slipped past the paused join.
+constexpr unsigned long kJoinKickMs = 500;
+// A sweep can't end sooner than kChannelMs on each channel; a SCAN_DONE this early is the late one
+// of a scan stopped before (see g_staleOwed). Half the sweep, so a short country list still clears it.
+constexpr unsigned long kMinSweepMs = (ESPNOW_CHANNEL_MAX - ESPNOW_CHANNEL_MIN + 1) * kChannelMs / 2;
 constexpr size_t kMaxResultBytes = 6 + 32;  // SCAN_RESULT head + the longest SSID
+// Free TX space left after a SCAN_RESULT, for a RELAY-up, STATUS or LOG sent in the same tick.
+constexpr size_t kTxHeadroom = 64;
 constexpr uint16_t kMaxResults = 255;        // index/total are single bytes
 
 enum class Phase {
   IDLE,
   STARTING,  // the driver refused to start (a WiFi join in progress); retried each tick
   SCANNING,  // the driver is sweeping channels
+  STOPPING,  // the scan was stopped (timeout); waiting for the driver to let go before the hand-back
   SENDING,   // the radio is back; SCAN_RESULTs go out as the USB TX buffer has room
 };
 Phase g_phase = Phase::IDLE;
-unsigned long g_phaseStart = 0;  // the SCAN_WIFI (STARTING/SCANNING) or the first frame (SENDING)
+unsigned long g_phaseStart = 0;  // the SCAN_WIFI (STARTING/SCANNING), the stop (STOPPING) or the first frame (SENDING)
+unsigned long g_scanStart = 0;   // the driver accepted the scan
 esp_err_t g_startErr = ESP_OK;   // the driver's last refusal, for the give-up line
 bool g_radioWasOff = false;      // the scan switched STA on (No-TX), so it switches it off after
+bool g_joinPaused = false;       // the scan paused a join that hadn't associated, so it resumes it after
+unsigned long g_lastKick = 0;    // STARTING: the last stopJoinAttempt
+unsigned long g_lastRepin = 0;   // STOPPING: the last quiet re-pin attempt
+// A stopped scan whose SCAN_DONE never came may still deliver it, into the next scan: that one then
+// ignores a SCAN_DONE earlier than kMinSweepMs. The event's scan_id can't settle it: the driver
+// doesn't say which id a scan it starts gets (esp_wifi.h; the field is "used for block scan").
+bool g_staleOwed = false;
 uint16_t g_total = 0;            // results to send (0: the empty frame)
 uint16_t g_next = 0;             // the next index to send
 
@@ -45,8 +66,11 @@ uint16_t g_next = 0;             // the next index to send
 std::atomic<bool> g_done{false};
 std::atomic<bool> g_doneOk{false};
 
+std::atomic<uint8_t> g_doneId{0};  // logged only: hardware evidence for how scan_id behaves
+
 void onScanDone(WiFiEvent_t, WiFiEventInfo_t info) {
   g_doneOk.store(info.wifi_scan_done.status == 0);  // 0 success, 1 failure (esp_wifi_types.h)
+  g_doneId.store(info.wifi_scan_done.scan_id);
   g_done.store(true);
 }
 
@@ -68,20 +92,31 @@ void tryStart() {
   g_startErr = startDriverScan();
   if (g_startErr == ESP_OK) {
     g_phase = Phase::SCANNING;
+    g_scanStart = millis();
     TLOG(LOG_LEVEL_INFO, "SCAN_WIFI: scanning channels %u-%u\n", ESPNOW_CHANNEL_MIN, ESPNOW_CHANNEL_MAX);
-  } else {
-    g_phase = Phase::STARTING;  // ESP_ERR_WIFI_STATE while a join is in progress; others retry too
+    return;
+  }
+  g_phase = Phase::STARTING;  // ESP_ERR_WIFI_STATE while connecting; others retry too
+  if (g_joinPaused && g_startErr == ESP_ERR_WIFI_STATE && millis() - g_lastKick >= kJoinKickMs) {
+    g_lastKick = millis();
+    wifi::stopJoinAttempt();
   }
 }
 
-// Hand the radio back the way the scan found it: off again for No-TX, and a bridge back on its
-// channel (the driver leaves it wherever the sweep ended).
+// Hand the radio back the way the scan found it, except a bridge's channel: off again for No-TX, and
+// a paused join resumed.
+void restoreRadio() {
+  if (g_radioWasOff) wifi::disableRadio();
+  if (g_joinPaused) wifi::resumeJoin();
+  g_radioWasOff = false;
+  g_joinPaused = false;
+}
+
+// The scan has ended: restore the radio and put a bridge back on its channel (the driver leaves it
+// wherever the sweep ended), leaving bridge mode if the radio refuses.
 void releaseRadio() {
-  if (g_radioWasOff) {
-    wifi::disableRadio();
-    g_radioWasOff = false;
-  }
-  espnow::repinBridge();
+  restoreRadio();
+  espnow::repinBridge(true);
 }
 
 void finish() {
@@ -120,17 +155,31 @@ void scan::request() {
     return;
   }
   g_radioWasOff = wifi::scanRadioUp();
+  g_joinPaused = !g_radioWasOff && wifi::pauseJoin();
+  if (g_joinPaused) TLOG(LOG_LEVEL_INFO, "SCAN_WIFI: WiFi join paused for the scan\n");
+  g_lastKick = millis();
   g_phaseStart = millis();
   tryStart();
 }
 
-bool scan::radioBusy() { return g_phase == Phase::STARTING || g_phase == Phase::SCANNING; }
+bool scan::radioBusy() {
+  return g_phase == Phase::STARTING || g_phase == Phase::SCANNING || g_phase == Phase::STOPPING;
+}
 
 void scan::abort() {
   if (g_phase == Phase::IDLE) return;
-  if (g_phase == Phase::SCANNING) esp_wifi_scan_stop();
+  if (g_phase == Phase::SCANNING) {
+    esp_wifi_scan_stop();
+    g_staleOwed = true;  // not waited for: the new owner takes the radio now
+  } else if (g_phase == Phase::STOPPING && !g_done.load()) {
+    g_staleOwed = true;
+  }
   TLOG(LOG_LEVEL_WARN, "SCAN_WIFI abandoned: the radio is wanted elsewhere\n");
-  g_radioWasOff = false;  // the new owner configures the radio
+  // The new owner configures the radio; a paused join only gets auto-reconnect back, since that
+  // owner starts its own join (or portal) and a WiFi.begin() here would leave the driver connecting.
+  if (g_joinPaused) wifi::allowReconnect();
+  g_radioWasOff = false;
+  g_joinPaused = false;
   finish();
 }
 
@@ -150,14 +199,25 @@ void scan::loop() {
       tryStart();
       return;
     case Phase::SCANNING: {
+      if (g_done.load() && g_staleOwed) {
+        g_staleOwed = false;
+        if (millis() - g_scanStart < kMinSweepMs) {
+          TLOG(LOG_LEVEL_WARN, "SCAN_WIFI: ignored a stale scan-done (id %u)\n", g_doneId.load());
+          g_done.store(false);
+          WiFi.scanDelete();  // the records Arduino copied for it
+          return;
+        }
+      }
       if (!g_done.load()) {
         if (millis() - g_phaseStart < kScanTimeoutMs) return;
         esp_wifi_scan_stop();
         TLOG(LOG_LEVEL_ERROR, "SCAN_WIFI: no result in %lums; stopped\n", kScanTimeoutMs);
-        releaseRadio();
-        finish();
+        g_phase = Phase::STOPPING;
+        g_phaseStart = millis();
+        g_lastRepin = millis();
         return;
       }
+      TLOG(LOG_LEVEL_INFO, "SCAN_WIFI: scan done (id %u)\n", g_doneId.load());
       releaseRadio();
       int16_t count = WiFi.scanComplete();  // the records _scanDone copied (negative: none kept)
       if (!g_doneOk.load() || count < 0) {
@@ -171,6 +231,24 @@ void scan::loop() {
       g_phaseStart = millis();
       return;
     }
+    case Phase::STOPPING:
+      // The scan already failed (nothing is sent); this only waits for the driver to let go, so the
+      // hand-back isn't refused. On a bridge the radio accepting its channel is that sign too.
+      if (g_done.load()) {
+        releaseRadio();
+      } else if (millis() - g_phaseStart >= kStopSettleMs) {
+        g_staleOwed = true;
+        TLOG(LOG_LEVEL_WARN, "SCAN_WIFI: no scan-done %lums after the stop\n", kStopSettleMs);
+        releaseRadio();
+      } else if (espnow::bridgeActive() && millis() - g_lastRepin >= kStopRetryMs) {
+        g_lastRepin = millis();
+        if (!espnow::repinBridge(false)) return;
+        restoreRadio();
+      } else {
+        return;
+      }
+      finish();
+      return;
     case Phase::SENDING:
       // One frame per tick, and only into room: usb::send never blocks, so a frame written into a
       // full TX buffer would be cut short.
@@ -179,7 +257,7 @@ void scan::loop() {
         finish();
         return;
       }
-      if (usb::txRoom(kMaxResultBytes)) sendNext();
+      if (usb::txRoom(kMaxResultBytes + kTxHeadroom)) sendNext();
       return;
   }
 }

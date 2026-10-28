@@ -38,7 +38,9 @@ void loopLight(unsigned long now);
 void enterBridge(uint8_t channel, uint8_t txPower);
 void exitBridge();              // SET_BRIDGE 0 / USB session end: deinit + restore radio per NVS mode
 bool bridgeActive();
-void repinBridge();             // after a WiFi scan: back on the bridge channel; leaves bridge mode if that fails
+// After a WiFi scan: back on the bridge channel. True when re-pinned (or not a bridge). A refusal
+// (the driver may still be scanning) is retried by the caller; lastTry leaves bridge mode instead.
+bool repinBridge(bool lastTry);
 void loopBridge(unsigned long now);  // `now` paces only the 1 s diagnostics line (liveness is the sidecar's)
 void relay(const ServerMessage& msg);  // RELAY from USB → esp_now_send(targetMAC, inner)
 

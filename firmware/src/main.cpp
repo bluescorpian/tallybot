@@ -130,7 +130,8 @@ void checkBootButton(unsigned long now) {
   } else if (now - g_btnDownSince >= kReprovisionHoldMs) {
     g_btnDownSince = 0;
     TLOG(LOG_LEVEL_INFO, "BOOT held - opening WiFi setup\n");
-    scan::abort();  // the portal takes the radio (and runs its own scan)
+    scan::abort();           // the portal takes the radio (and runs its own scan)
+    control::runDeferred();  // commands the host sent before the hold apply before it, as they arrived
     if (espnow::bridgeActive()) {
       // WARN: the host relies on this bridge, and it doesn't re-assert it until a reconnect.
       TLOG(LOG_LEVEL_WARN, "Leaving bridge mode: BOOT held for WiFi setup\n");
@@ -226,7 +227,7 @@ void loop() {
 
   bool usbTallyReleased = usb::loop(now);  // pump RX, re-announce HELLO, release idle tally
   scan::loop();                            // advance a SCAN_WIFI: driver, radio hand-back, SCAN_RESULTs
-  control::runDeferred();                  // a SET_BRIDGE / SET_WIFI that waited for the scan
+  control::runDeferred();                  // config commands that waited for the scan, in order
   control::maybeEmitStatus(now);           // stream STATUS on change while a host is cabled
   checkBootButton(now);                    // hold BOOT → re-open WiFi setup
 
@@ -262,7 +263,8 @@ void loop() {
       // The host fell silent (likely unplugged but still powered) — hand the device back to WiFi.
       if (usbTallyReleased) {
         TLOG(LOG_LEVEL_INFO, "USB host lost; reverting to WiFi\n");
-        scan::abort();  // the WiFi client takes the radio back
+        scan::abort();           // the WiFi client takes the radio back
+        control::runDeferred();  // the host's last commands apply before the hand-back, as they arrived
         usb::resetSession();
         // TRANSPORT_WIFI, not the NVS mode: USB_OWNED is reached only from a WiFi boot, and a
         // SET_TRANSPORT received while cabled applies next boot.

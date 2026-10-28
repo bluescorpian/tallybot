@@ -109,11 +109,12 @@ void recvCb(const uint8_t* mac, const uint8_t* data, int len) { enqueue(mac, dat
 
 // Retune the running radio. Frames still queued were heard on the old channel, so they're dropped:
 // a light must not credit a TALLY_HERE to the channel it has just moved to. (The callback only
-// advances the tail, so moving the head up to it from the loop is a safe flush.)
-bool tune(uint8_t channel) {
+// advances the tail, so moving the head up to it from the loop is a safe flush.) `quiet` leaves a
+// refusal unlogged, for a caller that retries until the radio accepts.
+bool tune(uint8_t channel, bool quiet = false) {
   esp_err_t err = esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
   if (err != ESP_OK) {
-    TLOG(LOG_LEVEL_ERROR, "esp_wifi_set_channel(%u) failed: 0x%x\n", channel, (unsigned)err);
+    if (!quiet) TLOG(LOG_LEVEL_ERROR, "esp_wifi_set_channel(%u) failed: 0x%x\n", channel, (unsigned)err);
     return false;
   }
   g_channel = channel;
@@ -593,19 +594,23 @@ bool espnow::bridgeActive() { return g_role == Role::BRIDGE; }
 
 // A scan sweeps the radio across channels 1–13 and nothing documents where it leaves an unassociated
 // STA, so the bridge always re-pins. tune() also drops frames queued mid-sweep, heard off-channel.
-// The channel the scan left is logged, to settle on hardware whether this is needed.
-void espnow::repinBridge() {
-  if (g_role != Role::BRIDGE) return;
+// The channel the scan left is logged, to settle on hardware whether this is needed. The radio
+// refuses a channel while the driver still scans, so a caller unsure the scan has ended retries
+// (lastTry false: a refusal is quiet and changes nothing) before a last try that gives up.
+bool espnow::repinBridge(bool lastTry) {
+  if (g_role != Role::BRIDGE) return true;
   uint8_t left = 0;
   wifi_second_chan_t second;
   if (esp_wifi_get_channel(&left, &second) != ESP_OK) left = 0;
-  if (!tune(g_channel)) {
+  if (!tune(g_channel, !lastTry)) {
+    if (!lastTry) return false;
     // As for a failed retune: don't stay "bridging" on a channel the host didn't ask for.
     TLOG(LOG_LEVEL_ERROR, "Bridge re-pin to channel %u after the scan failed; leaving bridge mode\n", g_channel);
     exitBridge();
-    return;
+    return false;
   }
   TLOG(LOG_LEVEL_INFO, "Bridge back on channel %u after the scan (the scan left it on %u)\n", g_channel, left);
+  return true;
 }
 
 // The bridge is stateless in time — it drains the ring and answers discovery; liveness is the
