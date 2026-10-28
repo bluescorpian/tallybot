@@ -1002,3 +1002,135 @@ test("provisionWifi refuses credentials over a light's limits with a warning, se
   assert.deepEqual(provisioning.provisioned, []);
   assert.equal(store.device(MAC)?.ssid, undefined);
 });
+
+// ── Session ESP-NOW channel and bridge TX power ──────────────────────────────
+
+/** The SET_BRIDGE calls without the txPower argument, for the channel-only assertions. */
+const bridgeChannels = (p: FakeProvisioning) =>
+  p.bridgeCalls.map(({ mac, enabled, channel }) => ({ mac, enabled, channel }));
+
+test("every SET_BRIDGE and every ESP-NOW SET_TRANSPORT carries the session channel", async () => {
+  const harness = setup();
+  const { app, ipc, provisioning, server, store } = harness;
+  store.espnowChannel = 6;
+  await app.start();
+  bringUpUsb(harness, MAC, 3);
+  bringUpUsb(harness, BRIDGE, 4);
+
+  ipc.command({ type: "setTransport", mac: MAC, mode: "espnow" });
+  ipc.command({ type: "setBridge", mac: BRIDGE });
+  await tick();
+  server.disconnectDevice(BRIDGE);
+  server.connectDevice(BRIDGE, 4); // the re-assert on replug
+
+  assert.deepEqual(provisioning.transportCalls, [{ mac: MAC, mode: Transport.ESPNOW, channel: 6 }]);
+  assert.deepEqual(bridgeChannels(provisioning), [
+    { mac: BRIDGE, enabled: true, channel: 6 },
+    { mac: BRIDGE, enabled: true, channel: 6 },
+  ]);
+});
+
+test("changing the channel persists it and retunes a cabled v4 bridge with one SET_BRIDGE 1", async () => {
+  const harness = setup();
+  const { app, ipc, provisioning, store } = harness;
+  await app.start();
+  bringUpUsb(harness, BRIDGE, 4);
+  ipc.command({ type: "setBridge", mac: BRIDGE });
+  await tick();
+  provisioning.bridgeCalls.length = 0;
+
+  ipc.command({ type: "setEspNowChannel", channel: 11 });
+  await tick();
+
+  assert.equal(store.espnowChannel, 11);
+  assert.deepEqual(bridgeChannels(provisioning), [{ mac: BRIDGE, enabled: true, channel: 11 }]);
+  assert.equal(ipc.lastState()!.state.espnow.channel, 11);
+});
+
+test("a v3 bridge is moved by SET_BRIDGE 0 then 1, and is never sent a txPower byte", async () => {
+  const harness = setup();
+  const { app, ipc, provisioning, store } = harness;
+  store.bridgeTxPower = "reduced"; // even with reduced power set, v3 gets the 3-byte form
+  await app.start();
+  bringUpUsb(harness, BRIDGE, 3);
+  ipc.command({ type: "setBridge", mac: BRIDGE });
+  await tick();
+  ipc.command({ type: "setEspNowChannel", channel: 11 });
+  await tick();
+
+  assert.deepEqual(bridgeChannels(provisioning).slice(1), [
+    { mac: BRIDGE, enabled: false, channel: 11 },
+    { mac: BRIDGE, enabled: true, channel: 11 },
+  ]);
+  assert.deepEqual(
+    provisioning.bridgeCalls.map((c) => c.txPower),
+    [undefined, undefined, undefined],
+    "no SET_BRIDGE to a v3 bridge carries txPower",
+  );
+});
+
+test("reduced bridge TX power sends txPower 34 to a cabled v4 bridge", async () => {
+  const harness = setup();
+  const { app, ipc, provisioning } = harness;
+  await app.start();
+  bringUpUsb(harness, BRIDGE, 4);
+  ipc.command({ type: "setBridge", mac: BRIDGE });
+  await tick();
+
+  ipc.command({ type: "setBridgeTxPower", txPower: "reduced" });
+  await tick();
+
+  const last = provisioning.bridgeCalls.at(-1);
+  assert.equal(last?.enabled, true);
+  assert.equal(last?.txPower, 34);
+  assert.equal(ipc.lastState()!.state.espnow.bridgeTxPower, "reduced");
+});
+
+test("a channel outside 1–13 is refused with a warning: nothing stored, nothing sent", async () => {
+  const harness = setup();
+  const { app, ipc, provisioning, store } = harness;
+  await app.start();
+  bringUpUsb(harness, BRIDGE, 4);
+  ipc.command({ type: "setBridge", mac: BRIDGE });
+  await tick();
+  provisioning.bridgeCalls.length = 0;
+
+  for (const channel of [0, 14, 2.5]) {
+    const before = ipc.notices.length;
+    ipc.command({ type: "setEspNowChannel", channel });
+    await tick();
+    assert.equal(ipc.notices.length, before + 1, `channel ${channel} raises a notice`);
+    assert.equal(ipc.notices.at(-1)?.level, "warn");
+  }
+  assert.equal(store.espnowChannel, 1);
+  assert.deepEqual(provisioning.bridgeCalls, []);
+});
+
+test("the snapshot carries each cabled device's STATUS channel, null until it reports one", async () => {
+  const { app, server, ipc, provisioning } = setup();
+  await app.start();
+  provisioning.wired.add(MAC);
+  server.connectDevice(MAC, 4);
+  const channelOf = () => ipc.lastState()!.state.devices.find((d) => d.mac === MAC)!.espnowChannel;
+  assert.equal(channelOf(), null);
+
+  provisioning.emitStatus(MAC, { mode: Transport.ESPNOW, wifiState: "idle" as DeviceWifiState, rssi: null, ssid: "", channel: 6 });
+  await tick();
+  assert.equal(channelOf(), 6);
+});
+
+test("legacyLights names every known ESP-NOW light below v4, connected or not", async () => {
+  const KNOWN_V3 = "aa:bb:cc:dd:ee:03"; // in the state file from an earlier session, not connected now
+  const KNOWN_V4 = "aa:bb:cc:dd:ee:04";
+  const RADIO_V3 = "aa:bb:cc:dd:ee:05"; // heard over the radio this session, then gone
+  const { app, server, ipc, provisioning, store } = setup();
+  await store.noteReported(KNOWN_V3, { protocolVersion: 3, transport: Transport.ESPNOW });
+  await store.noteReported(KNOWN_V4, { protocolVersion: 4, transport: Transport.ESPNOW });
+  await app.start();
+  provisioning.espnow.add(RADIO_V3);
+  server.connectDevice(RADIO_V3, 3);
+  server.disconnectDevice(RADIO_V3);
+  await tick();
+
+  assert.deepEqual([...ipc.lastState()!.state.espnow.legacyLights].sort(), [KNOWN_V3, RADIO_V3]);
+});

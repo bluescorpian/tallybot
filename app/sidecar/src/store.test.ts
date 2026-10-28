@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { ConfigStore } from "./store.ts";
-import { DEFAULT_BRIGHTNESS } from "./protocol.ts";
+import { DEFAULT_BRIGHTNESS, Transport } from "./protocol.ts";
 
 /** Run `body` with a fresh state-file path in a throwaway directory. */
 async function withTempFile(body: (filePath: string) => Promise<void>): Promise<void> {
@@ -179,6 +179,57 @@ test("a non-MAC bridgeMac in the file is coerced away (don't re-assert onto junk
     );
     const store = await ConfigStore.load(path);
     assert.equal(store.bridgeMac, null);
+  });
+});
+
+// ── ESP-NOW session channel ─────────────────────────────────────────────────
+
+test("the ESP-NOW channel defaults to 1 and a set channel round-trips across a reload", async () => {
+  await withTempFile(async (path) => {
+    const store = await ConfigStore.load(path);
+    assert.equal(store.espnowChannel, 1);
+    await store.setEspnowChannel(6);
+
+    const reloaded = await ConfigStore.load(path);
+    assert.equal(reloaded.espnowChannel, 6);
+  });
+});
+
+test("a channel outside 1–13 is refused and the stored channel is kept", async () => {
+  await withTempFile(async (path) => {
+    const store = await ConfigStore.load(path);
+    await store.setEspnowChannel(6);
+    for (const channel of [0, 14, -1, 2.5]) {
+      assert.throws(() => store.setEspnowChannel(channel), RangeError, `channel ${channel}`);
+    }
+    assert.equal(store.espnowChannel, 6);
+  });
+});
+
+test("a junk ESP-NOW channel in the file falls back to 1", async () => {
+  for (const espnowChannel of [0, 14, "6", null]) {
+    await withTempFile(async (path) => {
+      await writeFile(
+        path,
+        JSON.stringify({ version: 1, sourceIp: null, bridgeMac: null, espnowChannel, devices: {} }),
+        "utf8",
+      );
+      const store = await ConfigStore.load(path);
+      assert.equal(store.espnowChannel, 1, `espnowChannel ${JSON.stringify(espnowChannel)}`);
+    });
+  }
+});
+
+test("a device's reported protocol version and transport survive a reload, even with no other config", async () => {
+  await withTempFile(async (path) => {
+    const store = await ConfigStore.load(path);
+    // An unassigned ESP-NOW light: nothing but what it reported, yet it must still be known.
+    await store.noteReported("aa:bb:cc:dd:ee:ff", { protocolVersion: 3, transport: Transport.ESPNOW });
+
+    const reloaded = await ConfigStore.load(path);
+    const device = reloaded.device("aa:bb:cc:dd:ee:ff");
+    assert.equal(device?.protocolVersion, 3);
+    assert.equal(device?.transport, Transport.ESPNOW);
   });
 });
 

@@ -255,6 +255,15 @@ test("setBridgePayload appends a txPower byte only when given one", () => {
   assert.deepEqual(setBridgePayload(true, 6), Uint8Array.of(0x08, 1, 6));
 });
 
+test("SET_TRANSPORT and SET_BRIDGE refuse a channel outside 1–13", () => {
+  for (const channel of [0, 14, 255, 2.5]) {
+    assert.throws(() => setTransportPayload(Transport.ESPNOW, channel), RangeError, `SET_TRANSPORT ch ${channel}`);
+    assert.throws(() => setBridgePayload(true, channel), RangeError, `SET_BRIDGE ch ${channel}`);
+  }
+  assert.deepEqual(setTransportPayload(Transport.ESPNOW, 13), Uint8Array.of(ServerMessageType.SET_TRANSPORT, 2, 13));
+  assert.deepEqual(setBridgePayload(true, 13), Uint8Array.of(ServerMessageType.SET_BRIDGE, 1, 13));
+});
+
 test("relayPayload wraps an inner payload in [type][targetMAC×6][inner…]", () => {
   const inner = setColorPayload(COLORS.live, 64);
   const wire = relayPayload("aa:bb:cc:dd:ee:ff", inner);
