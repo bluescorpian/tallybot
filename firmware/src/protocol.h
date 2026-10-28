@@ -131,7 +131,7 @@
 // never confused with a message payload.
 
 // ── ESP-NOW transport (v1.3) ─────────────────────────────────────────────────
-#define ESPNOW_CHANNEL 1               // fixed 2.4GHz channel; lights join no AP, so nothing negotiates
+#define ESPNOW_CHANNEL 1               // default 2.4GHz channel until a light stores another (cabled, or found by its hunt)
 // Bridge transmit power in esp_wifi's quarter-dBm units, as SET_BRIDGE's optional txPower byte
 // carries it. FULL (19.5 dBm) applies when the byte is absent and when bridge mode ends.
 #define BRIDGE_TX_POWER_FULL 78

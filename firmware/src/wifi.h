@@ -4,7 +4,8 @@
 
 // WiFi connection lifecycle for a WiFi-transport device: captive-portal provisioning,
 // full-power association, reprovision, and the host-visible join state surfaced in STATUS.
-// The radio always runs at full TX power (never capped). A failed join is diagnosed on the
+// The WiFi path always runs at full TX power (never capped); only an ESP-NOW bridge may be
+// capped, by SET_BRIDGE's txPower (espnow.cpp). A failed join is diagnosed on the
 // SoftAP portal landing page.
 namespace wifi {
 

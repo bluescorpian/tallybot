@@ -17,6 +17,7 @@ namespace {
 const uint8_t kBroadcast[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 constexpr unsigned long kHelloIntervalMs = 1000;  // HELLO cadence: awaiting the first frame, or relinking
 constexpr unsigned long kRadioRetryMs = 5000;     // a light whose radio failed to come up tries again this often
+constexpr uint8_t kMaxChannel = 13;               // the hunt sweeps 1..13: country ZA (wifi.cpp setCountry)
 
 // Which role owns the radio right now. The single RX callback dispatches on this — a frame
 // means "discovery/colour from the bridge" to a light, "discovery/relay-up" to a bridge.
@@ -26,8 +27,10 @@ Role g_role = Role::NONE;
 uint8_t g_mac[6];
 espnow::MessageHandler g_handler = nullptr;
 
-// The 2.4GHz channel the radio is pinned to right now: the light's persisted channel, or the
-// bridge's SET_BRIDGE channel. Peers are added on this channel. Defaults to the compiled constant.
+// The 2.4GHz channel the radio is tuned to right now: the light's persisted channel (or, mid-hunt,
+// the channel it is listening on), or the bridge's SET_BRIDGE channel. Peers are added with
+// channel 0, which esp_now.h defines as "the channel the interface is on now", so a retune moves
+// them along without re-adding them.
 uint8_t g_channel = ESPNOW_CHANNEL;
 
 // ── Inbound ring buffer ────────────────────────────────────────────────────────
@@ -84,13 +87,27 @@ bool addPeer(const uint8_t* mac) {
   if (esp_now_is_peer_exist(mac)) return true;
   esp_now_peer_info_t peer = {};
   memcpy(peer.peer_addr, mac, 6);
-  peer.channel = g_channel;
+  peer.channel = 0;  // follow the radio's current channel (see g_channel)
   peer.ifidx = WIFI_IF_STA;
   peer.encrypt = false;
   return esp_now_add_peer(&peer) == ESP_OK;
 }
 
 void recvCb(const uint8_t* mac, const uint8_t* data, int len) { enqueue(mac, data, len); }
+
+// Retune the running radio. Frames still queued were heard on the old channel, so they're dropped:
+// a light must not credit a TALLY_HERE to the channel it has just moved to. (The callback only
+// advances the tail, so moving the head up to it from the loop is a safe flush.)
+bool tune(uint8_t channel) {
+  esp_err_t err = esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+  if (err != ESP_OK) {
+    TLOG(LOG_LEVEL_ERROR, "esp_wifi_set_channel(%u) failed: 0x%x\n", channel, (unsigned)err);
+    return false;
+  }
+  g_channel = channel;
+  g_ringHead = g_ringTail;
+  return true;
+}
 
 // ── Bridge diagnostics ────────────────────────────────────────────────────────────
 // Per-window counters the bridge summarises once a second, to tell apart why a light drops to
@@ -185,6 +202,21 @@ bool g_inOutage = false;      // a link timed out and hasn't been restored yet (
 bool g_radioFailed = false;   // the light's radio didn't come up; retried every kRadioRetryMs
 unsigned long g_lastRadioTry = 0;
 
+// Channel hunt: a light unlinked for CHANNEL_HUNT_AFTER_MS sweeps 1..13 (CHANNEL_DWELL_MS each,
+// one TALLY_FIND per channel), then spends one DISCOVERY_INTERVAL_MS back on its home channel,
+// and repeats until a bridge answers. That is how a light follows a bridge moved to another
+// channel without a cable. Before the threshold it stays on the home channel, so an ordinary
+// dropout relinks exactly as before.
+uint8_t g_homeChannel = ESPNOW_CHANNEL;  // the persisted channel (settings::espnowChannel)
+unsigned long g_unlinkedSince = 0;       // when this outage (or the first search) began
+bool g_hunting = false;                  // this outage has passed CHANNEL_HUNT_AFTER_MS
+bool g_sweeping = false;                 // mid-sweep: the radio is off the home channel
+uint8_t g_sweepChannel = 0;              // the channel being listened on, while g_sweeping
+unsigned long g_huntPhaseStart = 0;      // the current dwell's start, or the home interval's
+
+// Bridge transmit power last requested by SET_BRIDGE, in quarter-dBm.
+uint8_t g_bridgeTxPower = BRIDGE_TX_POWER_FULL;
+
 void sendRaw(const uint8_t* peer, const uint8_t* payload, size_t len) {
   // Fire-and-forget; the keyframe covers loss. The result only feeds the bridge's diagnostics.
   countSendResult(esp_now_send(peer, payload, len));
@@ -207,6 +239,17 @@ bool radioUp() {
   return true;
 }
 
+// Set the radio's max transmit power and log what it reports back: the driver rounds a request
+// to a step it supports (esp_wifi.h, esp_wifi_set_max_tx_power), so the read-back is the truth.
+void applyTxPower(uint8_t requested) {
+  esp_err_t err = esp_wifi_set_max_tx_power((int8_t)requested);
+  if (err != ESP_OK) TLOG(LOG_LEVEL_WARN, "TX power %u refused: 0x%x\n", requested, (unsigned)err);
+  int8_t applied = 0;
+  if (esp_wifi_get_max_tx_power(&applied) == ESP_OK)
+    TLOG(LOG_LEVEL_INFO, "TX power: requested %u, radio reports %d (quarter-dBm: %d.%02d dBm)\n", requested,
+         applied, applied / 4, (applied % 4) * 25);
+}
+
 void radioDown() {
   esp_now_deinit();
   g_ringHead = g_ringTail = 0;  // drop anything the callback queued mid-teardown
@@ -215,9 +258,12 @@ void radioDown() {
 // Mark the link down and fall back to searching, keeping any remembered bridge peer. The LED
 // follows the tally.cpp pattern: cyan while still hunting for a first bridge, steady blue once
 // we've held a link and lost it.
-void unlink() {
+void unlink(unsigned long now) {
   g_linked = false;
   g_gotFrame = false;
+  g_unlinkedSince = now;
+  g_hunting = false;
+  g_sweeping = false;
   if (g_everHadBridge)
     ind::lostServer();  // steady blue — we lost the bridge (docs/led.md state 10)
   else
@@ -272,6 +318,65 @@ void sendHello() {
   sendRaw(g_bridge, hello, encodeHelloPayload(hello, g_mac));
   sendRaw(g_bridge, hello, encodeFirmwarePayload(hello, sizeof(hello), FIRMWARE_VERSION));
 }
+
+void broadcastFind() {
+  if (!esp_now_is_peer_exist(kBroadcast)) addPeer(kBroadcast);
+  sendRaw(kBroadcast, (const uint8_t*)DISCOVERY_REQUEST, strlen(DISCOVERY_REQUEST));
+}
+
+void dwellOn(uint8_t channel, unsigned long now) {
+  g_sweepChannel = channel;
+  g_huntPhaseStart = now;
+  if (tune(channel)) broadcastFind();
+}
+
+void startSweep(unsigned long now) {
+  g_sweeping = true;
+  dwellOn(1, now);
+}
+
+// Advance the hunt (see g_homeChannel). True while a sweep owns this tick, so the home-channel
+// discovery (broadcast + HELLO to the remembered bridge) doesn't run off-channel.
+bool serviceHunt(unsigned long now) {
+  if (now - g_unlinkedSince < CHANNEL_HUNT_AFTER_MS) return false;
+  if (!g_hunting) {
+    g_hunting = true;
+    TLOG(LOG_LEVEL_INFO, "No bridge for %lus; hunting channels 1-%u\n",
+         (unsigned long)(CHANNEL_HUNT_AFTER_MS / 1000), kMaxChannel);
+    startSweep(now);
+    return true;
+  }
+  if (g_sweeping) {
+    if (now - g_huntPhaseStart < CHANNEL_DWELL_MS) return true;
+    if (g_sweepChannel < kMaxChannel) {
+      dwellOn(g_sweepChannel + 1, now);
+      return true;
+    }
+    // Sweep done: one discovery interval at home, running the ordinary discovery from now.
+    g_sweeping = false;
+    tune(g_homeChannel);
+    g_huntPhaseStart = now;
+    g_lastBroadcast = now - DISCOVERY_INTERVAL_MS;
+    g_lastHello = now - kHelloIntervalMs;
+    return false;
+  }
+  if (now - g_huntPhaseStart >= DISCOVERY_INTERVAL_MS) {
+    startSweep(now);
+    return true;
+  }
+  return false;
+}
+
+// A link came up: stop hunting, and make the channel it came up on the light's home (persisted
+// only when it changed, so an ordinary relink writes nothing).
+void endHunt() {
+  g_hunting = false;
+  g_sweeping = false;
+  if (g_channel == g_homeChannel) return;
+  TLOG(LOG_LEVEL_INFO, "Bridge found on channel %u (stored %u); saving it\n", g_channel, g_homeChannel);
+  g_homeChannel = g_channel;
+  settings::setEspnowChannel(g_channel);
+}
 }  // namespace
 
 void espnow::init(const uint8_t mac[6], MessageHandler onMessage) {
@@ -282,7 +387,8 @@ void espnow::init(const uint8_t mac[6], MessageHandler onMessage) {
 // ── Light role ──────────────────────────────────────────────────────────────────
 
 void espnow::startLight() {
-  g_channel = settings::espnowChannel();  // the persisted channel (default ESPNOW_CHANNEL)
+  g_homeChannel = settings::espnowChannel();  // the persisted channel (default ESPNOW_CHANNEL)
+  g_channel = g_homeChannel;
   g_role = Role::LIGHT;
   g_haveBridge = false;  // radioUp() starts with an empty peer table
   g_inOutage = false;
@@ -296,7 +402,7 @@ void espnow::startLight() {
   }
   g_radioFailed = false;
   g_lastBroadcast = millis() - DISCOVERY_INTERVAL_MS;  // broadcast on the next tick
-  unlink();
+  unlink(millis());
   TLOG(LOG_LEVEL_INFO, "ESP-NOW light: searching for a bridge\n");
 }
 
@@ -321,6 +427,7 @@ void espnow::loopLight(unsigned long now) {
         g_linked = true;
         g_everHadBridge = true;
         g_gotFrame = false;
+        endHunt();  // the radio is still on the channel this reply was heard on
         reportRelink(now);  // before g_lastRx moves: the gap runs from the last frame to this one
         g_lastRx = now;
         g_lastHello = now - kHelloIntervalMs;  // HELLO on the next tick
@@ -339,6 +446,7 @@ void espnow::loopLight(unsigned long now) {
       // enough — restore the link without waiting on TALLY_HERE + a HELLO round-trip.
       if (!decoded) continue;
       g_linked = true;
+      endHunt();
       reportRelink(now);
       TLOG(LOG_LEVEL_INFO, "Relinked to bridge on a relayed frame\n");
     }
@@ -348,10 +456,10 @@ void espnow::loopLight(unsigned long now) {
   }
 
   if (!g_linked) {  // searching: broadcast TALLY_FIND until a bridge answers
+    if (serviceHunt(now)) return;  // mid-sweep, listening on another channel
     if (now - g_lastBroadcast >= DISCOVERY_INTERVAL_MS) {
       g_lastBroadcast = now;
-      if (!esp_now_is_peer_exist(kBroadcast)) addPeer(kBroadcast);
-      sendRaw(kBroadcast, (const uint8_t*)DISCOVERY_REQUEST, strlen(DISCOVERY_REQUEST));
+      broadcastFind();
     }
     // ...and HELLO the remembered bridge, so a sidecar that dropped us re-learns us and resumes
     // sending without depending on a broadcast getting through.
@@ -370,7 +478,7 @@ void espnow::loopLight(unsigned long now) {
     TLOG(LOG_LEVEL_WARN, "Bridge link timed out (#%lu); resuming discovery\n", (unsigned long)g_linkTimeouts);
     g_lastBroadcast = now - DISCOVERY_INTERVAL_MS;
     g_lastHello = now - kHelloIntervalMs;
-    unlink();
+    unlink(now);
     return;
   }
 
@@ -395,8 +503,25 @@ void espnow::loopLight(unsigned long now) {
 
 // ── Bridge role ───────────────────────────────────────────────────────────────────
 
-void espnow::enterBridge(uint8_t channel) {
-  if (g_role == Role::BRIDGE) return;
+void espnow::enterBridge(uint8_t channel, uint8_t txPower) {
+  if (g_role == Role::BRIDGE) {
+    // Already bridging: a re-assert with the same settings is a no-op; a new channel or power is
+    // applied in place, keeping the peer table (its channel-0 peers follow the retune).
+    if (channel != g_channel) {
+      if (!tune(channel)) {
+        // As for a failed entry: don't stay "bridging" on a channel the host didn't ask for.
+        TLOG(LOG_LEVEL_ERROR, "Bridge retune to channel %u failed; leaving bridge mode\n", channel);
+        exitBridge();
+        return;
+      }
+      TLOG(LOG_LEVEL_INFO, "Bridge retuned to channel %u\n", channel);
+    }
+    if (txPower != g_bridgeTxPower) {
+      g_bridgeTxPower = txPower;
+      applyTxPower(txPower);
+    }
+    return;
+  }
   if (g_role == Role::LIGHT) radioDown();  // a cabled ESPNOW light becomes a bridge — rebuild fresh
   g_channel = channel;      // pin to the SET_BRIDGE channel (runtime-only — not persisted)
   wifi::dropAssociation();  // a warm STA association would drag the radio off the pinned channel
@@ -411,10 +536,15 @@ void espnow::enterBridge(uint8_t channel) {
   resetBridgeStats(millis());  // the light role's sends also bumped the counters
   g_role = Role::BRIDGE;
   TLOG(LOG_LEVEL_INFO, "Bridge mode on (channel %u)\n", channel);
+  g_bridgeTxPower = txPower;
+  applyTxPower(txPower);  // after radioUp, which brought the radio up at full power
 }
 
 void espnow::exitBridge() {
   if (g_role != Role::BRIDGE) return;
+  // Full power again before anything else uses the radio: a reduced cap is for this bridge stint only.
+  if (g_bridgeTxPower != BRIDGE_TX_POWER_FULL) applyTxPower(BRIDGE_TX_POWER_FULL);
+  g_bridgeTxPower = BRIDGE_TX_POWER_FULL;
   radioDown();
   g_role = Role::NONE;
   TLOG(LOG_LEVEL_INFO, "Bridge mode off; restoring radio per transport mode\n");

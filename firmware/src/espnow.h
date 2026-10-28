@@ -27,12 +27,15 @@ using MessageHandler = void (*)(const ServerMessage&);
 void init(const uint8_t mac[6], MessageHandler onMessage);
 
 // ── Light role (transport mode ESPNOW, unplugged) ──────────────────────────────
-void startLight();              // bring the radio up on the persisted channel + begin discovery (cyan searching)
+void startLight();              // bring the radio up on the persisted channel + begin discovery (cyan searching);
+                                // unlinked past CHANNEL_HUNT_AFTER_MS, it hunts channels 1–13 for a bridge
 void stopLight();               // tear the radio down (USB won the cable, or leaving ESP-NOW)
 void loopLight(unsigned long now);
 
 // ── Bridge role (runtime, any NVS transport underneath) ────────────────────────
-void enterBridge(uint8_t channel);  // SET_BRIDGE 1: radio up on `channel`, suppress association, start relaying
+// SET_BRIDGE 1: radio up on `channel` at `txPower` (quarter-dBm), suppress association, start
+// relaying. While already bridging, retunes / re-powers in place when either differs.
+void enterBridge(uint8_t channel, uint8_t txPower);
 void exitBridge();              // SET_BRIDGE 0 / USB session end: deinit + restore radio per NVS mode
 bool bridgeActive();
 void loopBridge(unsigned long now);  // `now` paces only the 1 s diagnostics line (liveness is the sidecar's)

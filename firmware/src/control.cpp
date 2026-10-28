@@ -105,7 +105,7 @@ void control::dispatch(const ServerMessage& msg) {
       break;
     case ServerMessage::SET_BRIDGE:
       if (msg.bridgeEnabled)
-        espnow::enterBridge(msg.channel);  // pin the radio to the received channel (runtime-only)
+        espnow::enterBridge(msg.channel, msg.txPower);  // runtime-only; txPower is full when absent
       else
         espnow::exitBridge();
       emitStatus();  // the STATUS trailing bytes confirm the mode took effect
