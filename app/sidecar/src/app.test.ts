@@ -11,6 +11,7 @@ import {
   type ProvisioningPort,
   type SidecarAppDeps,
   type StorePort,
+  type WifiScanPort,
   SidecarApp,
 } from "./app.ts";
 import type { SourceSnapshot } from "./engine.ts";
@@ -22,6 +23,8 @@ import type {
   LogLevelName,
   SidecarEvent,
   StateEvent,
+  WifiAccessPoint,
+  WifiScanEvent,
 } from "./ipc.ts";
 import { type Color, COLORS, DEFAULT_BRIGHTNESS, SETUP_COLOR, Transport } from "./protocol.ts";
 
@@ -285,7 +288,7 @@ interface Harness {
 
 function setup(
   source: SourceSnapshot = connectedSource(),
-  overrides: Partial<Pick<SidecarAppDeps, "scanNetwork">> = {},
+  overrides: Partial<Pick<SidecarAppDeps, "scanNetwork" | "wifiScan">> = {},
 ): Harness {
   const server = new FakeDeviceServer();
   const atem = new FakeAtemSource(source);
@@ -1257,4 +1260,168 @@ test("a device that leaves USB but stays online drops its USB-only state", async
   assert.equal(device.wifiState, null);
   assert.equal(device.rssi, null);
   assert.equal(device.provisionedMode ?? null, null);
+});
+
+// ── v1.4 ESP-NOW channel scan ────────────────────────────────────────────────────
+
+const LIGHT = "dd:dd:dd:dd:dd:03";
+
+/** A WifiScanPort that records who was asked and answers with `answer` (a scan's outcome). */
+function fakeWifiScan(answer: () => Promise<WifiAccessPoint[]> = () => Promise.resolve([])): WifiScanPort & {
+  asked: string[];
+} {
+  const asked: string[] = [];
+  return {
+    asked,
+    scanWifi(mac) {
+      asked.push(mac);
+      return answer();
+    },
+  };
+}
+
+function wifiScans(ipc: FakeIpc): WifiScanEvent[] {
+  return ipc.events.filter((e): e is WifiScanEvent => e.type === "wifiScan");
+}
+
+test("a channel scan runs on a cabled v4 light rather than the bridge, and never on a v3 light", async () => {
+  const wifiScan = fakeWifiScan();
+  const harness = setup(connectedSource(), { wifiScan });
+  const { app, ipc } = harness;
+  await app.start();
+  bringUpUsb(harness, BRIDGE, 4);
+  ipc.command({ type: "setBridge", mac: BRIDGE });
+  bringUpUsb(harness, MAC, 3);
+  bringUpUsb(harness, LIGHT, 4);
+  await tick();
+
+  ipc.command({ type: "scanWifi" });
+  await tick();
+
+  assert.deepEqual(wifiScan.asked, [LIGHT]);
+  const done = wifiScans(ipc).at(-1)!;
+  assert.equal(done.status, "done");
+  assert.deepEqual(done.scanner, { mac: LIGHT, bridge: false });
+  assert.equal(done.error, null);
+});
+
+test("with only the bridge able to scan, the scan runs on it and says it was the bridge", async () => {
+  const wifiScan = fakeWifiScan();
+  const harness = setup(connectedSource(), { wifiScan });
+  const { app, ipc } = harness;
+  await app.start();
+  bringUpUsb(harness, BRIDGE, 4);
+  ipc.command({ type: "setBridge", mac: BRIDGE });
+  bringUpUsb(harness, MAC, 3);
+  await tick();
+
+  ipc.command({ type: "scanWifi" });
+  await tick();
+
+  assert.deepEqual(wifiScan.asked, [BRIDGE]);
+  assert.deepEqual(wifiScans(ipc).at(-1)!.scanner, { mac: BRIDGE, bridge: true });
+});
+
+test("with no cabled light, or only one too old to scan, the UI gets an error saying which and nothing is asked", async () => {
+  const wifiScan = fakeWifiScan();
+  const harness = setup(connectedSource(), { wifiScan });
+  const { app, ipc, server } = harness;
+  await app.start();
+  server.connectDevice(LIGHT, 4); // online, but not over USB
+
+  ipc.command({ type: "scanWifi" });
+  await tick();
+  const none = wifiScans(ipc).at(-1)!;
+  assert.equal(none.status, "done");
+  assert.equal(none.scanner, null);
+  assert.match(none.error ?? "", /USB/);
+
+  bringUpUsb(harness, MAC, 3);
+  ipc.command({ type: "scanWifi" });
+  await tick();
+  const old = wifiScans(ipc).at(-1)!;
+  assert.equal(old.scanner, null);
+  assert.match(old.error ?? "", /firmware/);
+  assert.notEqual(old.error, none.error);
+
+  assert.deepEqual(wifiScan.asked, []);
+});
+
+test("a second scan request while one runs does not start another scan", async () => {
+  let finish!: (aps: WifiAccessPoint[]) => void;
+  const wifiScan = fakeWifiScan(() => new Promise((resolve) => (finish = resolve)));
+  const harness = setup(connectedSource(), { wifiScan });
+  const { app, ipc } = harness;
+  await app.start();
+  bringUpUsb(harness, LIGHT, 4);
+
+  ipc.command({ type: "scanWifi" });
+  ipc.command({ type: "scanWifi" });
+  await tick();
+  assert.deepEqual(wifiScan.asked, [LIGHT]);
+
+  finish([]);
+  await tick();
+  ipc.command({ type: "scanWifi" }); // once it's done, a new request runs
+  await tick();
+  assert.deepEqual(wifiScan.asked, [LIGHT, LIGHT]);
+});
+
+test("a failed device scan is reported as an error, not as a quiet band with a suggestion", async () => {
+  const wifiScan = fakeWifiScan(() => Promise.reject(new Error("no complete scan result within 10 s")));
+  const harness = setup(connectedSource(), { wifiScan });
+  const { app, ipc } = harness;
+  await app.start();
+  bringUpUsb(harness, LIGHT, 4);
+
+  ipc.command({ type: "scanWifi" });
+  await tick();
+
+  const done = wifiScans(ipc).at(-1)!;
+  assert.equal(done.status, "done");
+  assert.deepEqual(done.scanner, { mac: LIGHT, bridge: false });
+  assert.notEqual(done.error, null);
+  assert.equal(done.suggestedChannel, null);
+  assert.deepEqual(done.congestion, []);
+});
+
+test("congestion scores each channel 1–13 by RSSI-weighted APs within ±4, and suggests the quietest of 1, 6, 11, 13", async () => {
+  // Weight = clamp((rssi + 100) / 70, 0, 1): -20 → 1 (clamped), -65 → 0.5, -110 → 0 (clamped).
+  const heard: WifiAccessPoint[] = [
+    { channel: 6, rssi: -20, ssid: "in-room" },
+    { channel: 1, rssi: -65, ssid: "next-door" },
+    { channel: 13, rssi: -110, ssid: "edge" },
+  ];
+  const wifiScan = fakeWifiScan(() => Promise.resolve(heard));
+  const harness = setup(connectedSource(), { wifiScan });
+  const { app, ipc } = harness;
+  await app.start();
+  bringUpUsb(harness, LIGHT, 4);
+
+  ipc.command({ type: "scanWifi" });
+  await tick();
+
+  const done = wifiScans(ipc).at(-1)!;
+  //            ch:  1    2    3    4    5    6  7  8  9 10 11 12 13
+  const expected = [0.5, 1.5, 1.5, 1.5, 1.5, 1, 1, 1, 1, 1, 0, 0, 0];
+  assert.deepEqual(
+    done.congestion.map((c) => [c.channel, c.score]),
+    expected.map((score, i) => [i + 1, score]),
+  );
+  // 11 and 13 tie at 0; the session channel (1) isn't among them, so the lower one wins.
+  assert.equal(done.suggestedChannel, 11);
+});
+
+test("a tie among the quietest candidates keeps the current session channel", async () => {
+  const wifiScan = fakeWifiScan(() => Promise.resolve([{ channel: 3, rssi: -30, ssid: "busy" }]));
+  const harness = setup(connectedSource(), { wifiScan });
+  const { app, ipc, store } = harness;
+  store.espnowChannel = 13; // 11 and 13 both score 0
+  await app.start();
+  bringUpUsb(harness, LIGHT, 4);
+
+  ipc.command({ type: "scanWifi" });
+  await tick();
+
+  assert.equal(wifiScans(ipc).at(-1)!.suggestedChannel, 13);
 });

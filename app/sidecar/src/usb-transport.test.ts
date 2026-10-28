@@ -211,3 +211,77 @@ test("a RELAY frame is re-emitted as a relayed event (bridgeMac + srcMac + inner
   assert.equal(relayed[0]!.srcMac, "01:23:45:67:89:ab"); // the light, from the bridge's RX callback
   assert.deepEqual([...relayed[0]!.inner], inner);
 });
+
+// ── v1.4 channel scan (SCAN_WIFI → SCAN_RESULT) ─────────────────────────────────
+
+/** A SCAN_RESULT frame from MAC: `[type][index][total][channel][rssi][ssidLen][ssid…]`. */
+function scanResult(index: number, total: number, channel: number, rssi: number, ssid: string): UsbInbound {
+  const bytes = new TextEncoder().encode(ssid);
+  const payload = Uint8Array.of(DeviceMessageType.SCAN_RESULT, index, total, channel, rssi & 0xff, bytes.length, ...bytes);
+  return { type: "usbFrame", mac: MAC, payloadHex: toHex(payload) };
+}
+
+/** Whether a scan promise has settled by the next turn of the event loop (well before any timeout). */
+function settled(scan: Promise<unknown>): Promise<"resolved" | "rejected" | "pending"> {
+  return Promise.race([
+    scan.then(() => "resolved" as const, () => "rejected" as const),
+    new Promise<"pending">((resolve) => setImmediate(() => resolve("pending"))),
+  ]);
+}
+
+function scanningTransport(scanTimeoutMs = 1_000): { bridge: FakeBridge; usb: UsbTransport } {
+  const bridge = new FakeBridge();
+  const usb = new UsbTransport(bridge, { scanTimeoutMs });
+  bridge.feed({ type: "usbDeviceConnected", mac: MAC, version: 4 });
+  return { bridge, usb };
+}
+
+test("scanWifi sends SCAN_WIFI and resolves with every access point once frames 0..total-1 arrive", async () => {
+  const { bridge, usb } = scanningTransport();
+  const scan = usb.scanWifi(MAC);
+  assert.ok(scan);
+  assert.deepEqual([...fromHex(bridge.sent[0]!.payloadHex)], [ServerMessageType.SCAN_WIFI]);
+
+  bridge.feed(scanResult(0, 2, 6, -40, "studio"));
+  bridge.feed(scanResult(1, 2, 11, -80, "venue"));
+  assert.deepEqual(await scan, [
+    { channel: 6, rssi: -40, ssid: "studio" },
+    { channel: 11, rssi: -80, ssid: "venue" },
+  ]);
+});
+
+test("one empty SCAN_RESULT frame is a scan that heard nothing, not a failure", async () => {
+  const { bridge, usb } = scanningTransport();
+  const scan = usb.scanWifi(MAC);
+  bridge.feed({ type: "usbFrame", mac: MAC, payloadHex: toHex(Uint8Array.of(DeviceMessageType.SCAN_RESULT, 0, 0, 0, 0, 0)) });
+  assert.deepEqual(await scan, []);
+});
+
+test("a scan the device never answers rejects at the timeout rather than reading as a quiet band", async () => {
+  const { usb } = scanningTransport(20);
+  await assert.rejects(usb.scanWifi(MAC)!);
+});
+
+test("a scan that stops part-way through its frames rejects at the timeout", async () => {
+  const { bridge, usb } = scanningTransport(20);
+  const scan = usb.scanWifi(MAC);
+  bridge.feed(scanResult(0, 3, 1, -50, "a"));
+  bridge.feed(scanResult(1, 3, 6, -50, "b"));
+  await assert.rejects(scan!);
+});
+
+test("frames out of order fail the scan instead of yielding a partial list", async () => {
+  const { bridge, usb } = scanningTransport();
+  const scan = usb.scanWifi(MAC);
+  bridge.feed(scanResult(0, 3, 1, -50, "a"));
+  bridge.feed(scanResult(2, 3, 11, -50, "c")); // index 1 skipped
+  assert.equal(await settled(scan!), "rejected");
+});
+
+test("a device unplugged mid-scan fails the scan", async () => {
+  const { bridge, usb } = scanningTransport();
+  const scan = usb.scanWifi(MAC);
+  bridge.feed(scanResult(0, 2, 1, -50, "a"));
+  bridge.feed({ type: "usbDeviceDisconnected", mac: MAC });
+  assert.equal(await settled(scan!), "rejected");
+});
