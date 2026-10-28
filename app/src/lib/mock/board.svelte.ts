@@ -227,7 +227,7 @@ export class MockBoard implements Backend {
 			devices: this.devices,
 			programGate: { active: this.override, source: null },
 			faults: [],
-			espnow: { channel: ESPNOW_CHANNEL, bridgeTxPower: "full", legacyLights: [], unseenLights: [] },
+			espnow: { channel: ESPNOW_CHANNEL, bridgeTxPower: "full", legacyLights: [], unseenLights: [], scanner: null },
 		};
 	});
 

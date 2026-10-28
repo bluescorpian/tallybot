@@ -129,9 +129,6 @@ export interface WifiScanPort {
   scanWifi(mac: string): Promise<WifiAccessPoint[]> | null;
 }
 
-/** Stands in when nothing can scan (no USB transport): every device reads as not on USB. */
-const NO_WIFI_SCAN: WifiScanPort = { scanWifi: () => null };
-
 export interface AtemSourcePort {
   snapshot(): SourceSnapshot;
   connect(ip: string): void;
@@ -257,8 +254,8 @@ export interface SidecarAppDeps {
    * when it isn't running). Told which bridge MAC to route relayed colours through.
    */
   espnow: EspNowBridgePort;
-  /** WiFi scans for the ESP-NOW channel suggestion (the composite server); without it, none run. */
-  wifiScan?: WifiScanPort;
+  /** WiFi scans for the ESP-NOW channel suggestion (the composite server supplies it; see `wiring.ts`). */
+  wifiScan: WifiScanPort;
   store: StorePort;
   ipc: IpcPort;
   /** Where to log diagnostics (defaults to stderr; stdout is protocol-only). */
@@ -365,7 +362,7 @@ export class SidecarApp {
     this.#server = deps.deviceServer;
     this.#provisioning = deps.provisioning;
     this.#espnow = deps.espnow;
-    this.#wifiScan = deps.wifiScan ?? NO_WIFI_SCAN;
+    this.#wifiScan = deps.wifiScan;
     this.#store = deps.store;
     this.#ipc = deps.ipc;
     this.#log = deps.log ?? ((message) => process.stderr.write(`${message}\n`));
@@ -785,7 +782,13 @@ export class SidecarApp {
         legacyLights.push(mac);
       }
     }
-    return { channel: this.#store.espnowChannel, bridgeTxPower: this.#bridgeTxPower, legacyLights, unseenLights };
+    return {
+      channel: this.#store.espnowChannel,
+      bridgeTxPower: this.#bridgeTxPower,
+      legacyLights,
+      unseenLights,
+      scanner: this.#wifiScanner(),
+    };
   }
 
   /**
@@ -810,7 +813,8 @@ export class SidecarApp {
   /**
    * The device to run a channel scan on: a cabled device at protocol 4 or later that isn't the
    * bridge, else the bridge if it is cabled and new enough (its scan takes it off its channel for a
-   * moment, so the result says so), else null.
+   * moment, so the result says so), else null. Published in every snapshot as
+   * `espnow.scanner`, so the UI can warn before a scan that would use the bridge.
    */
   #wifiScanner(): WifiScanner | null {
     let bridge: string | null = null;

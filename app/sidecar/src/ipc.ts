@@ -186,6 +186,13 @@ export interface EspNowSettings {
    * in {@link AppState.devices}.
    */
   unseenLights: string[];
+  /**
+   * The device a channel "Scan" ({@link ScanWifiCommand}) would run on right now, chosen the same
+   * way the scan chooses it; null when none can. Its `bridge` flag lets the UI warn before the scan
+   * that the rig may blink. Updates as devices come, go and change transport or bridge role. The
+   * {@link WifiScanEvent}'s own `scanner` is the device that actually ran a scan.
+   */
+  scanner: WifiScanner | null;
 }
 
 /**
@@ -285,7 +292,10 @@ export interface ChannelCongestion {
   candidate: boolean;
 }
 
-/** The cabled device that ran a {@link WifiScanEvent}'s scan. */
+/**
+ * A cabled device that can run a channel scan: the one that ran a {@link WifiScanEvent}'s scan, or
+ * the one a scan would use ({@link EspNowSettings.scanner}).
+ */
 export interface WifiScanner {
   mac: string;
   /**
