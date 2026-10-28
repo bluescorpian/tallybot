@@ -1167,16 +1167,16 @@ test("an unknown bridge TX power is refused with a warning: setting kept, nothin
   assert.equal(ipc.lastState()!.state.espnow.bridgeTxPower, "full");
 });
 
-test("unseenLights names known devices with no recorded version that aren't WiFi or No-TX, never the bridge", async () => {
+test("unseenLights names known devices with no recorded version unless STATUS reported WiFi or No-TX, never the bridge", async () => {
   const OLD = "aa:bb:cc:dd:ee:11"; // written by the previous app version: no version, no transport
   const OLD_ESPNOW = "aa:bb:cc:dd:ee:12"; // provisioned to ESP-NOW, version never recorded
-  const WIFI_SSID = "aa:bb:cc:dd:ee:13";
+  const OLD_SSID = "aa:bb:cc:dd:ee:13"; // an SSID kept from WiFi days: the light may be on ESP-NOW now
   const WIFI_STATUS = "aa:bb:cc:dd:ee:14";
   const NOTX = "aa:bb:cc:dd:ee:15";
   const { app, ipc, store } = setup();
   await store.assign(OLD, 1);
   await store.noteReported(OLD_ESPNOW, { transport: Transport.ESPNOW });
-  await store.setSsid(WIFI_SSID, "Venue");
+  await store.setSsid(OLD_SSID, "Venue");
   await store.noteReported(WIFI_STATUS, { transport: Transport.WIFI });
   await store.noteReported(NOTX, { transport: Transport.NOTX });
   await store.assign(BRIDGE, 2);
@@ -1184,7 +1184,7 @@ test("unseenLights names known devices with no recorded version that aren't WiFi
   await app.start();
 
   const { unseenLights, legacyLights } = ipc.lastState()!.state.espnow;
-  assert.deepEqual([...unseenLights].sort(), [OLD, OLD_ESPNOW]);
+  assert.deepEqual([...unseenLights].sort(), [OLD, OLD_ESPNOW, OLD_SSID]);
   assert.deepEqual(legacyLights, []);
 });
 
