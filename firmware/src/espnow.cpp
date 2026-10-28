@@ -437,7 +437,7 @@ void endHunt() {
 
 // Advance a pending move (see g_moveTo). Not while a scan owns the radio: it can't be retuned then,
 // and an announcement would go out on whichever channel the sweep is on. A scan waits for a move
-// (espnow::bridgeSettled), so this only happens to one held past its cap or a move started mid-scan:
+// (espnow::bridgeSettled), so this only happens to one held past its cap (a SET_BRIDGE that arrives mid-scan is deferred):
 // the scan re-pins the old channel, and the move carries on from there.
 void serviceMove() {
   if (!g_moveTo || scan::radioBusy()) return;

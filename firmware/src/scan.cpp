@@ -16,7 +16,7 @@ namespace {
 // Active scan, this long on each of the 13 channels: ≈1.6 s off a bridge's channel, inside the
 // spec's ≈2 s budget and well under a light's HOST_SILENCE_TIMEOUT_MS.
 constexpr uint32_t kChannelMs = 120;
-// Give up on a scan that hasn't finished by then (from the SCAN_WIFI): the host's own timeout reads
+// Give up on a scan that hasn't finished by then (from when it starts, after any hold): the host's own timeout reads
 // the silence as a failure. Nearly twice a normal sweep, and bounded by a light's link (below).
 constexpr unsigned long kScanTimeoutMs = 3000;
 // Give up sending SCAN_RESULTs a host isn't reading.
