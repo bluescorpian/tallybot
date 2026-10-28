@@ -186,18 +186,19 @@ class SidecarStore {
 
 	/**
 	 * The engine that would answer the scans is gone (down, restarting) or never got the request:
-	 * end a scan still in flight with `error`, so its Scan button comes back and says why, and
-	 * forget a finished one, which the old process ran. The panels act only on a scan they watched,
-	 * so neither shows in a drawer that wasn't waiting.
+	 * end a scan still in flight with `error`, so its Scan button comes back and says why. A finished
+	 * scan is left as it is: the panels act only on a scan they watched, so an old result never shows
+	 * in a drawer that wasn't waiting. That also makes a second call (restart() then the shell's
+	 * health push, or any later push while the engine is down) a no-op, keeping the error it set.
 	 */
 	#endScans(error: string): void {
 		if (this.#scanAsked || this.scan?.status === "scanning") {
 			this.scan = { type: "sourceScan", status: "done", found: [], error };
-		} else this.scan = null;
+		}
 		if (this.#wifiScanAsked || this.wifiScan?.status === "scanning") {
 			const empty = { accessPoints: [], congestion: [], suggestedChannel: null };
 			this.wifiScan = { type: "wifiScan", status: "done", scanner: null, ...empty, error };
-		} else this.wifiScan = null;
+		}
 		this.#scanAsked = this.#wifiScanAsked = false;
 	}
 
