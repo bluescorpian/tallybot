@@ -30,6 +30,7 @@
 		updater,
 		onviewupdate,
 		restartBlocked = null,
+		espnow,
 	}: {
 		open?: boolean;
 		source?: Source | null;
@@ -43,6 +44,7 @@
 		updater?: ComponentProps<typeof SettingsPanel>["updater"];
 		onviewupdate?: () => void;
 		restartBlocked?: string | null;
+		espnow?: ComponentProps<typeof SettingsPanel>["espnow"];
 	} = $props();
 
 	// mirrors the panel's unsaved-changes state; guards accidental dismissal
@@ -82,6 +84,7 @@
 				{updater}
 				{onviewupdate}
 				{restartBlocked}
+				{espnow}
 				bind:dirty
 				onclose={() => (open = false)}
 			/>

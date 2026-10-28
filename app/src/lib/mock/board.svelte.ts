@@ -25,9 +25,28 @@
 // wrong light in first while the flasher waits for a wireless one.
 // `?wifi=connected|weak|joining|failed` sets the wired A4:F2 light's live join state,
 // shown on its Configure → Wi-Fi page.
+// `?espnow=` sets up Settings → ESP-NOW (by default the wired A4:F2 light runs firmware that can
+// scan, so Scan runs on it):
+//   bridge — only the bridge (F0:0D) can scan: the "rig may blink" warning before the click
+//   noscan — nothing on USB can scan: Scan is disabled, with the reason
+//   legacy — the rig is on channel 6; B2:5A runs firmware that can't follow a channel change and
+//            C1:08 hasn't been seen since the update (both named when the channel changes), and
+//            the wired D2:44 light is set up for ESP-NOW but stored channel 1 (its menu flags it)
 import { untrack } from "svelte";
-import type { AppState, Device, DeviceFirmware, Input, Tally, TransportMode } from "$ipc";
-import { ESPNOW_CHANNEL } from "$protocol";
+import type {
+	AppState,
+	BridgeTxPower,
+	ChannelCongestion,
+	Device,
+	DeviceFirmware,
+	Input,
+	Tally,
+	TransportMode,
+	WifiAccessPoint,
+	WifiScanEvent,
+	WifiScanner,
+} from "$ipc";
+import { ESPNOW_CHANNEL, supportsChannelSelection } from "$protocol";
 import type { Backend, BoardHealth } from "$lib/backend";
 import type { FlashSession } from "$lib/flasher/session.svelte";
 import type { LightSettings } from "$lib/components/flasher/FlasherDialog.svelte";
@@ -56,7 +75,15 @@ function mock(
 	opts: Partial<
 		Pick<
 			Device,
-			"transport" | "provisionedMode" | "ssid" | "wifiState" | "rssi" | "protocolVersion" | "bridge" | "firmware"
+			| "transport"
+			| "provisionedMode"
+			| "ssid"
+			| "wifiState"
+			| "rssi"
+			| "protocolVersion"
+			| "bridge"
+			| "firmware"
+			| "espnowChannel"
 		>
 	> = {},
 ): Device {
@@ -74,7 +101,7 @@ function mock(
 		wifiState: opts.wifiState ?? null,
 		rssi: opts.rssi ?? null,
 		bridge: opts.bridge ?? false,
-		espnowChannel: null,
+		espnowChannel: opts.espnowChannel ?? null,
 	};
 }
 
@@ -97,10 +124,12 @@ const HERO_DEVICES = (): Device[] => [
  *   F0:0D — docked v3 device designated as the ESP-NOW bridge (the bridge toggle)
  * And one ESP-NOW light (transport "espnow") relayed through that bridge.
  */
-function rigDevices(showOutdated: boolean, wifiDemo: string | null): Device[] {
+function rigDevices(showOutdated: boolean, wifiDemo: string | null, espnowDemo: string | null): Device[] {
 	return [
 		mock("a4:f2:01:00:11:22", "A4:F2", "assigned", 1, {
 			transport: "usb",
+			// firmware new enough to scan for a quiet ESP-NOW channel, unless the demo says otherwise
+			protocolVersion: espnowDemo === "bridge" || espnowDemo === "noscan" ? 2 : 4,
 			firmware: showOutdated ? MOCK_OLD_FIRMWARE : undefined,
 			provisionedMode: "wifi",
 			ssid: "GreenRoom-5G",
@@ -116,11 +145,18 @@ function rigDevices(showOutdated: boolean, wifiDemo: string | null): Device[] {
 			provisionedMode: "espnow",
 			protocolVersion: 3,
 		}),
-		mock("d2:44:01:00:99:aa", "D2:44", "unassigned", null, { transport: "usb", wifiState: "idle" }),
+		espnowDemo === "legacy"
+			? mock("d2:44:01:00:99:aa", "D2:44", "unassigned", null, {
+					transport: "usb",
+					provisionedMode: "espnow",
+					protocolVersion: 4,
+					espnowChannel: ESPNOW_CHANNEL,
+				})
+			: mock("d2:44:01:00:99:aa", "D2:44", "unassigned", null, { transport: "usb", wifiState: "idle" }),
 		mock("f0:0d:01:00:bb:cc", "F0:0D", "unassigned", null, {
 			transport: "usb",
 			provisionedMode: "notx",
-			protocolVersion: 3,
+			protocolVersion: espnowDemo === "bridge" ? 4 : 3,
 			bridge: true,
 		}),
 		mock("9f:31:01:00:bb:cc", "9F:31", "unassigned", null),
@@ -134,6 +170,46 @@ const RIG_INPUTS = [
 	{ id: 4, label: "Laptop" },
 ];
 const LIVE_TALLIES: Tally[] = ["live", "preview", "idle", "idle"];
+
+/** What the mock's channel scan "hears": a busy low band, a quieter top. */
+const MOCK_ACCESS_POINTS: WifiAccessPoint[] = [
+	{ channel: 1, rssi: -48, ssid: "GreenRoom" },
+	{ channel: 1, rssi: -63, ssid: "Venue-Guest" },
+	{ channel: 3, rssi: -71, ssid: "" },
+	{ channel: 6, rssi: -55, ssid: "GreenRoom-5G" },
+	{ channel: 6, rssi: -80, ssid: "Bar POS" },
+	{ channel: 11, rssi: -77, ssid: "Production" },
+	{ channel: 9, rssi: -88, ssid: "DIRECT-printer" },
+].sort((a, b) => b.rssi - a.rssi);
+/**
+ * What the sidecar's scorer (`channel-scan.ts`) makes of those access points, as [channel, score,
+ * access points counted]. Copied rather than imported: that module's `.ts` import paths don't
+ * type-check under the app's tsconfig.
+ */
+const MOCK_CONGESTION: ChannelCongestion[] = (
+	[
+		[1, 1.69, 3],
+		[2, 2.61, 5],
+		[3, 2.61, 5],
+		[4, 2.61, 5],
+		[5, 2.79, 6],
+		[6, 1.51, 4],
+		[7, 1.84, 5],
+		[8, 1.43, 4],
+		[9, 1.43, 4],
+		[10, 1.43, 4],
+		[11, 0.5, 2],
+		[12, 0.5, 2],
+		[13, 0.5, 2],
+	] as const
+).map(([channel, score, accessPoints]) => ({
+	channel,
+	score,
+	accessPoints,
+	candidate: [1, 6, 11, 13].includes(channel),
+}));
+/** The scorer's pick from {@link MOCK_CONGESTION}: the quietest of 1, 6, 11 and 13. */
+const MOCK_SUGGESTED = 11;
 
 export class MockBoard implements Backend {
 	readonly flasher: MockFlasher;
@@ -157,6 +233,14 @@ export class MockBoard implements Backend {
 	#wrongOnce: boolean;
 	#bridgeFailOnce: boolean;
 	#connectTimer: ReturnType<typeof setTimeout> | undefined;
+	#scanTimer: ReturnType<typeof setTimeout> | undefined;
+
+	/** Settings → ESP-NOW: the rig's channel and the bridge's power, as the engine would hold them. */
+	espnowChannel = $state(ESPNOW_CHANNEL);
+	bridgeTxPower = $state<BridgeTxPower>("full");
+	#legacyLights: string[] = [];
+	#unseenLights: string[] = [];
+	wifiScan = $state<WifiScanEvent | null>(null);
 
 	constructor(params: URLSearchParams) {
 		const demo = params.get("demo");
@@ -188,12 +272,17 @@ export class MockBoard implements Backend {
 				? HERO_DEVICES()
 				: demo === "firstrun"
 					? []
-					: rigDevices(demo === "outdated" || demo === "newerfw", params.get("wifi"));
+					: rigDevices(demo === "outdated" || demo === "newerfw", params.get("wifi"), params.get("espnow"));
 		// Mock lights with no version given run the bundled firmware (unknown when none is bundled).
 		for (const d of devices) {
 			if (d.firmware.kind !== "reported") d.firmware = this.#bundledFirmware();
 		}
 		this.devices = devices;
+		if (params.get("espnow") === "legacy" && demo !== "hero" && demo !== "firstrun") {
+			this.espnowChannel = 6;
+			this.#legacyLights = ["b2:5a:01:00:ee:ff"];
+			this.#unseenLights = ["c1:08:01:00:77:88"];
+		}
 		if (demo === "unflashed" || demo === "newerfw") this.#unflashed = [{ port: "COM5", mac: null }];
 	}
 
@@ -227,8 +316,26 @@ export class MockBoard implements Backend {
 			devices: this.devices,
 			programGate: { active: this.override, source: null },
 			faults: [],
-			espnow: { channel: ESPNOW_CHANNEL, bridgeTxPower: "full", legacyLights: [], unseenLights: [], scanner: null },
+			espnow: {
+				channel: this.espnowChannel,
+				bridgeTxPower: this.bridgeTxPower,
+				legacyLights: this.#legacyLights,
+				unseenLights: this.#unseenLights,
+				scanner: this.#scanner,
+			},
 		};
+	});
+
+	// Chosen as the engine chooses: a cabled light new enough to scan that isn't the bridge, else
+	// the bridge if it is cabled and new enough, else none.
+	readonly #scanner = $derived.by<WifiScanner | null>(() => {
+		const able = this.devices.filter(
+			(d) => d.transport === "usb" && d.protocolVersion !== null && supportsChannelSelection(d.protocolVersion),
+		);
+		const light = able.find((d) => !d.bridge);
+		if (light) return { mac: light.mac, bridge: false };
+		const bridge = able.find((d) => d.bridge);
+		return bridge ? { mac: bridge.mac, bridge: true } : null;
 	});
 
 	// Off Tauri there's no shell; the mock's blank boards stand in for its health snapshot.
@@ -251,7 +358,10 @@ export class MockBoard implements Backend {
 	}
 
 	start(): () => void {
-		return () => clearTimeout(this.#connectTimer);
+		return () => {
+			clearTimeout(this.#connectTimer);
+			clearTimeout(this.#scanTimer);
+		};
 	}
 
 	// ── Commands: mutate the mock device list the engine would normally own ──
@@ -297,6 +407,8 @@ export class MockBoard implements Backend {
 			d.provisionedMode = mode;
 			d.ssid = null;
 		}
+		// the engine gives every light it sets up for ESP-NOW the rig's channel
+		if (mode === "espnow") d.espnowChannel = this.espnowChannel;
 	}
 	// One bridge per session: designating a new MAC clears the previous one (the sidecar enforces
 	// this; the mock mirrors it so the marker moves as expected).
@@ -308,6 +420,40 @@ export class MockBoard implements Backend {
 		this.sourceMode = "connecting";
 		clearTimeout(this.#connectTimer);
 		this.#connectTimer = setTimeout(() => (this.sourceMode = "connected"), 1600);
+	}
+	setEspNowChannel(channel: number) {
+		this.espnowChannel = channel;
+	}
+	setBridgeTxPower(txPower: BridgeTxPower) {
+		this.bridgeTxPower = txPower;
+	}
+	/** A scan takes a few seconds on the device; the mock answers with a fixed set of access points. */
+	scanWifi() {
+		if (this.wifiScan?.status === "scanning") return;
+		const empty = { accessPoints: [], congestion: [], suggestedChannel: null };
+		const scanner = this.#scanner;
+		if (scanner === null) {
+			this.wifiScan = {
+				type: "wifiScan",
+				status: "done",
+				scanner,
+				...empty,
+				error: "The tally light on USB runs firmware too old to scan. Update its firmware, or plug in another light.",
+			};
+			return;
+		}
+		this.wifiScan = { type: "wifiScan", status: "scanning", scanner, ...empty, error: null };
+		this.#scanTimer = setTimeout(() => {
+			this.wifiScan = {
+				type: "wifiScan",
+				status: "done",
+				scanner,
+				accessPoints: MOCK_ACCESS_POINTS,
+				congestion: MOCK_CONGESTION,
+				suggestedChannel: MOCK_SUGGESTED,
+				error: null,
+			};
+		}, 3000);
 	}
 	/** The mock source has no dev mode. */
 	setProgram() {}

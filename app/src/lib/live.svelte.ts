@@ -1,6 +1,6 @@
 // The live backend (under Tauri): the sidecar connection ($lib/ipc.svelte), the shell's health,
 // espflash in the shell and the Tauri updater plugin. The mock is $lib/mock/board.svelte.ts.
-import type { AppState, TransportMode } from "$ipc";
+import type { AppState, BridgeTxPower, TransportMode } from "$ipc";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ESPNOW_CHANNEL } from "$protocol";
 import type { Backend, EngineControls } from "$lib/backend";
@@ -39,6 +39,9 @@ export class LiveBackend implements Backend {
 	}
 	get notices() {
 		return sidecar.notices;
+	}
+	get wifiScan() {
+		return sidecar.wifiScan;
 	}
 	dismissNotice(id: number) {
 		sidecar.dismissNotice(id);
@@ -88,6 +91,15 @@ export class LiveBackend implements Backend {
 	}
 	setSource(ip: string) {
 		sidecar.setSource(ip);
+	}
+	setEspNowChannel(channel: number) {
+		sidecar.setEspNowChannel(channel);
+	}
+	setBridgeTxPower(txPower: BridgeTxPower) {
+		sidecar.setBridgeTxPower(txPower);
+	}
+	scanWifi() {
+		sidecar.scanWifi();
 	}
 	setProgram(inputId: number) {
 		sidecar.setProgram(inputId);

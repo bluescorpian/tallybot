@@ -53,6 +53,12 @@ export interface BoardLight {
 	/** True while this device is the designated, device-confirmed ESP-NOW bridge. */
 	bridge: boolean;
 	/**
+	 * For a cabled light set up for ESP-NOW (not the bridge): the channel it has stored, as its
+	 * STATUS reports it, beside the rig's channel. It joins the rig on `stored` once unplugged, so a
+	 * mismatch is flagged in its menu. Null for any other device, or one too old to report it.
+	 */
+	espnowChannel: { stored: number; rig: number } | null;
+	/**
 	 * The light's firmware is older than the firmware this app ships, so its menu offers an
 	 * update. Decided by `firmwareOutdated` in `$lib/flasher/flasher.ts` from the device's
 	 * `firmware` against the bundled version.

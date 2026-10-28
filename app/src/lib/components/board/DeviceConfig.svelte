@@ -120,6 +120,32 @@
 	{/each}
 </div>
 
+<!-- ESP-NOW CHANNEL: what this light has stored (its STATUS), against the rig's channel. Once
+     unplugged it looks for the bridge there first, so a mismatch is flagged with the fix:
+     setting it to ESP-NOW again gives it the rig's channel. -->
+{#if light.espnowChannel}
+	{@const ch = light.espnowChannel}
+	<div class="bg-border h-px"></div>
+	<div class="px-3 py-2.5">
+		<p class="text-muted-foreground pb-1 text-[0.68rem]">ESP-NOW channel</p>
+		<div class="flex items-center justify-between gap-2">
+			<span class="text-sm leading-tight">
+				<span class="font-mono font-medium select-text">{ch.stored}</span>
+				<span class="text-muted-foreground text-[0.68rem]"
+					>{ch.stored === ch.rig ? "· same as the rig" : `· the rig is on ${ch.rig}`}</span
+				>
+			</span>
+			{#if ch.stored !== ch.rig}
+				<button
+					type="button"
+					class="text-foreground border-border bg-background hover:bg-accent focus-visible:ring-ring inline-flex h-7 shrink-0 cursor-pointer items-center rounded-lg border px-2 text-[0.72rem] font-medium shadow-sm transition-colors outline-none focus-visible:ring-2"
+					onclick={() => actions.setTransport?.(light.mac, "espnow")}>Move to {ch.rig}</button
+				>
+			{/if}
+		</div>
+	</div>
+{/if}
+
 <!-- BRIDGE: relay tally to ESP-NOW lights. USB-gated (the bridge is by definition
      cabled) and version-gated ≥ 3 — hidden entirely for firmware that can't speak it,
      so the section only appears where it's actionable. Flat language: a hairline above,

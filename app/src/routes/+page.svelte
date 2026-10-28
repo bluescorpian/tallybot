@@ -24,6 +24,7 @@
 	import CircleAlert from "@lucide/svelte/icons/circle-alert";
 	import X from "@lucide/svelte/icons/x";
 	import SettingsSheet from "$lib/components/settings/SettingsSheet.svelte";
+	import type { EspNowHost } from "$lib/components/settings/EspNowGroup.svelte";
 	import TitleBar from "$lib/components/chrome/TitleBar.svelte";
 	import Credit from "$lib/components/chrome/Credit.svelte";
 	import FlasherDialog from "$lib/components/flasher/FlasherDialog.svelte";
@@ -82,6 +83,22 @@
 		return null;
 	});
 	const restarting = $derived(updater.state.status === "restarting");
+
+	// Settings → ESP-NOW. Getters, so the drawer reads the live snapshot and scan.
+	const espnow: EspNowHost = {
+		get settings() {
+			return appState.espnow;
+		},
+		get scan() {
+			return backend.wifiScan;
+		},
+		get anyCabled() {
+			return appState.devices.some((d) => d.transport === "usb");
+		},
+		scanWifi: () => backend.scanWifi(),
+		setChannel: (channel) => backend.setEspNowChannel(channel),
+		setTxPower: (txPower) => backend.setBridgeTxPower(txPower),
+	};
 
 	// While an install runs, anything that restarts the engine is refused, since that would cut
 	// the install off mid-write.
@@ -313,6 +330,7 @@
 		scanResult={backend.engine?.scan ?? null}
 		{updater}
 		restartBlocked={installBlocked}
+		{espnow}
 		onviewupdate={() => {
 			settingsOpen = false;
 			updateOpen = true;

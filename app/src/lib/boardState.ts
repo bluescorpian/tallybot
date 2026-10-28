@@ -34,7 +34,10 @@ export function shortMac(mac: string): string {
  * these). `provisionedMode`/`ssid`
  * are optional on the wire (older sidecar builds omit them) → default to null.
  */
-function provisioning(d: Device) {
+function provisioning(d: Device, rigChannel: number) {
+	// STATUS's channel means something only for a light set up for ESP-NOW; the bridge's own channel
+	// is the rig's (SET_BRIDGE retunes it), so it's never flagged.
+	const espnowLight = d.provisionedMode === "espnow" && !d.bridge && d.espnowChannel !== null;
 	return {
 		transport: d.transport,
 		provisionedMode: d.provisionedMode ?? null,
@@ -43,6 +46,7 @@ function provisioning(d: Device) {
 		rssi: d.rssi,
 		protocolVersion: d.protocolVersion,
 		bridge: d.bridge ?? false,
+		espnowChannel: espnowLight ? { stored: d.espnowChannel!, rig: rigChannel } : null,
 		// Whether that version is out of date depends on the firmware this app bundles, which the
 		// page knows and this mapper doesn't: it applies `FlashSession.outdated` ($lib/flasher/session.svelte).
 		firmwareOutdated: false,
@@ -75,14 +79,14 @@ const DEFAULT_INPUTS: BoardInput[] = [1, 2, 3, 4].map((n) => ({
  * viewable and — when online — flashable, but cannot be wired to an input.
  * Offline keeps its device-blue; everything else shows the setup colour.
  */
-function dockLight(d: Device): BoardLight {
+function dockLight(d: Device, rigChannel: number): BoardLight {
 	return {
 		mac: d.mac,
 		label: shortMac(d.mac),
 		inputId: null,
 		state: d.state === "offline" ? "offline" : "setup",
 		brightness: d.brightness,
-		...provisioning(d),
+		...provisioning(d, rigChannel),
 	};
 }
 
@@ -107,6 +111,7 @@ export function deviceToBoard(
 	d: Device,
 	inputs: Input[],
 	override: boolean,
+	rigChannel: number,
 ): BoardLight {
 	const seated = d.inputId !== null && inputs.some((i) => i.id === d.inputId);
 	const inputId = seated ? String(d.inputId) : null;
@@ -124,7 +129,7 @@ export function deviceToBoard(
 		inputId,
 		state,
 		brightness: d.brightness,
-		...provisioning(d),
+		...provisioning(d, rigChannel),
 	};
 }
 
@@ -175,7 +180,7 @@ export function toBoardProps(state: AppState): BoardProps {
 	return {
 		inputs: noSource ? DEFAULT_INPUTS : real.map(inputToBoard),
 		lights: state.devices.map((d) =>
-			assignable ? deviceToBoard(d, real, override) : dockLight(d),
+			assignable ? deviceToBoard(d, real, override, state.espnow.channel) : dockLight(d, state.espnow.channel),
 		),
 		sourceStatus: sourceStatus(state.source),
 		sourceConnected: connected,

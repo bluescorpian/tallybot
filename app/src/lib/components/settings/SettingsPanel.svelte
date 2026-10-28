@@ -1,7 +1,7 @@
 <script lang="ts">
 	// Settings content (docs/design.md → "Settings"). Standard shadcn (Luma) surface —
 	// flat, not neumorphic; the bespoke/neumorphic language is the canvas only.
-	// Single scrolling pane, three settled groups: Source / General / About, over a
+	// Single scrolling pane, four groups: Source / ESP-NOW / General / About, over a
 	// shared dirty-gated SAVE footer.
 	//
 	// This is the re-hostable PANEL: scrolling cards + footer, no title bar — the
@@ -10,9 +10,9 @@
 	//
 	// Commit model: one shared, dirty-gated SAVE (not per-field) — so it scales as
 	// more savable settings arrive (e.g. OBS) without each growing its own button.
-	// Setting *values* (IP, launch-on-startup, future OBS) are pending until Save;
-	// Cancel reverts them. Actions stay immediate (Scan-pick fills the field,
-	// Restart, links).
+	// Setting *values* (IP, ESP-NOW channel and bridge power, launch-on-startup, future OBS)
+	// are pending until Save; Cancel reverts them. Actions stay immediate (Scan-pick fills the
+	// field, Restart, links).
 	//
 	// Behaviour:
 	//   • Save starts the connection — no connect/disconnect/forget buttons. Reconnect
@@ -33,7 +33,7 @@
 	import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
 
 	import { onMount, untrack } from "svelte";
-	import type { Source, SourceScanEvent } from "$ipc";
+	import type { BridgeTxPower, Source, SourceScanEvent } from "$ipc";
 	import { PROTOCOL_VERSION, isIPv4 } from "$protocol";
 	import { version as APP_VERSION } from "../../../../package.json";
 	import { Button } from "$lib/components/ui/button";
@@ -43,6 +43,7 @@
 	import { downloadProgress, type Updater } from "$lib/updater/updater";
 	import { formatClockTime } from "$lib/format/time";
 	import { LICENSE_URL, REPO_URL } from "$lib/links";
+	import EspNowGroup, { type EspNowHost } from "./EspNowGroup.svelte";
 
 	// Host hooks:
 	//  • onsave  — fired after Save commits a *changed* IP, so a host can mirror the
@@ -59,6 +60,8 @@
 	//  • autostart — read / set the OS login item behind "Launch on system startup".
 	//  • updater   — the app updater, for the About card's Updates row (check inline;
 	//    anything past "available" opens the update dialog via `onviewupdate`).
+	//  • espnow    — the ESP-NOW group's live settings and scan, and the hooks Save commits to;
+	//    without it the group isn't shown.
 	let {
 		source = null,
 		onsave,
@@ -70,6 +73,7 @@
 		updater,
 		onviewupdate,
 		restartBlocked = null,
+		espnow,
 		dirty = $bindable(false),
 	}: {
 		source?: Source | null;
@@ -89,6 +93,7 @@
 		onviewupdate?: () => void;
 		/** Why the engine can't be restarted right now (a firmware install is running), or null. */
 		restartBlocked?: string | null;
+		espnow?: EspNowHost;
 		dirty?: boolean;
 	} = $props();
 
@@ -107,10 +112,19 @@
 		);
 	});
 
+	// ESP-NOW values, seeded like the IP: a change made elsewhere while the drawer is open doesn't
+	// overwrite the draft.
+	let savedChannel = $state(untrack(() => espnow?.settings.channel ?? 0));
+	let channel = $state(untrack(() => savedChannel));
+	let savedTxPower = $state<BridgeTxPower>(untrack(() => espnow?.settings.bridgeTxPower ?? "full"));
+	let txPower = $state<BridgeTxPower>(untrack(() => savedTxPower));
+
 	const ipTrim = $derived(ip.trim());
 	const ipChanged = $derived(ipTrim !== savedIp);
 	const launchChanged = $derived(launch !== savedLaunch);
-	const isDirty = $derived(ipChanged || launchChanged);
+	const channelChanged = $derived(channel !== savedChannel);
+	const txPowerChanged = $derived(txPower !== savedTxPower);
+	const isDirty = $derived(ipChanged || launchChanged || channelChanged || txPowerChanged);
 	// keep the bindable `dirty` prop in sync so the host can guard dismissal on it
 	$effect(() => {
 		dirty = isDirty;
@@ -152,6 +166,14 @@
 				clearTimeout(connectTimer);
 				connectTimer = setTimeout(() => (mockConnection = "connected"), 1600);
 			}
+		}
+		if (channelChanged) {
+			savedChannel = channel;
+			espnow?.setChannel(channel);
+		}
+		if (txPowerChanged) {
+			savedTxPower = txPower;
+			espnow?.setTxPower(txPower);
 		}
 		if (launchChanged) {
 			const want = launch;
@@ -386,6 +408,19 @@
 					</div>
 				</div>
 			</section>
+
+			<!-- ════════════════ ESP-NOW ════════════════ -->
+			{#if espnow}
+				<EspNowGroup
+					settings={espnow.settings}
+					scan={espnow.scan}
+					anyCabled={espnow.anyCabled}
+					{savedChannel}
+					bind:channel
+					bind:txPower
+					onscan={espnow.scanWifi}
+				/>
+			{/if}
 
 			<!-- ════════════════ GENERAL ════════════════ -->
 			<section>

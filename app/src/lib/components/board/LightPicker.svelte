@@ -41,6 +41,7 @@
 	import CircleArrowUp from "@lucide/svelte/icons/circle-arrow-up";
 	import ArrowUp from "@lucide/svelte/icons/arrow-up";
 	import ChevronRight from "@lucide/svelte/icons/chevron-right";
+	import Radio from "@lucide/svelte/icons/radio";
 
 	interface Props {
 		/** The light, with its display state and current input already resolved by the board. */
@@ -224,6 +225,27 @@
 							About a minute, over USB
 						{/if}
 					</span>
+				</span>
+				<ChevronRight class="text-muted-foreground size-4 shrink-0" />
+			</button>
+			<div class="bg-border h-px"></div>
+		{/if}
+
+		{#if light.espnowChannel && light.espnowChannel.stored !== light.espnowChannel.rig}
+			<!-- Channel mismatch: this cabled ESP-NOW light has stored a different channel from the
+			     rig's, so unplugged it starts looking for the bridge in the wrong place. Leads to the
+			     Configure pane, which shows both channels and moves it. -->
+			<button
+				type="button"
+				class="hover:bg-accent focus-visible:bg-accent flex w-full cursor-pointer items-center gap-2.5 px-3 py-2.5 text-left outline-none transition-colors"
+				onclick={() => (view = "config")}
+			>
+				<Radio class="text-muted-foreground size-4 shrink-0" />
+				<span class="min-w-0 flex-1">
+					<span class="block text-sm leading-tight font-medium">On channel {light.espnowChannel.stored}</span>
+					<span class="text-muted-foreground block text-[0.68rem] leading-tight"
+						>The rig is on {light.espnowChannel.rig}</span
+					>
 				</span>
 				<ChevronRight class="text-muted-foreground size-4 shrink-0" />
 			</button>

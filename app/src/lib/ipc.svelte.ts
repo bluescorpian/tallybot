@@ -16,6 +16,7 @@ import {
 	parseEvent,
 	serializeMessage,
 	type AppState,
+	type BridgeTxPower,
 	type NoticeEvent,
 	type SourceScanEvent,
 	type TransportMode,
@@ -213,6 +214,18 @@ class SidecarStore {
 	}
 	scanSources(): void {
 		this.#send({ type: "scanSources" });
+	}
+	/** Set the rig's ESP-NOW channel (1–13); the sidecar persists it and retunes the bridge. */
+	setEspNowChannel(channel: number): void {
+		this.#send({ type: "setEspNowChannel", channel });
+	}
+	/** Set the bridge's transmit power for this session (full again on every launch). */
+	setBridgeTxPower(txPower: BridgeTxPower): void {
+		this.#send({ type: "setBridgeTxPower", txPower });
+	}
+	/** Scan for access points from a cabled light, to suggest a quiet channel (answered in `wifiScan`). */
+	scanWifi(): void {
+		this.#send({ type: "scanWifi" });
 	}
 	/**
 	 * Replace the running sidecar with a fresh one (Settings → Restart). Resolves once the
