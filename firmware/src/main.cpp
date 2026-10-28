@@ -184,6 +184,9 @@ void serviceWifiClient(unsigned long now) {
       g_wifiUp = false;
       tally::stop();
     }
+    // A running SCAN_WIFI finishes first (it is bounded): the bring-up blocks and takes the radio, and
+    // the commands the scan holds (one may make this device a bridge) apply at the loop top before it.
+    if (scan::active()) return;
     if (wifi::serviceDown(now)) startWifiClient();  // sustained loss → retry + portal
     return;
   }
@@ -266,6 +269,7 @@ void loop() {
         scan::abort();           // the WiFi client takes the radio back
         control::runDeferred();  // the host's last commands apply before the hand-back, as they arrived
         usb::resetSession();
+        if (espnow::bridgeActive()) break;  // a held SET_BRIDGE made this a bridge: it owns the radio now
         // TRANSPORT_WIFI, not the NVS mode: USB_OWNED is reached only from a WiFi boot, and a
         // SET_TRANSPORT received while cabled applies next boot.
         startTransportClient(TRANSPORT_WIFI, Resume::USB_RELEASED);

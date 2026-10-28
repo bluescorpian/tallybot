@@ -17,18 +17,24 @@ namespace {
 // spec's ≈2 s budget and well under a light's HOST_SILENCE_TIMEOUT_MS.
 constexpr uint32_t kChannelMs = 120;
 // Give up on a scan that hasn't finished by then (from the SCAN_WIFI): the host's own timeout reads
-// the silence as a failure. Shorter than the USB session timeout, so the host vanishing can't tear
-// the radio down mid-scan (the SCAN_WIFI itself restarts that timer).
-constexpr unsigned long kScanTimeoutMs = 4000;
+// the silence as a failure. Nearly twice a normal sweep, and bounded by a light's link (below).
+constexpr unsigned long kScanTimeoutMs = 3000;
 // Give up sending SCAN_RESULTs a host isn't reading.
 constexpr unsigned long kEmitTimeoutMs = 3000;
 // After esp_wifi_scan_stop, how long to wait for the scan to end (SCAN_DONE, or on a bridge the
 // radio accepting its channel again): nothing documents that the stop is synchronous.
 constexpr unsigned long kStopSettleMs = 500;
-static_assert(kScanTimeoutMs + kStopSettleMs < HOST_SILENCE_TIMEOUT_MS,
-              "a scan must end, stopped or not, before the USB session can time out");
+// A light hears its bridge only through the sidecar's keyframes (REFRESH_PERIOD_MS, app.ts): its last
+// one can come a period before the bridge leaves its channel, and the next a period after it returns.
+constexpr unsigned long kKeyframeMs = 250;
+constexpr unsigned long kLinkMarginMs = 500;  // event latency, a lost keyframe, clock drift
+// A bridge is off its channel for at most kScanTimeoutMs + kStopSettleMs, and its lights must not
+// time out over that. The same bound keeps the radio phases inside the USB session timeout, so a
+// host vanishing (the SCAN_WIFI restarted that timer) can't tear the radio down mid-scan.
+static_assert(kScanTimeoutMs + kStopSettleMs + 2 * kKeyframeMs + kLinkMarginMs <= HOST_SILENCE_TIMEOUT_MS,
+              "a bridge's worst-case time off its channel would let its lights' links time out");
 constexpr unsigned long kStopRetryMs = 50;  // a bridge's quiet re-pin attempts while stopping
-// While STARTING, how often to cancel a connect that slipped past the paused join.
+// While STARTING with the join paused, how often to repeat the pause's disconnect.
 constexpr unsigned long kJoinKickMs = 500;
 // A sweep can't end sooner than kChannelMs on each channel; a SCAN_DONE this early is the late one
 // of a scan stopped before (see g_staleOwed). Half the sweep, so a short country list still clears it.
@@ -50,7 +56,8 @@ unsigned long g_phaseStart = 0;  // the SCAN_WIFI (STARTING/SCANNING), the stop 
 unsigned long g_scanStart = 0;   // the driver accepted the scan
 esp_err_t g_startErr = ESP_OK;   // the driver's last refusal, for the give-up line
 bool g_radioWasOff = false;      // the scan switched STA on (No-TX), so it switches it off after
-bool g_joinPaused = false;       // the scan paused a join that hadn't associated, so it resumes it after
+bool g_joinPaused = false;       // the scan paused a join the driver reported connecting, so it resumes it after
+bool g_retried = false;          // a failed sweep has been retried once (a connect may have aborted it)
 unsigned long g_lastKick = 0;    // STARTING: the last stopJoinAttempt
 unsigned long g_lastRepin = 0;   // STOPPING: the last quiet re-pin attempt
 // A stopped scan whose SCAN_DONE never came may still deliver it, into the next scan: that one then
@@ -96,8 +103,14 @@ void tryStart() {
     TLOG(LOG_LEVEL_INFO, "SCAN_WIFI: scanning channels %u-%u\n", ESPNOW_CHANNEL_MIN, ESPNOW_CHANNEL_MAX);
     return;
   }
-  g_phase = Phase::STARTING;  // ESP_ERR_WIFI_STATE while connecting; others retry too
-  if (g_joinPaused && g_startErr == ESP_ERR_WIFI_STATE && millis() - g_lastKick >= kJoinKickMs) {
+  g_phase = Phase::STARTING;  // retried each tick, whatever the refusal
+  if (g_startErr != ESP_ERR_WIFI_STATE) return;
+  // "Still connecting" (esp_wifi.h): pause the join the driver reports in flight, and only that one.
+  if (!g_joinPaused) {
+    g_joinPaused = wifi::pauseJoin();
+    if (g_joinPaused) TLOG(LOG_LEVEL_INFO, "SCAN_WIFI: WiFi join paused for the scan\n");
+    g_lastKick = millis();
+  } else if (millis() - g_lastKick >= kJoinKickMs) {
     g_lastKick = millis();
     wifi::stopJoinAttempt();
   }
@@ -155,12 +168,13 @@ void scan::request() {
     return;
   }
   g_radioWasOff = wifi::scanRadioUp();
-  g_joinPaused = !g_radioWasOff && wifi::pauseJoin();
-  if (g_joinPaused) TLOG(LOG_LEVEL_INFO, "SCAN_WIFI: WiFi join paused for the scan\n");
-  g_lastKick = millis();
+  g_joinPaused = false;
+  g_retried = false;
   g_phaseStart = millis();
   tryStart();
 }
+
+bool scan::active() { return g_phase != Phase::IDLE; }
 
 bool scan::radioBusy() {
   return g_phase == Phase::STARTING || g_phase == Phase::SCANNING || g_phase == Phase::STOPPING;
@@ -218,9 +232,19 @@ void scan::loop() {
         return;
       }
       TLOG(LOG_LEVEL_INFO, "SCAN_WIFI: scan done (id %u)\n", g_doneId.load());
-      releaseRadio();
       int16_t count = WiFi.scanComplete();  // the records _scanDone copied (negative: none kept)
-      if (!g_doneOk.load() || count < 0) {
+      bool failed = !g_doneOk.load() || count < 0;
+      // A connect the scan didn't pause (a retry Arduino fired in the moment the driver was idle, so
+      // the scan started) aborts the sweep (esp_wifi.h). Once, within the bound: the restart sees the
+      // connect and pauses it.
+      if (failed && !g_retried && millis() - g_phaseStart < kScanTimeoutMs) {
+        g_retried = true;
+        TLOG(LOG_LEVEL_WARN, "SCAN_WIFI: the scan failed; retrying\n");
+        tryStart();
+        return;
+      }
+      releaseRadio();
+      if (failed) {
         TLOG(LOG_LEVEL_ERROR, "SCAN_WIFI: the scan failed\n");
         finish();
         return;

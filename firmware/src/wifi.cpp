@@ -37,6 +37,7 @@ bool g_associated = false;  // associated in the current connect episode
 
 // Set from the main loop, read in the event task's onDisconnected: SCAN_WIFI paused the join.
 volatile bool g_joinPaused = false;
+volatile bool g_retryCancelled = false;  // this pause has cancelled Arduino's one-off retry
 
 // Host-visible join lifecycle for STATUS.
 bool g_joinActive = false;
@@ -123,7 +124,17 @@ void onConnected(WiFiEvent_t, WiFiEventInfo_t) { g_associated = true; }
 void onDisconnected(WiFiEvent_t, WiFiEventInfo_t info) {
   if (g_joinPaused) {  // the scan's own disconnect: not a failure, so the verdict (and FAILED) stand
     g_associated = false;
-    TLOG(LOG_LEVEL_INFO, "WiFi join paused: reason=%u\n", info.wifi_sta_disconnected.reason);
+    uint8_t reason = info.wifi_sta_disconnected.reason;
+    TLOG(LOG_LEVEL_INFO, "WiFi join paused: reason=%u\n", reason);
+    // Arduino's handler ran first (WiFiGeneric.cpp runs onEvent callbacks after its own) and, on the
+    // first disconnect since boot for any reason but ASSOC_LEAVE, re-joined whatever auto-reconnect
+    // says (`first_connect`). Cancel that connect at once: the driver aborts a scan for a connect
+    // (esp_wifi.h, esp_wifi_connect). That retry happens once per boot, so one cancel per pause: the
+    // cancel's own event, whatever its reason, can't set off another.
+    if (reason != WIFI_REASON_ASSOC_LEAVE && !g_retryCancelled) {
+      g_retryCancelled = true;
+      WiFi.disconnect();
+    }
     return;
   }
   g_diag.valid = true;
@@ -202,25 +213,30 @@ bool wifi::scanRadioUp() {
   return true;
 }
 
-// The driver refuses to scan while it is connecting (ESP_ERR_WIFI_STATE), and a join that can't
-// associate is connecting almost all the time: Arduino's STA_DISCONNECTED handler (WiFiGeneric.cpp)
-// re-runs WiFi.begin() at once while auto-reconnect is on. So the scan pauses such a join: auto-
-// reconnect off, then disconnect. The join lifecycle (g_joinActive, g_joinStart) and the last
-// failure (g_diag) are untouched, so STATUS keeps reporting the join (JOINING, or FAILED)
-// throughout. An associated device is left alone: it can scan.
+// Called when the driver has refused a scan because the STA is still connecting (ESP_ERR_WIFI_STATE):
+// a join that can't associate is connecting almost all the time, since Arduino's STA_DISCONNECTED
+// handler (WiFiGeneric.cpp) re-runs WiFi.begin() at once while auto-reconnect is on. So the scan
+// pauses that join: auto-reconnect off, then disconnect. Only a join the driver reports in flight is
+// paused, so a join Arduino has given up on (AUTH_FAIL is not a reconnectable reason) is left
+// stopped, and a device associated but still waiting on DHCP (WL_CONNECTED only comes with the IP)
+// scans without losing its link. The join lifecycle (g_joinActive, g_joinStart) and the last failure
+// (g_diag) are untouched, so STATUS keeps reporting the join (JOINING, or FAILED) throughout.
 bool wifi::pauseJoin() {
-  if (!(WiFi.getMode() & WIFI_MODE_STA) || connected() || !WiFi.getAutoReconnect() || g_storedSsid[0] == '\0')
+  wifi_ap_record_t ap;
+  if (!(WiFi.getMode() & WIFI_MODE_STA) || esp_wifi_sta_get_ap_info(&ap) == ESP_OK || !WiFi.getAutoReconnect())
     return false;
+  g_retryCancelled = false;
   g_joinPaused = true;
   WiFi.setAutoReconnect(false);
   WiFi.disconnect();
   return true;
 }
 
-// Arduino retries once on the first disconnect since boot whatever auto-reconnect says
-// (`first_connect`), so an attempt already in flight when the join was paused can start another.
+// The driver doesn't document that a disconnect ends a connect in flight at once, so while it still
+// refuses the scan, the scan repeats it (onDisconnected already cancels Arduino's own retry).
 void wifi::stopJoinAttempt() { WiFi.disconnect(); }
 
+// The join was connecting when it was paused, so it gets its connect back.
 void wifi::resumeJoin() {
   g_joinPaused = false;
   WiFi.setAutoReconnect(true);

@@ -15,11 +15,11 @@ void disableRadio();             // radio off (a No-TX device)
 // SCAN_WIFI: switch STA on (with the country's channels 1–13) if the radio is off. True if it was
 // off, so the scan switches it off again after; a radio already up is left as it is.
 bool scanRadioUp();
-// SCAN_WIFI on a device whose join hasn't associated: the driver won't scan while connecting, so
-// pauseJoin() stops the join (true if it did); the scan then calls resumeJoin(), or allowReconnect()
-// when it is abandoned to a new radio owner that starts its own join. STATUS still reports JOINING.
+// SCAN_WIFI on a device the driver won't let scan because its join is connecting: pauseJoin() stops
+// that join (true if it did); the scan then calls resumeJoin(), or allowReconnect() when it is
+// abandoned to a new radio owner that starts its own join. STATUS still reports JOINING (or FAILED).
 bool pauseJoin();
-void stopJoinAttempt();  // cancel a connect started after pauseJoin() (Arduino's one-off first retry)
+void stopJoinAttempt();  // re-issue the pause's disconnect, should the driver still be connecting
 void resumeJoin();       // auto-reconnect back on + rejoin with the creds the driver holds
 void allowReconnect();   // auto-reconnect back on, without joining
 
