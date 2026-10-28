@@ -33,7 +33,7 @@ const sampleState: AppState = {
   ],
   programGate: { active: false, source: null },
   faults: [{ key: "atem", level: "warn", message: "Can't connect to the ATEM at 192.168.1.50.", mac: null }],
-  espnow: { channel: 1, bridgeTxPower: "full", legacyLights: [], unseenLights: [] },
+  espnow: { channel: 1, bridgeTxPower: "full", legacyLights: [], unseenLights: [], scanner: { mac: "aa:bb:cc:dd:ee:01", bridge: true } },
 };
 
 test("serializeMessage produces a single NDJSON line", () => {

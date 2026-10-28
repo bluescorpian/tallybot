@@ -311,6 +311,8 @@ function setup(
     log: () => {},
     scanNetwork: () => Promise.resolve([]),
     ...overrides,
+    // No scan reaches a device unless a test injects one.
+    wifiScan: overrides.wifiScan ?? { scanWifi: () => null },
   });
   return { app, server, atem, ipc, store, provisioning, espnow, anim, refresh };
 }
@@ -1424,4 +1426,69 @@ test("a tie among the quietest candidates keeps the current session channel", as
   await tick();
 
   assert.equal(wifiScans(ipc).at(-1)!.suggestedChannel, 13);
+});
+
+const scannerOf = (ipc: FakeIpc) => ipc.lastState()!.state.espnow.scanner;
+
+test("the snapshot names who a scan would run on as cabled devices come, go and leave USB", async () => {
+  const harness = setup();
+  const { app, ipc, server, provisioning } = harness;
+  await app.start();
+  assert.equal(scannerOf(ipc), null, "nothing cabled");
+
+  bringUpUsb(harness, MAC, 3);
+  await tick();
+  assert.equal(scannerOf(ipc), null, "a v3 device can't scan");
+
+  bringUpUsb(harness, LIGHT, 4);
+  await tick();
+  assert.deepEqual(scannerOf(ipc), { mac: LIGHT, bridge: false });
+
+  // Unplugged, but still reachable over TCP: the composite re-announces it without a disconnect.
+  provisioning.wired.delete(LIGHT);
+  server.connectDevice(LIGHT, 4);
+  await tick();
+  assert.equal(scannerOf(ipc), null, "off USB, it can't scan");
+
+  bringUpUsb(harness, LIGHT, 4);
+  await tick();
+  assert.deepEqual(scannerOf(ipc), { mac: LIGHT, bridge: false }, "back on USB");
+
+  server.disconnectDevice(LIGHT);
+  await tick();
+  assert.equal(scannerOf(ipc), null, "gone");
+});
+
+test("the snapshot's scanner prefers a non-bridge light, and marks a designated bridge when only it can scan", async () => {
+  const harness = setup();
+  const { app, ipc, server } = harness;
+  await app.start();
+  bringUpUsb(harness, BRIDGE, 4);
+  await tick();
+  assert.deepEqual(scannerOf(ipc), { mac: BRIDGE, bridge: false }, "not yet the bridge");
+
+  ipc.command({ type: "setBridge", mac: BRIDGE });
+  await tick();
+  assert.deepEqual(scannerOf(ipc), { mac: BRIDGE, bridge: true });
+
+  bringUpUsb(harness, LIGHT, 4);
+  await tick();
+  assert.deepEqual(scannerOf(ipc), { mac: LIGHT, bridge: false });
+
+  server.disconnectDevice(LIGHT);
+  await tick();
+  assert.deepEqual(scannerOf(ipc), { mac: BRIDGE, bridge: true });
+});
+
+test("a device whose STATUS confirms it is bridging counts as the bridge in the snapshot's scanner", async () => {
+  const harness = setup();
+  const { app, ipc, provisioning } = harness;
+  await app.start();
+  bringUpUsb(harness, LIGHT, 4);
+  await tick();
+  assert.deepEqual(scannerOf(ipc), { mac: LIGHT, bridge: false });
+
+  provisioning.emitStatus(LIGHT, { mode: Transport.ESPNOW, wifiState: "idle", rssi: null, ssid: "", channel: 1, bridge: true });
+  await tick();
+  assert.deepEqual(scannerOf(ipc), { mac: LIGHT, bridge: true });
 });
