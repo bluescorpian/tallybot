@@ -248,6 +248,13 @@ test("setBridgePayload encodes [type][enabled][channel]", () => {
   assert.deepEqual(setBridgePayload(false, ESPNOW_CHANNEL), Uint8Array.of(ServerMessageType.SET_BRIDGE, 0, 1));
 });
 
+test("setBridgePayload appends a txPower byte only when given one", () => {
+  // Quarter-dBm: 34 = 8.5 dBm. Absent means full power, so the 3-byte form stays the default
+  // (an older device rejects a 4-byte SET_BRIDGE).
+  assert.deepEqual(setBridgePayload(true, 6, 34), Uint8Array.of(0x08, 1, 6, 34));
+  assert.deepEqual(setBridgePayload(true, 6), Uint8Array.of(0x08, 1, 6));
+});
+
 test("relayPayload wraps an inner payload in [type][targetMAC×6][inner…]", () => {
   const inner = setColorPayload(COLORS.live, 64);
   const wire = relayPayload("aa:bb:cc:dd:ee:ff", inner);
@@ -321,6 +328,36 @@ test("decodeDeviceMessage reads FIRMWARE (0x07) as the device's UTF-8 version, a
   assert.throws(() => decodeDeviceMessage(Uint8Array.of(0x07)), RangeError);
 });
 
+test("decodeDeviceMessage reads a SCAN_RESULT (0x05) access point with a signed RSSI", () => {
+  const ssid = new TextEncoder().encode("Café");
+  // index 1 of 3, channel 11, rssi -67 dBm (0xbd as a signed byte)
+  const payload = Uint8Array.of(0x05, 1, 3, 11, 0xbd, ssid.length, ...ssid);
+  assert.deepEqual(decodeDeviceMessage(payload), {
+    kind: "scanResult",
+    index: 1,
+    total: 3,
+    ap: { channel: 11, rssi: -67, ssid: "Café" },
+  });
+});
+
+test("decodeDeviceMessage reads an all-zero SCAN_RESULT as a scan that found no access points", () => {
+  assert.deepEqual(decodeDeviceMessage(Uint8Array.of(0x05, 0, 0, 0, 0, 0)), {
+    kind: "scanResult",
+    index: 0,
+    total: 0,
+    ap: null,
+  });
+});
+
+test("decodeDeviceMessage rejects a SCAN_RESULT whose index or length is inconsistent", () => {
+  const ap = [6, 0xc0, 2, 0x61, 0x62]; // channel 6, rssi -64, ssid "ab"
+  assert.throws(() => decodeDeviceMessage(Uint8Array.of(0x05, 3, 3, ...ap)), RangeError); // index = total
+  assert.throws(() => decodeDeviceMessage(Uint8Array.of(0x05, 1, 0, 0, 0, 0)), RangeError); // total 0, index 1
+  assert.throws(() => decodeDeviceMessage(Uint8Array.of(0x05, 0, 1, 6, 0xc0, 3, 0x61, 0x62)), RangeError); // short ssid
+  assert.throws(() => decodeDeviceMessage(Uint8Array.of(0x05, 0, 1, 6, 0xc0, 1, 0x61, 0x62)), RangeError); // long ssid
+  assert.throws(() => decodeDeviceMessage(Uint8Array.of(0x05, 0, 1, 6, 0xc0)), RangeError); // no ssidLen
+});
+
 // ── MAC helpers ────────────────────────────────────────────────────────────────
 
 test("formatMac renders six bytes as a lower-case colon MAC", () => {
@@ -355,6 +392,11 @@ test("deviceCompatibility supports the range and names the stale side outside it
   assert.equal(deviceCompatibility(PROTOCOL_VERSION.MIN_SUPPORTED), "supported");
   assert.equal(deviceCompatibility(PROTOCOL_VERSION.MIN_SUPPORTED - 1), "device-too-old");
   assert.equal(deviceCompatibility(PROTOCOL_VERSION.CURRENT + 1), "app-too-old");
+});
+
+test("a protocol v4 device is supported and a v5 one means the app is too old", () => {
+  assert.equal(deviceCompatibility(4), "supported");
+  assert.equal(deviceCompatibility(5), "app-too-old");
 });
 
 test("isIPv4 accepts a dotted quad with octets 0-255 and nothing else", () => {
