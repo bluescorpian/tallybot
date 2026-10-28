@@ -212,6 +212,12 @@
 	let hits = $state<Hit[]>([]);
 	let picked = $state<string | null>(null);
 	let scanTimer: ReturnType<typeof setTimeout> | undefined;
+	// A result is shown only for a scan this panel saw run (clicked here, or already running when
+	// the drawer opened), so a result from an earlier visit or engine doesn't reappear. `before` is
+	// the event stored when Scan was clicked: until a different one arrives, the click is still in
+	// flight. The same rule as EspNowGroup's scan.
+	let watching = $state(false);
+	let before = $state<SourceScanEvent | null>(null);
 
 	function runScan() {
 		picked = null;
@@ -219,6 +225,8 @@
 		if (onscan) {
 			// real sweep: the sidecar probes every host on each local /24 (~20s);
 			// results land in `scanResult`, handled by the effect below.
+			before = scanResult;
+			watching = true;
 			onscan();
 			return;
 		}
@@ -233,16 +241,16 @@
 		}, 1800);
 	}
 
-	// Drive the scan state machine from the sidecar's events (real mode only). Only
-	// applies a "done" result to a sweep we actually started (scan === "scanning"),
-	// so a stale result from a prior session doesn't pop up when the drawer reopens.
+	// Drive the scan state machine from the sidecar's events (real mode only), adopting only a
+	// result for a scan this panel watched (see `watching`).
 	$effect(() => {
 		if (!onscan || !scanResult) return;
 		if (scanResult.status === "scanning") {
+			watching = true;
 			scan = "scanning";
 			return;
 		}
-		if (scan !== "scanning") return;
+		if (!watching || scanResult === before) return;
 		hits = scanResult.found.map((h) => ({ ip: h.ip, product: h.product }));
 		// a sweep that couldn't run says why; "none found" is only for one that ran
 		scan = scanResult.error ? "error" : hits.length ? "results" : "none";
