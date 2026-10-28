@@ -39,11 +39,12 @@ jobs:
           tag: ${{ steps.tag.outputs.tag }}
         run: |
           v=${tag#v}
-          mkdir assets
-          gh release download "$tag" --dir assets --pattern '*.sig' \
+          assets=$RUNNER_TEMP/assets # not ./assets: the checkout has one (the README screenshot)
+          mkdir "$assets"
+          gh release download "$tag" --dir "$assets" --pattern '*.sig' \
             --pattern "$(node scripts/release-assets.mjs name firmware-manifest)"
           gh release view "$tag" --json body,publishedAt > release.json
-          node scripts/release-assets.mjs manifest "$v" assets \
+          node scripts/release-assets.mjs manifest "$v" "$assets" \
             "https://github.com/$GH_REPO/releases/download/$tag" release.json > latest.json
           cat latest.json
           gh release upload "$tag" latest.json --clobber
