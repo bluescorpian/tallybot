@@ -739,8 +739,9 @@ export class SidecarApp {
    * The snapshot's ESP-NOW settings, with the known lights that may not follow a channel change:
    * ESP-NOW lights too old to hunt channels, and lights whose version is unknown because nothing
    * has been heard from them since the state file gained versions (an entry the released app wrote
-   * records neither version nor transport). A device known to be on WiFi (an SSID recorded, or its
-   * STATUS reporting WiFi) or No-TX isn't an ESP-NOW light, so it's in neither list. The designated
+   * records neither version nor transport). A device whose STATUS reported WiFi or No-TX isn't an
+   * ESP-NOW light, so it's in neither list. A recorded SSID proves nothing: firmware keeps its WiFi
+   * credentials when switched to ESP-NOW, so an old entry with an SSID may be a light. The designated
    * bridge is in neither either: SET_BRIDGE moves it whenever it's cabled.
    */
   #espnowSettings(): EspNowSettings {
@@ -750,7 +751,7 @@ export class SidecarApp {
       if (mac === this.#store.bridgeMac) continue;
       if (config.protocolVersion === undefined) {
         const maybeEspNow = config.transport === undefined || config.transport === Transport.ESPNOW;
-        if (maybeEspNow && config.ssid === undefined) unseenLights.push(mac);
+        if (maybeEspNow) unseenLights.push(mac);
       } else if (config.transport === Transport.ESPNOW && !supportsChannelSelection(config.protocolVersion)) {
         legacyLights.push(mac);
       }

@@ -173,8 +173,8 @@ export interface EspNowSettings {
   /**
    * MACs of known devices whose protocol version is unknown: nothing has been heard from them
    * since this TallyBot started recording versions (the released app's state file has none), and
-   * they aren't known WiFi or No-TX devices (no SSID recorded, no STATUS reporting another
-   * transport). Each may be an ESP-NOW light too old to follow a channel change; the UI says it
+   * no STATUS has reported them on WiFi or No-TX. A recorded SSID doesn't exclude one: firmware
+   * keeps its WiFi credentials when switched to ESP-NOW. Each may be an ESP-NOW light too old to follow a channel change; the UI says it
    * hasn't been seen since the update and may not follow. A device leaves this list once it
    * connects. Excludes the designated bridge. Disjoint from {@link legacyLights}; every MAC is also
    * in {@link AppState.devices}.
