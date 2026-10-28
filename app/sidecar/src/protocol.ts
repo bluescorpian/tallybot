@@ -44,7 +44,10 @@ export const DeviceMessageType = {
    * also sends one to its bridge (e.g. its relink gap report), arriving inside a RELAY.
    */
   LOG: 0x04,
-  /** WiFi scan result. Reserved; deferred post-v1.2 (the user types the SSID for now). */
+  /**
+   * `[type][index][total][channel][rssi][ssidLen][ssid…]` — one access point a cabled device
+   * heard, in reply to SCAN_WIFI (USB, v4). See {@link ScanResultMessage}.
+   */
   SCAN_RESULT: 0x05,
   /**
    * `[type][srcMAC×6][inner…]` — an ESP-NOW frame a bridge received from a light,
@@ -74,14 +77,17 @@ export const ServerMessageType = {
   SET_TRANSPORT: 0x04,
   /** Request a STATUS frame (USB). */
   GET_STATUS: 0x05,
-  /** Request a WiFi scan → SCAN_RESULT. Reserved; deferred post-v1.2. */
+  /** `[type]` — scan channels 1–13 for access points; the device replies with SCAN_RESULTs (USB, v4). */
   SCAN_WIFI: 0x06,
   /**
    * `[type][targetMAC×6][inner…]` — sent over USB to a bridge, which strips the 7-byte
    * header and sends `inner` verbatim to `targetMAC` over ESP-NOW (USB, bridge only).
    */
   RELAY: 0x07,
-  /** `[type][enabled][channel]` — enter/leave bridge mode. Runtime-only; never persisted (USB). */
+  /**
+   * `[type][enabled][channel]`, or `[type][enabled][channel][txPower]` to a v4 device — enter/leave
+   * bridge mode. Runtime-only; never persisted (USB).
+   */
   SET_BRIDGE: 0x08,
 } as const;
 
@@ -124,6 +130,22 @@ export const DISCOVERY_INTERVAL_MS = 2_000;
 export const HEARTBEAT_TIMEOUT_MS = 30_000;
 /** How often the server broadcasts its presence (server). */
 export const ANNOUNCE_INTERVAL_MS = 5_000;
+/**
+ * An ESP-NOW light unlinked this long starts hunting channels 1–13 for its bridge; before it,
+ * the light only relinks on its stored channel (firmware, v4).
+ */
+export const CHANNEL_HUNT_AFTER_MS = 10_000;
+/** How long a hunting light listens for TALLY_HERE on each channel it tries (firmware, v4). */
+export const CHANNEL_DWELL_MS = 150;
+
+/**
+ * The bridge's ESP-NOW transmit power, in esp_wifi's quarter-dBm units, as SET_BRIDGE's optional
+ * `txPower` byte carries it (v4). FULL (19.5 dBm) is what a bridge uses when the byte is absent.
+ */
+export const BRIDGE_TX_POWER = {
+  FULL: 78,
+  REDUCED: 34,
+} as const;
 
 /** WiFi join progress, streamed in STATUS so the wizard confirms a join before unplug. */
 export const WifiState = {
@@ -159,10 +181,12 @@ export const PROTOCOL_VERSION = {
    * The version the server prefers / emits. Bumped 1 → 2 for USB provisioning (a v2
    * HELLO tells the app the firmware understands SET_WIFI/SET_TRANSPORT), then 2 → 3
    * for ESP-NOW: a v3 HELLO means the firmware understands SET_TRANSPORT(ESPNOW),
-   * SET_BRIDGE, RELAY (both directions), and emits the STATUS [channel][bridging] bytes. The app only sends
+   * SET_BRIDGE, RELAY (both directions), and emits the STATUS [channel][bridging] bytes, then 3 → 4
+   * for channel selection: a v4 HELLO means an ESP-NOW light hunts channels for its bridge, the
+   * device answers SCAN_WIFI, and a bridge honours SET_BRIDGE's txPower byte. The app only sends
    * each generation's frames to devices reporting at least that version.
    */
-  CURRENT: 3,
+  CURRENT: 4,
   /** The oldest device version the server still handles; below this it warns. */
   MIN_SUPPORTED: 1,
   /**
@@ -170,6 +194,12 @@ export const PROTOCOL_VERSION = {
    * RELAY). The app never sends them to, or offers ESP-NOW for, an older device.
    */
   ESPNOW: 3,
+  /**
+   * The first version whose lights follow a channel change without a cable, that answers
+   * SCAN_WIFI, and that accepts SET_BRIDGE's txPower byte. An older device rejects a 4-byte
+   * SET_BRIDGE outright, so it must never be sent one.
+   */
+  CHANNEL_SELECTION: 4,
 } as const;
 
 /**
@@ -386,14 +416,26 @@ export function relayPayload(targetMac: string, inner: Uint8Array): Uint8Array {
 }
 
 /**
- * SET_BRIDGE payload: `[type][enabled][channel]` (USB only). Runtime-only — the sidecar
- * persists the designation and re-asserts it on every USB (re)connect; the device never
- * stores it. `channel` is the ESP-NOW channel to bridge on ({@link ESPNOW_CHANNEL}); it's
- * required even when disabling (the device ignores it then).
+ * SET_BRIDGE payload: `[type][enabled][channel]`, or `[type][enabled][channel][txPower]` when
+ * `txPower` is given (USB only). Runtime-only — the sidecar persists the designation and
+ * re-asserts it on every USB (re)connect; the device never stores it. `channel` is the ESP-NOW
+ * channel to bridge on ({@link ESPNOW_CHANNEL}); it's required even when disabling (the device
+ * ignores it then). `txPower` is the bridge's transmit power in quarter-dBm
+ * ({@link BRIDGE_TX_POWER}); absent means full power. Pass it only to a device at
+ * {@link PROTOCOL_VERSION.CHANNEL_SELECTION} or later: older firmware rejects a 4-byte SET_BRIDGE.
  */
-export function setBridgePayload(enabled: boolean, channel: number): Uint8Array {
+export function setBridgePayload(enabled: boolean, channel: number, txPower?: number): Uint8Array {
   assertByte("channel", channel);
-  return Uint8Array.of(ServerMessageType.SET_BRIDGE, enabled ? 1 : 0, channel);
+  if (txPower === undefined) {
+    return Uint8Array.of(ServerMessageType.SET_BRIDGE, enabled ? 1 : 0, channel);
+  }
+  assertByte("txPower", txPower);
+  return Uint8Array.of(ServerMessageType.SET_BRIDGE, enabled ? 1 : 0, channel, txPower);
+}
+
+/** SCAN_WIFI payload: `[type]` (USB only, v4) — ask the device for its SCAN_RESULT frames. */
+export function scanWifiPayload(): Uint8Array {
+  return Uint8Array.of(ServerMessageType.SCAN_WIFI);
 }
 
 // ── Device → server decoder ────────────────────────────────────────────────────
@@ -455,6 +497,28 @@ export interface LogMessage {
   text: string;
 }
 
+/** One access point a device heard while scanning. */
+export interface ScannedAccessPoint {
+  /** 2.4 GHz channel the access point is on. */
+  channel: number;
+  /** Signed RSSI in dBm. */
+  rssi: number;
+  /** The network name, UTF-8 (`""` for a hidden network). */
+  ssid: string;
+}
+
+/**
+ * One frame of a device's reply to SCAN_WIFI: `[type][index][total][channel][rssi][ssidLen][ssid…]`.
+ * A reply is `total` frames with `index` 0 … `total - 1`, one access point each; a scan that
+ * found none is a single frame with `total` = `index` = 0, which decodes with `ap` null.
+ */
+export interface ScanResultMessage {
+  kind: "scanResult";
+  index: number;
+  total: number;
+  ap: ScannedAccessPoint | null;
+}
+
 /**
  * An ESP-NOW frame a bridge received and forwarded up. `inner` is itself an unframed
  * device→server payload — run it back through {@link decodeDeviceMessage} (the
@@ -473,13 +537,14 @@ export type DeviceMessage =
   | FirmwareMessage
   | StatusMessage
   | LogMessage
-  | RelayedMessage;
+  | RelayedMessage
+  | ScanResultMessage;
 
 /**
  * Decode one unframed device→server payload (as produced by {@link FrameDecoder} on TCP,
  * or by COBS deframing on USB). The first byte is the message type. Throws on an unknown
- * type or a payload whose length doesn't match its type. STATUS only arrives over USB; LOG
- * arrives over USB or relayed from an ESP-NOW light.
+ * type or a payload whose length doesn't match its type. STATUS and SCAN_RESULT only arrive over
+ * USB; LOG arrives over USB or relayed from an ESP-NOW light.
  */
 export function decodeDeviceMessage(payload: Uint8Array): DeviceMessage {
   if (payload.length === 0) {
@@ -543,6 +608,35 @@ export function decodeDeviceMessage(payload: Uint8Array): DeviceMessage {
         kind: "relayed",
         srcMac: formatMac(payload.subarray(1, 7)),
         inner: payload.slice(7),
+      };
+    }
+    case DeviceMessageType.SCAN_RESULT: {
+      // [type][index][total][channel][rssi][ssidLen][ssid…] — ≥ 6 payload bytes
+      if (payload.length < 6) {
+        throw new RangeError(`SCAN_RESULT payload must be at least 6 bytes, got ${payload.length}`);
+      }
+      const ssidLen = payload[5]!;
+      if (payload.length !== 6 + ssidLen) {
+        throw new RangeError(`SCAN_RESULT payload must be ${6 + ssidLen} bytes, got ${payload.length}`);
+      }
+      const index = payload[1]!;
+      const total = payload[2]!;
+      if (total === 0) {
+        if (index !== 0) throw new RangeError(`SCAN_RESULT with total 0 must have index 0, got ${index}`);
+        return { kind: "scanResult", index, total, ap: null };
+      }
+      if (index >= total) {
+        throw new RangeError(`SCAN_RESULT index ${index} is not below total ${total}`);
+      }
+      return {
+        kind: "scanResult",
+        index,
+        total,
+        ap: {
+          channel: payload[3]!,
+          rssi: (payload[4]! << 24) >> 24, // sign-extend the byte
+          ssid: new TextDecoder().decode(payload.subarray(6)),
+        },
       };
     }
     case DeviceMessageType.FIRMWARE: {

@@ -15,7 +15,7 @@
 //     PacketSerial applies the COBS wrapper; the encoders below build only the payload.
 //
 // Wire reference (exact TCP bytes; over USB the same payloads ride inside a COBS frame):
-//   HELLO      08 01 03 <mac0..mac5>      (device → server)   [version is now 3]
+//   HELLO      08 01 04 <mac0..mac5>      (device → server)   [version is now 4]
 //   HEARTBEAT  01 02                      (device → server)
 //   FIRMWARE   <n> 07 <utf8 version…>     (device → server)   [sent after every HELLO]
 //   SET_COLOR  05 01 <R> <G> <B> <bri>    (server → device)
@@ -33,9 +33,11 @@
 // enforces it and surfaces an "update firmware" notice below it.
 // Bumped 1 → 2 for USB provisioning (a v2 HELLO tells the app this firmware understands
 // SET_WIFI/SET_TRANSPORT), then 2 → 3 for ESP-NOW: a v3 HELLO means the firmware understands
-// SET_TRANSPORT(ESPNOW), SET_BRIDGE, RELAY (both directions), and emits the STATUS trailing bytes. The app
+// SET_TRANSPORT(ESPNOW), SET_BRIDGE, RELAY (both directions), and emits the STATUS trailing bytes,
+// then 3 → 4 for channel selection: a v4 HELLO means an ESP-NOW light hunts channels for its
+// bridge, the device answers SCAN_WIFI, and a bridge honours SET_BRIDGE's txPower byte. The app
 // only sends each generation's frames to devices reporting at least that version.
-#define PROTOCOL_VERSION_CURRENT 3
+#define PROTOCOL_VERSION_CURRENT 4
 #define PROTOCOL_VERSION_MIN_SUPPORTED 1
 
 // ── Network ports ────────────────────────────────────────────────────────────
@@ -50,7 +52,9 @@
 #define MSG_HEARTBEAT 0x02  // device → server (TCP; unused over USB — port close is liveness)
 #define MSG_STATUS 0x03     // device → host  (USB): transport/WiFi status snapshot
 #define MSG_LOG 0x04        // device → host  (USB): framed log line (release builds)
-#define MSG_SCAN_RESULT 0x05  // device → host (USB): reserved, deferred post-v1.2
+#define MSG_SCAN_RESULT 0x05  // device → host (USB): [type][index][total][channel][rssi][ssidLen][ssid…] —
+                              // one access point per frame in reply to SCAN_WIFI; none found ⇒ one
+                              // frame with total = index = 0
 #define MSG_RELAY_UP 0x06   // device → host  (USB, bridge): [type][srcMAC×6][inner…] — the device→host
                             // RELAY envelope (protocol.ts DeviceMessageType.RELAY). An ESP-NOW frame
                             // a bridge received from a light, wrapped + forwarded up the USB pipe.
@@ -73,12 +77,13 @@
 #define WIFI_PASSWORD_MAX_BYTES 63
 #define MSG_SET_TRANSPORT 0x04  // host → device (USB): persist transport mode
 #define MSG_GET_STATUS 0x05    // host → device  (USB): request a STATUS frame
-#define MSG_SCAN_WIFI 0x06     // host → device  (USB): reserved, deferred post-v1.2
+#define MSG_SCAN_WIFI 0x06     // host → device  (USB): [type] — scan channels 1–13, reply with SCAN_RESULTs
 #define MSG_RELAY 0x07         // host → device  (USB, bridge): [type][targetMAC×6][inner…] — the host→device
                                // RELAY envelope (protocol.ts ServerMessageType.RELAY). The bridge strips
                                // the header and sends inner verbatim to targetMAC over ESP-NOW.
-#define MSG_SET_BRIDGE 0x08    // host → device  (USB): [type][enabled][channel] — enter/leave bridge mode
-                               // on the given channel (runtime-only; channel ignored when enabled=0)
+#define MSG_SET_BRIDGE 0x08    // host → device  (USB): [type][enabled][channel] or [type][enabled][channel]
+                               // [txPower] — enter/leave bridge mode on the given channel (runtime-only;
+                               // channel ignored when enabled=0); txPower absent ⇒ full power
 
 // ── Shared payload field enums ───────────────────────────────────────────────
 // Transport is an OPEN enum: stored as an int (NVS), a wire byte, and the IPC type —
@@ -127,6 +132,10 @@
 
 // ── ESP-NOW transport (v1.3) ─────────────────────────────────────────────────
 #define ESPNOW_CHANNEL 1               // fixed 2.4GHz channel; lights join no AP, so nothing negotiates
+// Bridge transmit power in esp_wifi's quarter-dBm units, as SET_BRIDGE's optional txPower byte
+// carries it. FULL (19.5 dBm) applies when the byte is absent and when bridge mode ends.
+#define BRIDGE_TX_POWER_FULL 78
+#define BRIDGE_TX_POWER_REDUCED 34  // 8.5 dBm; the host's "Reduced" setting (protocol.ts BRIDGE_TX_POWER)
 
 // ── Timers ───────────────────────────────────────────────────────────────────
 #define HEARTBEAT_INTERVAL_MS 10000  // device heartbeats every 10s (docs/architecture.md)
@@ -135,6 +144,10 @@
 // link is dead: release tally and show steady blue. The server re-sends every colour each 250 ms,
 // so this is 20 lost keyframes.
 #define HOST_SILENCE_TIMEOUT_MS 5000
+// An ESP-NOW light unlinked this long hunts channels 1–13 for its bridge, listening this long on
+// each; before it, the light relinks only on its stored channel.
+#define CHANNEL_HUNT_AFTER_MS 10000
+#define CHANNEL_DWELL_MS 150
 // Server-side, for reference only (the firmware doesn't enforce these):
 //   HEARTBEAT_TIMEOUT_MS 30000 — server drops a device silent this long
 //   ANNOUNCE_INTERVAL_MS  5000 — server broadcasts its presence this often
@@ -143,9 +156,9 @@
 #define MAX_PAYLOAD_BYTES 255  // largest payload a single length byte can frame
 
 // A decoded server → device message. SET_COLOR arrives over both transports;
-// SET_WIFI/SET_TRANSPORT/GET_STATUS/SET_BRIDGE/RELAY are USB-only provisioning/bridge frames.
+// SET_WIFI/SET_TRANSPORT/GET_STATUS/SET_BRIDGE/RELAY/SCAN_WIFI are USB-only provisioning/bridge frames.
 struct ServerMessage {
-  enum Kind { SET_COLOR, SET_WIFI, SET_TRANSPORT, GET_STATUS, SET_BRIDGE, RELAY, UNKNOWN } kind;
+  enum Kind { SET_COLOR, SET_WIFI, SET_TRANSPORT, GET_STATUS, SET_BRIDGE, RELAY, SCAN_WIFI, UNKNOWN } kind;
   uint8_t r, g, b, brightness;  // valid only when kind == SET_COLOR
   char ssid[WIFI_SSID_MAX_BYTES + 1];      // valid only when kind == SET_WIFI (+ NUL)
   char pass[WIFI_PASSWORD_MAX_BYTES + 1];  // valid only when kind == SET_WIFI (+ NUL)
@@ -153,6 +166,8 @@ struct ServerMessage {
   bool hasChannel;              // SET_TRANSPORT: true iff the optional channel byte was present
   uint8_t channel;              // SET_TRANSPORT (if hasChannel) / SET_BRIDGE (when enabled) channel
   bool bridgeEnabled;           // valid only when kind == SET_BRIDGE
+  bool hasTxPower;              // SET_BRIDGE: true iff the optional txPower byte was present
+  uint8_t txPower;              // SET_BRIDGE (if hasTxPower): quarter-dBm (BRIDGE_TX_POWER_*)
   // RELAY: the bridge forwards `inner` verbatim to `targetMac` and never decodes it. `inner`
   // points into the caller's payload buffer (no copy) — the bridge sends it before the buffer
   // is reused, so a borrow is safe and keeps ServerMessage small.
@@ -246,6 +261,28 @@ inline size_t encodeStatusPayload(uint8_t* out, uint8_t transport, uint8_t wifiS
   out[5 + ssidLen] = channel;
   out[6 + ssidLen] = bridging ? 1 : 0;
   return 7 + ssidLen;
+}
+
+// SCAN_RESULT payload: [type][index][total][channel][rssi][ssidLen][ssid…] — one access point.
+// A scan that found none replies with a single encodeEmptyScanResultPayload frame instead.
+// `ssidLen` is capped at 32 (802.11 max). `out` must hold ≥ 6 + min(ssidLen, 32).
+inline size_t encodeScanResultPayload(uint8_t* out, uint8_t index, uint8_t total, uint8_t channel,
+                                      int8_t rssi, const char* ssid, uint8_t ssidLen) {
+  if (ssidLen > 32) ssidLen = 32;  // clamp; SSIDs are ≤ 32 bytes
+  out[0] = MSG_SCAN_RESULT;
+  out[1] = index;
+  out[2] = total;
+  out[3] = channel;
+  out[4] = (uint8_t)rssi;  // signed byte on the wire; host sign-extends
+  out[5] = ssidLen;
+  memcpy(&out[6], ssid, ssidLen);
+  return 6 + ssidLen;
+}
+
+// The SCAN_RESULT that ends a scan which found no access points: total = index = 0, no SSID.
+// `out` must hold ≥ 6.
+inline size_t encodeEmptyScanResultPayload(uint8_t* out) {
+  return encodeScanResultPayload(out, 0, 0, 0, 0, "", 0);
 }
 
 // FIRMWARE payload: [type][utf8 version…]. Copies up to `maxOut-1` version bytes; returns the
@@ -343,11 +380,17 @@ inline bool decodeServerMessage(const uint8_t* payload, size_t len, ServerMessag
       if (len != 1) break;
       out->kind = ServerMessage::GET_STATUS;
       return true;
-    case MSG_SET_BRIDGE:  // [type][enabled][channel] — 3 payload bytes (channel ignored when enabled=0)
-      if (len != 3) break;
+    case MSG_SET_BRIDGE:  // [type][enabled][channel] (3) or + [txPower] (4); channel ignored when enabled=0
+      if (len != 3 && len != 4) break;
       out->kind = ServerMessage::SET_BRIDGE;
       out->bridgeEnabled = payload[1] != 0;
       out->channel = payload[2];
+      out->hasTxPower = (len == 4);  // absent ⇒ full power
+      out->txPower = (len == 4) ? payload[3] : BRIDGE_TX_POWER_FULL;
+      return true;
+    case MSG_SCAN_WIFI:  // [type] — 1 payload byte
+      if (len != 1) break;
+      out->kind = ServerMessage::SCAN_WIFI;
       return true;
     case MSG_RELAY:  // [type][targetMAC×6][inner…] — ≥ 7 payload bytes; inner is borrowed, not copied
       if (len < 8) break;  // 7-byte header + at least the inner type byte

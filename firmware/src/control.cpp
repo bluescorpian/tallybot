@@ -113,6 +113,7 @@ void control::dispatch(const ServerMessage& msg) {
     case ServerMessage::RELAY:
       espnow::relay(msg);  // strip header → esp_now_send(targetMAC, inner); dropped if no such peer
       break;
+    case ServerMessage::SCAN_WIFI:  // ignored (no scan handler), so the host gets no SCAN_RESULT
     case ServerMessage::UNKNOWN:
       break;
   }
