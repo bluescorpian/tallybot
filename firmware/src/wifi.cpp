@@ -184,6 +184,16 @@ void wifi::enableRadio() {
 
 void wifi::disableRadio() { WiFi.mode(WIFI_OFF); }
 
+// STA_START doesn't join (WiFiGeneric.cpp only joins on WiFi.begin), so a No-TX device scans without
+// associating. The country goes with it: WIFI_OFF may have dropped it, and without it the scan
+// would skip channels 12-13.
+bool wifi::scanRadioUp() {
+  if (WiFi.getMode() != WIFI_MODE_NULL) return false;
+  WiFi.mode(WIFI_STA);
+  setCountry();
+  return true;
+}
+
 bool wifi::espnowRadioUp(uint8_t channel) {
   WiFi.mode(WIFI_STA);
   // No association — ESP-NOW must own a pinned channel, not chase an AP. Auto-reconnect must be

@@ -53,6 +53,11 @@ void usb::begin(const uint8_t mac[6], MessageHandler onMessage) {
 
 void usb::send(const uint8_t* payload, size_t len) { g_packet.send(payload, len); }
 
+// send() never blocks (setTxTimeoutMs(0)): HWCDC::write queues what fits and drops the rest, so a
+// frame written into a full buffer is cut short. COBS adds one byte per 254 plus one, then the
+// 0x00 delimiter.
+bool usb::txRoom(size_t len) { return Serial.availableForWrite() >= (int)(len + len / 254 + 2); }
+
 void usb::sendHello() {
   uint8_t payload[32];
   send(payload, encodeHelloPayload(payload, g_mac));

@@ -591,6 +591,23 @@ void espnow::exitBridge() {
 
 bool espnow::bridgeActive() { return g_role == Role::BRIDGE; }
 
+// A scan sweeps the radio across channels 1–13 and nothing documents where it leaves an unassociated
+// STA, so the bridge always re-pins. tune() also drops frames queued mid-sweep, heard off-channel.
+// The channel the scan left is logged, to settle on hardware whether this is needed.
+void espnow::repinBridge() {
+  if (g_role != Role::BRIDGE) return;
+  uint8_t left = 0;
+  wifi_second_chan_t second;
+  if (esp_wifi_get_channel(&left, &second) != ESP_OK) left = 0;
+  if (!tune(g_channel)) {
+    // As for a failed retune: don't stay "bridging" on a channel the host didn't ask for.
+    TLOG(LOG_LEVEL_ERROR, "Bridge re-pin to channel %u after the scan failed; leaving bridge mode\n", g_channel);
+    exitBridge();
+    return;
+  }
+  TLOG(LOG_LEVEL_INFO, "Bridge back on channel %u after the scan (the scan left it on %u)\n", g_channel, left);
+}
+
 // The bridge is stateless in time — it drains the ring and answers discovery; liveness is the
 // sidecar's job (the spec's "the bridge tracks nothing about liveness"). `now` only paces the
 // once-a-second diagnostics summary.

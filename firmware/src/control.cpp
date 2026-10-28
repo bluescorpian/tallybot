@@ -6,6 +6,7 @@
 #include "espnow.h"
 #include "led.h"
 #include "log.h"
+#include "scan.h"
 #include "settings.h"
 #include "usb.h"
 #include "wifi.h"
@@ -63,9 +64,31 @@ struct Rendered {
   uint8_t r = 0, g = 0, b = 0;
 };
 Rendered g_rendered;
+
+// SET_BRIDGE and SET_WIFI reconfigure the radio, which must not happen while the driver scans (a
+// retune mid-scan is refused, a join is cut short), so they wait for it. Each carries the whole
+// setting, so only the latest of each kind is kept, in arrival order.
+ServerMessage g_deferred[2];
+size_t g_deferredCount = 0;
+
+bool deferWhileScanning(const ServerMessage& msg) {
+  if (!scan::radioBusy() || (msg.kind != ServerMessage::SET_BRIDGE && msg.kind != ServerMessage::SET_WIFI))
+    return false;
+  for (size_t i = 0; i < g_deferredCount; i++) {
+    if (g_deferred[i].kind != msg.kind) continue;
+    for (size_t j = i + 1; j < g_deferredCount; j++) g_deferred[j - 1] = g_deferred[j];
+    g_deferredCount--;
+    break;
+  }
+  g_deferred[g_deferredCount++] = msg;
+  TLOG(LOG_LEVEL_INFO, "%s held until the scan finishes\n",
+       msg.kind == ServerMessage::SET_BRIDGE ? "SET_BRIDGE" : "SET_WIFI");
+  return true;
+}
 }  // namespace
 
 void control::dispatch(const ServerMessage& msg) {
+  if (deferWhileScanning(msg)) return;
   switch (msg.kind) {
     case ServerMessage::SET_COLOR:
       led::setTally(msg.r, msg.g, msg.b, msg.brightness, led::STEADY);
@@ -121,10 +144,26 @@ void control::dispatch(const ServerMessage& msg) {
     case ServerMessage::RELAY:
       espnow::relay(msg);  // strip header → esp_now_send(targetMAC, inner); dropped if no such peer
       break;
-    case ServerMessage::SCAN_WIFI:  // ignored (no scan handler), so the host gets no SCAN_RESULT
+    case ServerMessage::SCAN_WIFI:  // USB only (dispatchUsb): over TCP or inside a RELAY it's ignored
     case ServerMessage::UNKNOWN:
       break;
   }
+}
+
+void control::dispatchUsb(const ServerMessage& msg) {
+  if (msg.kind == ServerMessage::SCAN_WIFI)
+    scan::request();
+  else
+    dispatch(msg);
+}
+
+void control::runDeferred() {
+  if (g_deferredCount == 0 || scan::radioBusy()) return;
+  ServerMessage pending[2];
+  size_t n = g_deferredCount;
+  for (size_t i = 0; i < n; i++) pending[i] = g_deferred[i];
+  g_deferredCount = 0;
+  for (size_t i = 0; i < n; i++) dispatch(pending[i]);
 }
 
 void control::emitStatus() { emit(statusSnapshot()); }

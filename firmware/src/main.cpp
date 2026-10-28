@@ -10,7 +10,7 @@
 // USB only with ARDUINO_USB_CDC_ON_BOOT (platformio.ini).
 //
 // This file is just the orchestrator — init order, the USB-first-boot decision, and the per-tick
-// service calls. The work lives in the modules: led, wifi, usb, tally, control, settings.
+// service calls. The work lives in the modules: led, wifi, usb, tally, espnow, scan, control, settings.
 
 #include <Arduino.h>
 #include <WiFi.h>
@@ -21,6 +21,7 @@
 #include "led.h"
 #include "log.h"
 #include "protocol.h"
+#include "scan.h"
 #include "settings.h"
 #include "tally.h"
 #include "usb.h"
@@ -52,6 +53,7 @@ unsigned long g_btnDownSince = 0;
 bool g_wifiUp = false;      // last-seen WiFi link state, to detect up/down edges
 
 void onMessage(const ServerMessage& msg) { control::dispatch(msg); }
+void onUsbMessage(const ServerMessage& msg) { control::dispatchUsb(msg); }  // + USB-only SCAN_WIFI
 
 // Start the WiFi tally client (discovery/TCP) on whatever link the radio has now. Not yet
 // associated is fine: serviceWifiClient's up edge or sustained-loss retry takes it from there.
@@ -128,6 +130,7 @@ void checkBootButton(unsigned long now) {
   } else if (now - g_btnDownSince >= kReprovisionHoldMs) {
     g_btnDownSince = 0;
     TLOG(LOG_LEVEL_INFO, "BOOT held - opening WiFi setup\n");
+    scan::abort();  // the portal takes the radio (and runs its own scan)
     if (espnow::bridgeActive()) {
       // WARN: the host relies on this bridge, and it doesn't re-assert it until a reconnect.
       TLOG(LOG_LEVEL_WARN, "Leaving bridge mode: BOOT held for WiFi setup\n");
@@ -204,11 +207,12 @@ void setup() {
   snprintf(g_apSsid, sizeof(g_apSsid), "TallyLight-%02X%02X%02X", g_mac[3], g_mac[4], g_mac[5]);
 
   led::begin();
-  usb::begin(g_mac, onMessage);  // COBS channel up before any TLOG (release builds frame logs)
+  usb::begin(g_mac, onUsbMessage);  // COBS channel up before any TLOG (release builds frame logs)
   settings::begin();
   tally::init(g_mac, onMessage);
   espnow::init(g_mac, onMessage);
   wifi::begin(g_apSsid);
+  scan::begin();
 
   TLOG(LOG_LEVEL_INFO, "=== TallyBot === AP %s\n", g_apSsid);
   pinMode(kBootButtonPin, INPUT_PULLUP);
@@ -221,6 +225,8 @@ void loop() {
   unsigned long now = millis();
 
   bool usbTallyReleased = usb::loop(now);  // pump RX, re-announce HELLO, release idle tally
+  scan::loop();                            // advance a SCAN_WIFI: driver, radio hand-back, SCAN_RESULTs
+  control::runDeferred();                  // a SET_BRIDGE / SET_WIFI that waited for the scan
   control::maybeEmitStatus(now);           // stream STATUS on change while a host is cabled
   checkBootButton(now);                    // hold BOOT → re-open WiFi setup
 
@@ -256,6 +262,7 @@ void loop() {
       // The host fell silent (likely unplugged but still powered) — hand the device back to WiFi.
       if (usbTallyReleased) {
         TLOG(LOG_LEVEL_INFO, "USB host lost; reverting to WiFi\n");
+        scan::abort();  // the WiFi client takes the radio back
         usb::resetSession();
         // TRANSPORT_WIFI, not the NVS mode: USB_OWNED is reached only from a WiFi boot, and a
         // SET_TRANSPORT received while cabled applies next boot.

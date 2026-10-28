@@ -19,6 +19,7 @@ void begin(const uint8_t mac[6], MessageHandler onMessage);
 bool loop(unsigned long now);
 
 void send(const uint8_t* payload, size_t len);
+bool txRoom(size_t len);  // a `len`-byte payload fits the TX buffer now (send never blocks; a burst checks first)
 void sendHello();     // announce identity now (also sent automatically until a host replies)
 bool hostPresent();   // a host frame has arrived this session
 bool tallyActive();   // the app is currently driving tally over USB

@@ -12,6 +12,9 @@ namespace wifi {
 void begin(const char* apSsid);  // configure WiFiManager + disconnect events; build the portal panel
 void enableRadio();              // STA mode + channel widening + cache the stored SSID (a WiFi device)
 void disableRadio();             // radio off (a No-TX device)
+// SCAN_WIFI: switch STA on (with the country's channels 1–13) if the radio is off. True if it was
+// off, so the scan switches it off again after; a radio already up is left as it is.
+bool scanRadioUp();
 
 // ESP-NOW radio helpers (v1.3). ESP-NOW runs on the STA interface (peer == HELLO MAC), so the
 // espnow module borrows these to bring the radio up the same way the WiFi path does.
