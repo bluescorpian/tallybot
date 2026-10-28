@@ -17,7 +17,6 @@ namespace {
 const uint8_t kBroadcast[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 constexpr unsigned long kHelloIntervalMs = 1000;  // HELLO cadence: awaiting the first frame, or relinking
 constexpr unsigned long kRadioRetryMs = 5000;     // a light whose radio failed to come up tries again this often
-constexpr uint8_t kMaxChannel = 13;               // the hunt sweeps 1..13: country ZA (wifi.cpp setCountry)
 
 // Which role owns the radio right now. The single RX callback dispatches on this — a frame
 // means "discovery/colour from the bridge" to a light, "discovery/relay-up" to a bridge.
@@ -76,11 +75,24 @@ bool isDiscovery(const uint8_t* data, size_t len, const char* str) {
   return len == n && memcmp(data, str, n) == 0;
 }
 
-// The light matches the bridge's reply by prefix only: the bridge unicasts the same
-// "TALLY_HERE:<port>" the UDP server sends, but the port is meaningless over ESP-NOW.
-bool isDiscoveryPrefix(const uint8_t* data, size_t len, const char* prefix) {
-  size_t n = strlen(prefix);
-  return len >= n && memcmp(data, prefix, n) == 0;
+// Parse a bridge's reply (protocol.h, Discovery): "TALLY_HERE:<port>" from a v3 bridge (*channel
+// = 0: link on whatever channel the radio is on) or "TALLY_HERE:<port>:<channel>" from a v4 one.
+// False for anything else, including a channel outside ESPNOW_CHANNEL_MIN..MAX. The port is skipped.
+bool parseHere(const uint8_t* data, size_t len, uint8_t* channel) {
+  size_t i = strlen(DISCOVERY_RESPONSE_PREFIX);
+  if (len < i || memcmp(data, DISCOVERY_RESPONSE_PREFIX, i) != 0) return false;
+  size_t portStart = i;
+  while (i < len && data[i] >= '0' && data[i] <= '9') i++;
+  if (i == portStart) return false;
+  *channel = 0;
+  if (i == len) return true;
+  if (data[i++] != ':') return false;
+  unsigned ch = 0;
+  size_t chStart = i;
+  while (i < len && i - chStart < 2 && data[i] >= '0' && data[i] <= '9') ch = ch * 10 + (data[i++] - '0');
+  if (i == chStart || i != len || !isEspnowChannel(ch)) return false;
+  *channel = (uint8_t)ch;
+  return true;
 }
 
 bool addPeer(const uint8_t* mac) {
@@ -241,9 +253,13 @@ bool radioUp() {
 
 // Set the radio's max transmit power and log what it reports back: the driver rounds a request
 // to a step it supports (esp_wifi.h, esp_wifi_set_max_tx_power), so the read-back is the truth.
+// On a refusal the radio keeps its previous power and so does g_bridgeTxPower.
 void applyTxPower(uint8_t requested) {
   esp_err_t err = esp_wifi_set_max_tx_power((int8_t)requested);
-  if (err != ESP_OK) TLOG(LOG_LEVEL_WARN, "TX power %u refused: 0x%x\n", requested, (unsigned)err);
+  if (err != ESP_OK)
+    TLOG(LOG_LEVEL_WARN, "TX power %u refused: 0x%x\n", requested, (unsigned)err);
+  else
+    g_bridgeTxPower = requested;
   int8_t applied = 0;
   if (esp_wifi_get_max_tx_power(&applied) == ESP_OK)
     TLOG(LOG_LEVEL_INFO, "TX power: requested %u, radio reports %d (quarter-dBm: %d.%02d dBm)\n", requested,
@@ -332,23 +348,26 @@ void dwellOn(uint8_t channel, unsigned long now) {
 
 void startSweep(unsigned long now) {
   g_sweeping = true;
-  dwellOn(1, now);
+  dwellOn(ESPNOW_CHANNEL_MIN, now);
 }
 
 // Advance the hunt (see g_homeChannel). True while a sweep owns this tick, so the home-channel
 // discovery (broadcast + HELLO to the remembered bridge) doesn't run off-channel.
 bool serviceHunt(unsigned long now) {
-  if (now - g_unlinkedSince < CHANNEL_HUNT_AFTER_MS) return false;
+  // millis(), not `now`: startLight stamps g_unlinkedSince itself, maybe after the caller's `now`,
+  // and `now - g_unlinkedSince` would wrap and start the hunt at once. (The phase timer below is
+  // stamped only from `now`, so it compares against `now`.)
+  if (!g_hunting && millis() - g_unlinkedSince < CHANNEL_HUNT_AFTER_MS) return false;
   if (!g_hunting) {
     g_hunting = true;
-    TLOG(LOG_LEVEL_INFO, "No bridge for %lus; hunting channels 1-%u\n",
-         (unsigned long)(CHANNEL_HUNT_AFTER_MS / 1000), kMaxChannel);
+    TLOG(LOG_LEVEL_INFO, "No bridge for %lus; hunting channels %u-%u\n",
+         (unsigned long)(CHANNEL_HUNT_AFTER_MS / 1000), ESPNOW_CHANNEL_MIN, ESPNOW_CHANNEL_MAX);
     startSweep(now);
     return true;
   }
   if (g_sweeping) {
     if (now - g_huntPhaseStart < CHANNEL_DWELL_MS) return true;
-    if (g_sweepChannel < kMaxChannel) {
+    if (g_sweepChannel < ESPNOW_CHANNEL_MAX) {
       dwellOn(g_sweepChannel + 1, now);
       return true;
     }
@@ -388,6 +407,12 @@ void espnow::init(const uint8_t mac[6], MessageHandler onMessage) {
 
 void espnow::startLight() {
   g_homeChannel = settings::espnowChannel();  // the persisted channel (default ESPNOW_CHANNEL)
+  if (!isEspnowChannel(g_homeChannel)) {
+    // Written by older firmware, which stored any SET_TRANSPORT channel byte. The radio would refuse
+    // it on every retry and the light would never reach its hunt; the default lets it hunt.
+    TLOG(LOG_LEVEL_WARN, "Stored ESP-NOW channel %u is out of range; using %u\n", g_homeChannel, ESPNOW_CHANNEL);
+    g_homeChannel = ESPNOW_CHANNEL;
+  }
   g_channel = g_homeChannel;
   g_role = Role::LIGHT;
   g_haveBridge = false;  // radioUp() starts with an empty peer table
@@ -421,13 +446,17 @@ void espnow::loopLight(unsigned long now) {
   // Drain inbound frames first — any frame from the bridge is liveness + (usually) a SET_COLOR.
   Frame f;
   while (dequeue(&f)) {
-    if (isDiscoveryPrefix(f.data, f.len, DISCOVERY_RESPONSE_PREFIX)) {  // ignore the port suffix
+    uint8_t hereChannel;
+    if (parseHere(f.data, f.len, &hereChannel)) {
       if (!g_linked) {  // a bridge answered — make it our single peer and say HELLO
+        // A v4 bridge names its channel: we may have heard it from an overlapping neighbour, so
+        // move there first (which flushes the rest of the ring, all heard on this channel).
+        if (hereChannel != 0 && hereChannel != g_channel && !tune(hereChannel)) continue;
         if (!adoptBridge(f.src)) continue;
         g_linked = true;
         g_everHadBridge = true;
         g_gotFrame = false;
-        endHunt();  // the radio is still on the channel this reply was heard on
+        endHunt();  // the radio is on the bridge's channel (named, or the one this reply was heard on)
         reportRelink(now);  // before g_lastRx moves: the gap runs from the last frame to this one
         g_lastRx = now;
         g_lastHello = now - kHelloIntervalMs;  // HELLO on the next tick
@@ -443,8 +472,10 @@ void espnow::loopLight(unsigned long now) {
     bool decoded = decodeServerMessage(f.data, f.len, &msg);
     if (!g_linked) {
       // Fast relink: the remembered bridge is still relaying to us, so a decodable frame is proof
-      // enough — restore the link without waiting on TALLY_HERE + a HELLO round-trip.
-      if (!decoded) continue;
+      // enough — restore the link without waiting on TALLY_HERE + a HELLO round-trip. Not mid-sweep:
+      // off the home channel the frame may come from an overlapping neighbour, and endHunt would
+      // store the wrong channel; the dwell's TALLY_FIND gets a reply that names the right one.
+      if (!decoded || g_sweeping) continue;
       g_linked = true;
       endHunt();
       reportRelink(now);
@@ -504,6 +535,14 @@ void espnow::loopLight(unsigned long now) {
 // ── Bridge role ───────────────────────────────────────────────────────────────────
 
 void espnow::enterBridge(uint8_t channel, uint8_t txPower) {
+  if (!isEspnowChannel(channel)) {
+    // Refused before the radio is touched; a bridge already running leaves, as for a failed retune,
+    // so STATUS reports bridging=0 rather than a channel the host didn't ask for.
+    TLOG(LOG_LEVEL_ERROR, "SET_BRIDGE channel %u out of range (%u-%u); not bridging\n", channel,
+         ESPNOW_CHANNEL_MIN, ESPNOW_CHANNEL_MAX);
+    exitBridge();
+    return;
+  }
   if (g_role == Role::BRIDGE) {
     // Already bridging: a re-assert with the same settings is a no-op; a new channel or power is
     // applied in place, keeping the peer table (its channel-0 peers follow the retune).
@@ -516,10 +555,7 @@ void espnow::enterBridge(uint8_t channel, uint8_t txPower) {
       }
       TLOG(LOG_LEVEL_INFO, "Bridge retuned to channel %u\n", channel);
     }
-    if (txPower != g_bridgeTxPower) {
-      g_bridgeTxPower = txPower;
-      applyTxPower(txPower);
-    }
+    if (txPower != g_bridgeTxPower) applyTxPower(txPower);
     return;
   }
   if (g_role == Role::LIGHT) radioDown();  // a cabled ESPNOW light becomes a bridge — rebuild fresh
@@ -536,8 +572,8 @@ void espnow::enterBridge(uint8_t channel, uint8_t txPower) {
   resetBridgeStats(millis());  // the light role's sends also bumped the counters
   g_role = Role::BRIDGE;
   TLOG(LOG_LEVEL_INFO, "Bridge mode on (channel %u)\n", channel);
-  g_bridgeTxPower = txPower;
-  applyTxPower(txPower);  // after radioUp, which brought the radio up at full power
+  g_bridgeTxPower = BRIDGE_TX_POWER_FULL;  // radioUp brought the radio up at full power
+  applyTxPower(txPower);
 }
 
 void espnow::exitBridge() {
@@ -571,10 +607,10 @@ void espnow::loopBridge(unsigned long now) {
         g_peerFull.fetch_add(1, std::memory_order_relaxed);  // reported in the 1 s stats line
         continue;
       }
-      // Reply with the very same "TALLY_HERE:<port>" the UDP server sends (one format on both
-      // transports). The light prefix-matches and ignores the port — meaningless over ESP-NOW.
+      // "TALLY_HERE:<port>:<channel>" (protocol.h, Discovery): the channel lets a light that heard
+      // this from an overlapping neighbour tune to ours before it links.
       char here[24];
-      int n = snprintf(here, sizeof(here), "%s%d", DISCOVERY_RESPONSE_PREFIX, SERVER_PORT);
+      int n = snprintf(here, sizeof(here), "%s%d:%u", DISCOVERY_RESPONSE_PREFIX, SERVER_PORT, g_channel);
       sendRaw(f.src, (const uint8_t*)here, (size_t)n);
       continue;
     }

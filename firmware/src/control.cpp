@@ -83,6 +83,14 @@ void control::dispatch(const ServerMessage& msg) {
       emitStatus();
       break;
     case ServerMessage::SET_TRANSPORT:
+      // A channel the radio can't tune would leave the light failing radio-up on every retry, so
+      // the whole command is refused (nothing half-applied); the unchanged STATUS tells the host.
+      if (msg.transportMode == TRANSPORT_ESPNOW && msg.hasChannel && !isEspnowChannel(msg.channel)) {
+        TLOG(LOG_LEVEL_WARN, "SET_TRANSPORT ignored: channel %u out of range (%u-%u)\n", msg.channel,
+             ESPNOW_CHANNEL_MIN, ESPNOW_CHANNEL_MAX);
+        emitStatus();
+        break;
+      }
       settings::setTransportMode(msg.transportMode);
       if (msg.transportMode == TRANSPORT_NOTX) wifi::cancelJoin();  // No-TX has no join lifecycle
       // ESP-NOW carries an optional channel; persist it when present (absent ⇒ keep stored/default).

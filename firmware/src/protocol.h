@@ -124,14 +124,22 @@
 // ── Discovery (UDP, text datagrams) ──────────────────────────────────────────
 #define DISCOVERY_REQUEST "TALLY_FIND"            // device → broadcast
 #define DISCOVERY_RESPONSE_PREFIX "TALLY_HERE:"   // server → "TALLY_HERE:<tcpPort>"
-// ESP-NOW reuses the same discovery strings one layer down: the bridge unicasts the very same
-// "TALLY_HERE:<port>" the UDP server sends (one reply format on both transports). Lights
-// prefix-match on DISCOVERY_RESPONSE_PREFIX and ignore the port — it's meaningless over ESP-NOW.
+// ESP-NOW reuses the same discovery strings one layer down. A v4 bridge unicasts
+// "TALLY_HERE:<port>:<channel>", naming the channel it is tuned to; a v3 bridge sends the UDP
+// server's "TALLY_HERE:<port>" (the UDP reply has no channel). The channel is there because
+// adjacent 2.4GHz channels overlap and the receive callback reports no RX channel, so a light
+// listening on 5 can hear a bridge on 6: a v4 light tunes to the named channel before it links.
+// Lights ignore the port (meaningless over ESP-NOW); v3 lights prefix-match and ignore the rest.
 // The strings' first byte is ASCII 'T' (0x54), outside the binary type-byte range, so they're
 // never confused with a message payload.
 
 // ── ESP-NOW transport (v1.3) ─────────────────────────────────────────────────
 #define ESPNOW_CHANNEL 1               // default 2.4GHz channel until a light stores another (cabled, or found by its hunt)
+// The channels the radio accepts: country ZA (wifi.cpp kCountry). A channel outside them is refused
+// on the wire (SET_TRANSPORT, SET_BRIDGE) and read from NVS as ESPNOW_CHANNEL.
+#define ESPNOW_CHANNEL_MIN 1
+#define ESPNOW_CHANNEL_MAX 13
+inline bool isEspnowChannel(unsigned ch) { return ch >= ESPNOW_CHANNEL_MIN && ch <= ESPNOW_CHANNEL_MAX; }
 // Bridge transmit power in esp_wifi's quarter-dBm units, as SET_BRIDGE's optional txPower byte
 // carries it. FULL (19.5 dBm) applies when the byte is absent and when bridge mode ends.
 #define BRIDGE_TX_POWER_FULL 78
