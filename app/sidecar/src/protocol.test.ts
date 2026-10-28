@@ -153,6 +153,10 @@ test("setTransportPayload / getStatusPayload", () => {
   assert.deepEqual(getStatusPayload(), Uint8Array.of(ServerMessageType.GET_STATUS));
 });
 
+test("SET_TRANSPORT(ESPNOW) without a channel throws instead of leaving the device on channel 1", () => {
+  assert.throws(() => setTransportPayload(Transport.ESPNOW), RangeError);
+});
+
 // ── Device → host: STATUS / LOG decode (USB only) ───────────────────────────────
 
 test("decodeDeviceMessage reads STATUS with SSID, sign-extending RSSI", () => {

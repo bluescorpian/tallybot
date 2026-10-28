@@ -233,6 +233,39 @@ test("a device's reported protocol version and transport survive a reload, even 
   });
 });
 
+test("the prune keeps an unassigned ESP-NOW light but drops WiFi and No-TX entries with nothing configured", async () => {
+  await withTempFile(async (path) => {
+    const store = await ConfigStore.load(path);
+    await store.noteReported("aa:bb:cc:dd:ee:01", { protocolVersion: 4, transport: Transport.ESPNOW });
+    await store.noteReported("aa:bb:cc:dd:ee:02", { protocolVersion: 4, transport: Transport.WIFI });
+    await store.noteReported("aa:bb:cc:dd:ee:03", { protocolVersion: 4, transport: Transport.NOTX });
+    await store.flush();
+
+    const onDisk = JSON.parse(await readFile(path, "utf8")) as { devices: Record<string, unknown> };
+    assert.deepEqual(Object.keys(onDisk.devices), ["aa:bb:cc:dd:ee:01"]);
+  });
+});
+
+test("bridge TX power is never persisted: an old file carrying it loads, and the next write drops it", async () => {
+  await withTempFile(async (path) => {
+    const bridgeMac = "aa:bb:cc:dd:ee:ff";
+    await writeFile(
+      path,
+      JSON.stringify({ version: 1, sourceIp: null, bridgeMac, espnowChannel: 6, bridgeTxPower: "reduced", devices: {} }),
+      "utf8",
+    );
+    const store = await ConfigStore.load(path);
+    assert.equal(store.bridgeMac, bridgeMac, "the rest of the file loads");
+    assert.equal(store.espnowChannel, 6);
+
+    await store.setEspnowChannel(11);
+    await store.flush();
+    const onDisk = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+    assert.equal(onDisk.espnowChannel, 11);
+    assert.ok(!("bridgeTxPower" in onDisk), "bridgeTxPower is not written back");
+  });
+});
+
 test("an atomic write leaves no stray temp file behind", async () => {
   await withTempFile(async (path) => {
     const store = await ConfigStore.load(path);

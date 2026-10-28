@@ -66,7 +66,7 @@ test("provisionWifi / setTransport encode their payloads", () => {
   bridge.feed({ type: "usbDeviceConnected", mac: MAC, version: 2 });
 
   usb.provisionWifi(MAC, "Net", "pw");
-  usb.setTransport(MAC, transportModeValue("notx"));
+  usb.setTransport(MAC, transportModeValue("notx"), null);
   assert.deepEqual([...fromHex(bridge.sent[0]!.payloadHex)], [
     ServerMessageType.SET_WIFI,
     3,
@@ -85,9 +85,9 @@ test("setTransport(espnow) appends the ESP-NOW channel byte", () => {
   const usb = new UsbTransport(bridge);
   bridge.feed({ type: "usbDeviceConnected", mac: MAC, version: 3 });
 
-  usb.setTransport(MAC, transportModeValue("espnow"));
-  // [type][mode=2][channel=1] — the channel rides only for ESP-NOW.
-  assert.deepEqual([...fromHex(bridge.sent[0]!.payloadHex)], [ServerMessageType.SET_TRANSPORT, Transport.ESPNOW, 1]);
+  usb.setTransport(MAC, transportModeValue("espnow"), 6);
+  // [type][mode=2][channel=6] — the channel rides only for ESP-NOW.
+  assert.deepEqual([...fromHex(bridge.sent[0]!.payloadHex)], [ServerMessageType.SET_TRANSPORT, Transport.ESPNOW, 6]);
 });
 
 test("an inbound STATUS frame is decoded into a status event", () => {
@@ -183,14 +183,14 @@ test("a STATUS with the [channel][bridging] pair surfaces channel + bridge", () 
 test("setBridge sends [type][enabled][channel] only while the device is on USB", () => {
   const bridge = new FakeBridge();
   const usb = new UsbTransport(bridge);
-  assert.equal(usb.setBridge(MAC, true), false); // not connected yet
+  assert.equal(usb.setBridge(MAC, true, 6), false); // not connected yet
   bridge.feed({ type: "usbDeviceConnected", mac: MAC, version: 3 });
 
-  assert.equal(usb.setBridge(MAC, true), true);
-  // 3 bytes ending in the ESP-NOW channel (1).
-  assert.deepEqual([...fromHex(bridge.sent[0]!.payloadHex)], [ServerMessageType.SET_BRIDGE, 1, 1]);
-  usb.setBridge(MAC, false);
-  assert.deepEqual([...fromHex(bridge.sent[1]!.payloadHex)], [ServerMessageType.SET_BRIDGE, 0, 1]);
+  assert.equal(usb.setBridge(MAC, true, 6), true);
+  // 3 bytes ending in the ESP-NOW channel (6).
+  assert.deepEqual([...fromHex(bridge.sent[0]!.payloadHex)], [ServerMessageType.SET_BRIDGE, 1, 6]);
+  usb.setBridge(MAC, false, 6);
+  assert.deepEqual([...fromHex(bridge.sent[1]!.payloadHex)], [ServerMessageType.SET_BRIDGE, 0, 6]);
 });
 
 test("a RELAY frame is re-emitted as a relayed event (bridgeMac + srcMac + inner)", () => {

@@ -105,7 +105,6 @@ class FakeStore implements StorePort {
   sourceIp: string | null = null;
   bridgeMac: string | null = null;
   espnowChannel = 1;
-  bridgeTxPower: BridgeTxPower = "full";
   /** When set, every write fails with it (the change still lands in memory, as ConfigStore's does). */
   failWrites: Error | null = null;
   readonly #devices = new Map<string, DeviceConfig>();
@@ -125,10 +124,6 @@ class FakeStore implements StorePort {
   }
   setEspnowChannel(channel: number): Promise<void> {
     this.espnowChannel = channel;
-    return this.#written();
-  }
-  setBridgeTxPower(txPower: BridgeTxPower): Promise<void> {
-    this.bridgeTxPower = txPower;
     return this.#written();
   }
   noteReported(mac: string, report: DeviceReport): Promise<void> {
@@ -180,7 +175,7 @@ class FakeProvisioning extends EventEmitter implements ProvisioningPort {
   readonly transports: Array<{ mac: string; mode: number }> = [];
   readonly bridges: Array<{ mac: string; enabled: boolean }> = [];
   /** Every SET_TRANSPORT / SET_BRIDGE call with all its arguments, for the channel and power tests. */
-  readonly transportCalls: Array<{ mac: string; mode: number; channel: number | undefined }> = [];
+  readonly transportCalls: Array<{ mac: string; mode: number; channel: number | null }> = [];
   readonly bridgeCalls: Array<{ mac: string; enabled: boolean; channel: number; txPower: number | undefined }> = [];
   readonly statusRequested: string[] = [];
   /** MACs currently reachable over USB (drives `transportOf` + the boolean returns). */
@@ -197,7 +192,7 @@ class FakeProvisioning extends EventEmitter implements ProvisioningPort {
     this.provisioned.push({ mac, ssid, password });
     return true;
   }
-  setTransport(mac: string, mode: number, channel?: number): boolean {
+  setTransport(mac: string, mode: number, channel: number | null): boolean {
     if (!this.wired.has(mac)) return false;
     this.transports.push({ mac, mode });
     this.transportCalls.push({ mac, mode, channel });
@@ -1049,10 +1044,10 @@ test("changing the channel persists it and retunes a cabled v4 bridge with one S
 
 test("a v3 bridge is moved by SET_BRIDGE 0 then 1, and is never sent a txPower byte", async () => {
   const harness = setup();
-  const { app, ipc, provisioning, store } = harness;
-  store.bridgeTxPower = "reduced"; // even with reduced power set, v3 gets the 3-byte form
+  const { app, ipc, provisioning } = harness;
   await app.start();
   bringUpUsb(harness, BRIDGE, 3);
+  ipc.command({ type: "setBridgeTxPower", txPower: "reduced" }); // even with reduced power set, v3 gets the 3-byte form
   ipc.command({ type: "setBridge", mac: BRIDGE });
   await tick();
   ipc.command({ type: "setEspNowChannel", channel: 11 });
@@ -1133,4 +1128,133 @@ test("legacyLights names every known ESP-NOW light below v4, connected or not", 
   await tick();
 
   assert.deepEqual([...ipc.lastState()!.state.espnow.legacyLights].sort(), [KNOWN_V3, RADIO_V3]);
+});
+
+test("a restarted app starts at full bridge TX power, whatever the last session set", async () => {
+  const first = setup();
+  await first.app.start();
+  bringUpUsb(first, BRIDGE, 4);
+  first.ipc.command({ type: "setBridge", mac: BRIDGE });
+  first.ipc.command({ type: "setBridgeTxPower", txPower: "reduced" });
+  await tick();
+  assert.equal(first.provisioning.bridgeCalls.at(-1)?.txPower, 34);
+
+  // Relaunch on the same persisted state: the designation survives, the power setting doesn't.
+  const second = setup();
+  Object.assign(second.store, { bridgeMac: first.store.bridgeMac, espnowChannel: first.store.espnowChannel });
+  await second.app.start();
+  assert.equal(second.ipc.lastState()!.state.espnow.bridgeTxPower, "full");
+  bringUpUsb(second, BRIDGE, 4); // the re-assert on connect
+  assert.equal(second.provisioning.bridgeCalls.at(-1)?.txPower, 78);
+});
+
+test("an unknown bridge TX power is refused with a warning: setting kept, nothing sent", async () => {
+  const harness = setup();
+  const { app, ipc, provisioning } = harness;
+  await app.start();
+  bringUpUsb(harness, BRIDGE, 4);
+  ipc.command({ type: "setBridge", mac: BRIDGE });
+  await tick();
+  const sent = provisioning.bridgeCalls.length;
+  const before = ipc.notices.length;
+
+  ipc.command({ type: "setBridgeTxPower", txPower: "max" as BridgeTxPower });
+  await tick();
+
+  assert.equal(ipc.notices.length, before + 1);
+  assert.equal(ipc.notices.at(-1)?.level, "warn");
+  assert.equal(provisioning.bridgeCalls.length, sent, "no SET_BRIDGE for a refused power");
+  assert.equal(ipc.lastState()!.state.espnow.bridgeTxPower, "full");
+});
+
+test("unseenLights names known devices with no recorded version that aren't WiFi or No-TX, never the bridge", async () => {
+  const OLD = "aa:bb:cc:dd:ee:11"; // written by the previous app version: no version, no transport
+  const OLD_ESPNOW = "aa:bb:cc:dd:ee:12"; // provisioned to ESP-NOW, version never recorded
+  const WIFI_SSID = "aa:bb:cc:dd:ee:13";
+  const WIFI_STATUS = "aa:bb:cc:dd:ee:14";
+  const NOTX = "aa:bb:cc:dd:ee:15";
+  const { app, ipc, store } = setup();
+  await store.assign(OLD, 1);
+  await store.noteReported(OLD_ESPNOW, { transport: Transport.ESPNOW });
+  await store.setSsid(WIFI_SSID, "Venue");
+  await store.noteReported(WIFI_STATUS, { transport: Transport.WIFI });
+  await store.noteReported(NOTX, { transport: Transport.NOTX });
+  await store.assign(BRIDGE, 2);
+  store.bridgeMac = BRIDGE;
+  await app.start();
+
+  const { unseenLights, legacyLights } = ipc.lastState()!.state.espnow;
+  assert.deepEqual([...unseenLights].sort(), [OLD, OLD_ESPNOW]);
+  assert.deepEqual(legacyLights, []);
+});
+
+test("the designated bridge is left out of legacyLights even below v4", async () => {
+  const LIGHT_V3 = "aa:bb:cc:dd:ee:16";
+  const { app, ipc, store } = setup();
+  await store.noteReported(BRIDGE, { protocolVersion: 3, transport: Transport.ESPNOW });
+  await store.noteReported(LIGHT_V3, { protocolVersion: 3, transport: Transport.ESPNOW });
+  store.bridgeMac = BRIDGE;
+  await app.start();
+
+  assert.deepEqual(ipc.lastState()!.state.espnow.legacyLights, [LIGHT_V3]);
+});
+
+test("a light leaves the warning lists on reconnect: unseen once it reports any version, legacy at v4", async () => {
+  const UNSEEN_V3 = "aa:bb:cc:dd:ee:21";
+  const UNSEEN_V4 = "aa:bb:cc:dd:ee:22";
+  const LEGACY = "aa:bb:cc:dd:ee:23";
+  const { app, server, ipc, provisioning, store } = setup();
+  await store.assign(UNSEEN_V3, 1);
+  await store.assign(UNSEEN_V4, 2);
+  await store.noteReported(LEGACY, { protocolVersion: 3, transport: Transport.ESPNOW });
+  await app.start();
+  const espnowOf = () => ipc.lastState()!.state.espnow;
+  assert.deepEqual([...espnowOf().unseenLights].sort(), [UNSEEN_V3, UNSEEN_V4]);
+  assert.deepEqual(espnowOf().legacyLights, [LEGACY]);
+
+  for (const [mac, version] of [
+    [UNSEEN_V3, 3],
+    [UNSEEN_V4, 4],
+    [LEGACY, 4], // updated firmware
+  ] as const) {
+    provisioning.espnow.add(mac);
+    server.connectDevice(mac, version);
+  }
+  await tick();
+
+  assert.deepEqual(espnowOf().unseenLights, []);
+  assert.deepEqual(espnowOf().legacyLights, [UNSEEN_V3]);
+});
+
+test("a device that leaves USB but stays online drops its USB-only state", async () => {
+  const harness = setup();
+  const { app, server, ipc, provisioning } = harness;
+  await app.start();
+  bringUpUsb(harness, BRIDGE, 4);
+  ipc.command({ type: "setBridge", mac: BRIDGE });
+  await tick();
+  provisioning.emitStatus(BRIDGE, {
+    mode: Transport.ESPNOW,
+    wifiState: "idle" as DeviceWifiState,
+    rssi: -40,
+    ssid: "",
+    channel: 6,
+    bridge: true,
+  });
+  await tick();
+  const deviceOf = () => ipc.lastState()!.state.devices.find((d) => d.mac === BRIDGE)!;
+  assert.equal(deviceOf().espnowChannel, 6);
+  assert.equal(deviceOf().bridge, true);
+
+  // Unplugged, but still reachable over TCP: the composite re-announces it without a disconnect.
+  provisioning.wired.delete(BRIDGE);
+  server.connectDevice(BRIDGE, 4);
+  await tick();
+
+  const device = deviceOf();
+  assert.equal(device.espnowChannel, null);
+  assert.equal(device.bridge, false);
+  assert.equal(device.wifiState, null);
+  assert.equal(device.rssi, null);
+  assert.equal(device.provisionedMode ?? null, null);
 });

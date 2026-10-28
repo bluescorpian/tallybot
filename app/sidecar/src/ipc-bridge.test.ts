@@ -46,7 +46,7 @@ test("send writes one NDJSON line that parses back to the event", async () => {
       devices: [],
       programGate: { active: false, source: null },
       faults: [],
-      espnow: { channel: 1, bridgeTxPower: "full", legacyLights: [] },
+      espnow: { channel: 1, bridgeTxPower: "full", legacyLights: [], unseenLights: [] },
     },
   };
   bridge.send(event);
