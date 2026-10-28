@@ -598,115 +598,119 @@
 		gap: 30px;
 	}
 
-	/* section heading */
-	.sec-head {
-		margin: 0 2px 10px;
-	}
-	.sec-head h2 {
-		font-size: 0.82rem;
-		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
-		color: var(--muted-foreground);
-	}
+	/* The group vocabulary (section heading, card, rows, field, hints, inline messages) is shared
+	   with the groups that live in their own component (EspNowGroup), hence global under .panel. */
+	.panel :global {
+		/* section heading */
+		.sec-head {
+			margin: 0 2px 10px;
+		}
+		.sec-head h2 {
+			font-size: 0.82rem;
+			font-weight: 600;
+			text-transform: uppercase;
+			letter-spacing: 0.06em;
+			color: var(--muted-foreground);
+		}
 
-	/* grouped card of rows */
-	.card {
-		border: 1px solid var(--border);
-		border-radius: var(--radius-xl);
-		background: var(--background);
-		overflow: hidden;
-		box-shadow: 0 1px 2px oklch(0 0 0 / 0.04);
-	}
-	.row,
-	.field {
-		padding: 14px 16px;
-	}
-	.row + .row,
-	.row-msg + .row,
-	.field + .row {
-		border-top: 1px solid var(--border);
-	}
+		/* grouped card of rows */
+		.card {
+			border: 1px solid var(--border);
+			border-radius: var(--radius-xl);
+			background: var(--background);
+			overflow: hidden;
+			box-shadow: 0 1px 2px oklch(0 0 0 / 0.04);
+		}
+		.row,
+		.field {
+			padding: 14px 16px;
+		}
+		.row + .row,
+		.row-msg + .row,
+		.field + .row {
+			border-top: 1px solid var(--border);
+		}
 
-	.row {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 16px;
-	}
-	.row.disabled {
-		opacity: 0.6;
-	}
+		.row {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 16px;
+		}
+		.row.disabled {
+			opacity: 0.6;
+		}
 
-	.label-col {
-		display: flex;
-		flex-direction: column;
-		gap: 3px;
-		min-width: 0;
-	}
-	.lbl {
-		font-size: 0.875rem;
-		font-weight: 500;
-		line-height: 1.3;
-	}
-	.hint {
-		font-size: 0.78rem;
-		line-height: 1.45;
-		color: var(--muted-foreground);
-		max-width: 42ch;
-	}
+		.label-col {
+			display: flex;
+			flex-direction: column;
+			gap: 3px;
+			min-width: 0;
+		}
+		.lbl {
+			font-size: 0.875rem;
+			font-weight: 500;
+			line-height: 1.3;
+		}
+		.hint {
+			font-size: 0.78rem;
+			line-height: 1.45;
+			color: var(--muted-foreground);
+			max-width: 42ch;
+		}
 
-	/* a message attached to the row above it (no divider between them) */
-	.row-msg {
-		display: flex;
-		align-items: center;
-		gap: 7px;
-		padding: 0 16px 12px;
-		margin-top: -4px;
-		font-size: 0.78rem;
-	}
-	.row-msg.error {
-		color: var(--destructive);
-	}
+		/* a message attached to the row above it (no divider between them) */
+		.row-msg {
+			display: flex;
+			align-items: center;
+			gap: 7px;
+			padding: 0 16px 12px;
+			margin-top: -4px;
+			font-size: 0.78rem;
+		}
+		.row-msg.error {
+			color: var(--destructive);
+		}
 
-	/* ATEM field block */
-	.field .label-col {
-		margin-bottom: 10px;
-	}
-	.field-controls {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-	}
-	.field-controls :global(input) {
-		flex: 1;
-		min-width: 0;
-	}
+		/* ATEM field block */
+		.field .label-col {
+			margin-bottom: 10px;
+		}
+		.field-controls {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+		}
+		.field-controls input {
+			flex: 1;
+			min-width: 0;
+		}
 
-	/* inline messages under the field: validation / scan / save feedback */
-	.field-msg {
-		display: flex;
-		align-items: center;
-		gap: 7px;
-		margin-top: 11px;
-		font-size: 0.78rem;
-		color: var(--muted-foreground);
-	}
-	.field-msg em {
-		font-style: normal;
-		font-family: var(--font-mono);
-		font-size: 0.72rem;
-	}
-	.field-msg code {
-		font-family: var(--font-mono);
-		font-size: 0.72rem;
-		color: var(--foreground);
-	}
-	.field-msg.error {
-		color: var(--destructive);
-	}
-	.field-msg.ok {
-		color: oklch(0.55 0.13 150);
+		/* inline messages under the field: validation / scan / save feedback */
+		.field-msg {
+			display: flex;
+			align-items: center;
+			gap: 7px;
+			margin-top: 11px;
+			font-size: 0.78rem;
+			color: var(--muted-foreground);
+		}
+		.field-msg em {
+			font-style: normal;
+			font-family: var(--font-mono);
+			font-size: 0.72rem;
+		}
+		.field-msg code {
+			font-family: var(--font-mono);
+			font-size: 0.72rem;
+			color: var(--foreground);
+		}
+		.field-msg.error {
+			color: var(--destructive);
+		}
+		.field-msg.ok {
+			color: oklch(0.55 0.13 150);
+		}
 	}
 
 	/* scan results */
