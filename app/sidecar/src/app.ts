@@ -35,7 +35,10 @@ import type {
   SidecarEvent,
   SourceScanHit,
   UiCommand,
+  WifiAccessPoint,
+  WifiScanner,
 } from "./ipc.ts";
+import { channelCongestion, suggestChannel } from "./channel-scan.ts";
 import {
   BRIDGE_TX_POWER,
   type Color,
@@ -111,6 +114,23 @@ export interface EspNowBridgePort {
   /** Point outbound RELAY frames at this bridge MAC (null = no bridge designated). */
   setBridgeMac(mac: string | null): void;
 }
+
+/**
+ * WiFi scans on a cabled device (SCAN_WIFI), for the ESP-NOW channel suggestion. Separate from
+ * {@link ProvisioningPort} because only the channel "Scan" needs it; the {@link CompositeDeviceServer}
+ * satisfies both.
+ */
+export interface WifiScanPort {
+  /**
+   * Scan from a USB device: resolves with the access points it heard, rejects when it doesn't
+   * answer in time or leaves USB first. Null when the MAC isn't on USB. Sent only to version ≥ 4
+   * devices by the caller.
+   */
+  scanWifi(mac: string): Promise<WifiAccessPoint[]> | null;
+}
+
+/** Stands in when nothing can scan (no USB transport): every device reads as not on USB. */
+const NO_WIFI_SCAN: WifiScanPort = { scanWifi: () => null };
 
 export interface AtemSourcePort {
   snapshot(): SourceSnapshot;
@@ -237,6 +257,8 @@ export interface SidecarAppDeps {
    * when it isn't running). Told which bridge MAC to route relayed colours through.
    */
   espnow: EspNowBridgePort;
+  /** WiFi scans for the ESP-NOW channel suggestion (the composite server); without it, none run. */
+  wifiScan?: WifiScanPort;
   store: StorePort;
   ipc: IpcPort;
   /** Where to log diagnostics (defaults to stderr; stdout is protocol-only). */
@@ -282,6 +304,7 @@ export class SidecarApp {
   readonly #server: DeviceServerPort;
   readonly #provisioning: ProvisioningPort;
   readonly #espnow: EspNowBridgePort;
+  readonly #wifiScan: WifiScanPort;
   readonly #store: StorePort;
   readonly #ipc: IpcPort;
   readonly #log: (message: string) => void;
@@ -296,6 +319,8 @@ export class SidecarApp {
 
   /** True while a subnet sweep is in flight — a second "Scan" is ignored until it ends. */
   #scanning = false;
+  /** True while an ESP-NOW channel scan is in flight — likewise one at a time. */
+  #wifiScanning = false;
 
   /** Connected devices → their reported protocol version (present only while online). */
   readonly #online = new Map<string, number>();
@@ -340,6 +365,7 @@ export class SidecarApp {
     this.#server = deps.deviceServer;
     this.#provisioning = deps.provisioning;
     this.#espnow = deps.espnow;
+    this.#wifiScan = deps.wifiScan ?? NO_WIFI_SCAN;
     this.#store = deps.store;
     this.#ipc = deps.ipc;
     this.#log = deps.log ?? ((message) => process.stderr.write(`${message}\n`));
@@ -606,6 +632,9 @@ export class SidecarApp {
       case "scanSources":
         void this.#scan();
         break;
+      case "scanWifi":
+        void this.#scanWifi();
+        break;
       case "requestState":
         // The UI just (re)connected its listener — replay the current snapshot so it
         // doesn't sit on stale/empty state waiting for the next change. (#sync re-pushes
@@ -775,6 +804,77 @@ export class SidecarApp {
       this.#ipc.send({ type: "sourceScan", status: "done", found: [], error: (err as Error).message });
     } finally {
       this.#scanning = false;
+    }
+  }
+
+  /**
+   * The device to run a channel scan on: a cabled device at protocol 4 or later that isn't the
+   * bridge, else the bridge if it is cabled and new enough (its scan takes it off its channel for a
+   * moment, so the result says so), else null.
+   */
+  #wifiScanner(): WifiScanner | null {
+    let bridge: string | null = null;
+    for (const [mac, version] of this.#online) {
+      if (this.#provisioning.transportOf(mac) !== "usb" || !supportsChannelSelection(version)) continue;
+      if (mac === this.#store.bridgeMac || this.#bridgeConfirmed.has(mac)) bridge ??= mac;
+      else return { mac, bridge: false };
+    }
+    return bridge === null ? null : { mac: bridge, bridge: true };
+  }
+
+  /** Why no device can scan, for the operator: nothing cabled, or only firmware that can't. */
+  #noWifiScannerReason(): string {
+    const cabled = [...this.#online.keys()].some((mac) => this.#provisioning.transportOf(mac) === "usb");
+    return cabled
+      ? "The tally light on USB runs firmware too old to scan. Update its firmware, or plug in another light."
+      : "Plug a tally light into this computer with a USB cable to scan for a quiet channel.";
+  }
+
+  /**
+   * Run the ESP-NOW channel "Scan": SCAN_WIFI on the chosen device ({@link #wifiScanner}), then
+   * score the access points it heard into per-channel congestion and a suggested channel
+   * (`channel-scan.ts`). Fire-and-forget like {@link #scan}: a `scanning` event, then one `done`.
+   * Overlapping scans are dropped, so a device is never sent a second SCAN_WIFI mid-scan.
+   */
+  async #scanWifi(): Promise<void> {
+    if (this.#wifiScanning) return;
+    const empty = { accessPoints: [], congestion: [], suggestedChannel: null };
+    const scanner = this.#wifiScanner();
+    if (scanner === null) {
+      this.#ipc.send({ type: "wifiScan", status: "done", scanner: null, ...empty, error: this.#noWifiScannerReason() });
+      return;
+    }
+    const scan = this.#wifiScan.scanWifi(scanner.mac);
+    if (scan === null) {
+      this.#ipc.send({
+        type: "wifiScan",
+        status: "done",
+        scanner,
+        ...empty,
+        error: `Tally ${macTail(scanner.mac, 2)} isn't on USB any more. Plug it back in and scan again.`,
+      });
+      return;
+    }
+    this.#wifiScanning = true;
+    this.#log(`WiFi scan on ${scanner.mac}${scanner.bridge ? " (the bridge)" : ""}`);
+    this.#ipc.send({ type: "wifiScan", status: "scanning", scanner, ...empty, error: null });
+    try {
+      const accessPoints = [...(await scan)].sort((a, b) => b.rssi - a.rssi);
+      const congestion = channelCongestion(accessPoints);
+      const suggestedChannel = suggestChannel(congestion, this.#store.espnowChannel);
+      this.#log(`WiFi scan on ${scanner.mac}: ${accessPoints.length} access points, suggests channel ${suggestedChannel}`);
+      this.#ipc.send({ type: "wifiScan", status: "done", scanner, accessPoints, congestion, suggestedChannel, error: null });
+    } catch (err) {
+      this.#log(`WiFi scan on ${scanner.mac} failed: ${describeError(err)}`);
+      this.#ipc.send({
+        type: "wifiScan",
+        status: "done",
+        scanner,
+        ...empty,
+        error: `Tally ${macTail(scanner.mac, 2)} didn't finish the scan: ${describeError(err)}. Try again.`,
+      });
+    } finally {
+      this.#wifiScanning = false;
     }
   }
 

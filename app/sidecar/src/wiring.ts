@@ -76,6 +76,7 @@ export function createSidecar(inputs: SidecarInputs): Sidecar {
     deviceServer,
     provisioning: deviceServer,
     espnow: espnow ?? NO_ESPNOW,
+    wifiScan: deviceServer,
     store: inputs.store,
     ipc: inputs.ipc,
     log: inputs.log,

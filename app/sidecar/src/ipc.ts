@@ -12,7 +12,7 @@
  * device, program-gate — so the schema, persisted state, and UI all line up.
  */
 
-import type { LogLevelName } from "./protocol.ts";
+import type { LogLevelName, ScannedAccessPoint } from "./protocol.ts";
 
 // ── Domain ──────────────────────────────────────────────────────────────────
 
@@ -73,6 +73,12 @@ export type TransportMode = "wifi" | "notx" | "espnow";
 
 /** Severity of a notice or a device-log line (the wire LOG level byte, named). */
 export type { LogLevelName };
+
+/**
+ * One access point a device heard in a WiFi scan (a SCAN_RESULT frame, decoded beside its codec in
+ * `protocol.ts`): `{ channel, rssi, ssid }`, RSSI in dBm, `ssid` `""` for a hidden network.
+ */
+export type WifiAccessPoint = ScannedAccessPoint;
 
 /** WiFi join progress, surfaced while provisioning a device over USB. */
 export type DeviceWifiState = "idle" | "joining" | "connected" | "failed";
@@ -264,6 +270,56 @@ export interface SourceScanEvent {
   error: string | null;
 }
 
+/** How crowded one channel looked in a {@link WifiScanEvent}. */
+export interface ChannelCongestion {
+  /** 1–13. */
+  channel: number;
+  /**
+   * The channel's congestion score, lower is quieter: each access point within 4 channels adds its
+   * RSSI scaled from 0 at -100 dBm to 1 at -30 dBm (`channel-scan.ts`). Rounded to 0.01.
+   */
+  score: number;
+  /** How many access points the score counts (those within 4 channels). */
+  accessPoints: number;
+  /** True for the channels a suggestion is picked from (1, 6, 11, 13). */
+  candidate: boolean;
+}
+
+/** The cabled device that ran a {@link WifiScanEvent}'s scan. */
+export interface WifiScanner {
+  mac: string;
+  /**
+   * True when it is the ESP-NOW bridge (no other cabled device could scan): the bridge leaves its
+   * channel for the scan, so the rig may blink, and the UI warns not to scan mid-show.
+   */
+  bridge: boolean;
+}
+
+/**
+ * Progress/result of an ESP-NOW channel "Scan" ({@link ScanWifiCommand}), shaped like
+ * {@link SourceScanEvent}: `scanning` when the scan is sent, then one `done` with the result or
+ * with `error` set. The sidecar picks the scanner: a cabled non-bridge device at protocol 4 or later
+ * if one is online, else the bridge if it is cabled and new enough. When none can scan, the only
+ * event is a `done` with `scanner` null and `error` saying why. A second scan while one runs is
+ * ignored.
+ */
+export interface WifiScanEvent {
+  type: "wifiScan";
+  status: "scanning" | "done";
+  /** Who runs (or ran) the scan; null only on a `done` where no device could. */
+  scanner: WifiScanner | null;
+  /** Every access point heard, strongest first. Empty while scanning and on an error. */
+  accessPoints: WifiAccessPoint[];
+  /** Channels 1–13 in order. Empty while scanning and on an error. */
+  congestion: ChannelCongestion[];
+  /**
+   * The quietest candidate channel (lowest score; a tie keeps the session channel, else the lowest
+   * channel). A hint: the UI suggests it, never applies it. Null while scanning and on an error.
+   */
+  suggestedChannel: number | null;
+  error: string | null;
+}
+
 /**
  * A device-log line: a light's own `LOG` frame (over USB, or relayed by an ESP-NOW bridge), or a
  * transport's note on a light. The webview doesn't read these; every line is in the engine's log
@@ -280,6 +336,7 @@ export type SidecarEvent =
   | StateEvent
   | NoticeEvent
   | SourceScanEvent
+  | WifiScanEvent
   | DeviceLogEvent;
 
 // ── UI → sidecar commands ───────────────────────────────────────────────────────
@@ -325,6 +382,14 @@ export interface SetSourceCommand {
 /** Sweep the local subnet(s) for ATEM switchers (the settings "Scan" button). */
 export interface ScanSourcesCommand {
   type: "scanSources";
+}
+
+/**
+ * Scan the 2.4 GHz band for access points from a cabled device, to suggest a quiet ESP-NOW channel
+ * (the ESP-NOW "Scan" button). Answered by {@link WifiScanEvent}s.
+ */
+export interface ScanWifiCommand {
+  type: "scanWifi";
 }
 
 /**
@@ -411,6 +476,7 @@ export type UiCommand =
   | SetBrightnessCommand
   | SetSourceCommand
   | ScanSourcesCommand
+  | ScanWifiCommand
   | RequestStateCommand
   | SetProgramCommand
   | ProvisionWifiCommand
@@ -429,6 +495,7 @@ export const EVENT_TYPES = [
   "state",
   "notice",
   "sourceScan",
+  "wifiScan",
   "deviceLog",
 ] as const satisfies readonly SidecarEvent["type"][];
 export const COMMAND_TYPES = [
@@ -438,6 +505,7 @@ export const COMMAND_TYPES = [
   "setBrightness",
   "setSource",
   "scanSources",
+  "scanWifi",
   "requestState",
   "setProgram",
   "provisionWifi",

@@ -7,7 +7,9 @@
  *     events the orchestrator already consumes (so it stays transport-agnostic);
  *   • inbound  `usbFrame` → decoded STATUS/LOG → `status`/`log` events (provisioning UX);
  *   • outbound `sendColor`/`provisionWifi`/`setTransport` → a `usbSend` with the
- *     payload built by the shared `protocol.ts` codecs and hex-wrapped for the bridge.
+ *     payload built by the shared `protocol.ts` codecs and hex-wrapped for the bridge;
+ *   • `scanWifi` → SCAN_WIFI out, and the SCAN_RESULT frames that answer it collected into one
+ *     access-point list.
  *
  * SET_COLOR is byte-identical to TCP — literally the same payload builder — so a USB
  * device renders the same palette/animation frames (including the locate strobe) the
@@ -20,10 +22,13 @@ import { type DeviceTransportEvents, announceDevice } from "./device-events.ts";
 import type { DeviceWifiState, TransportMode } from "./ipc.ts";
 import {
   type Color,
+  type ScanResultMessage,
+  type ScannedAccessPoint,
   Transport,
   WifiState,
   getStatusPayload,
   logLevelName,
+  scanWifiPayload,
   setBridgePayload,
   setColorPayload,
   setTransportPayload,
@@ -62,6 +67,29 @@ export interface UsbStatus {
   bridge: boolean;
 }
 
+/**
+ * How long a scan may take, from SCAN_WIFI out to its last SCAN_RESULT in. The device needs up to
+ * about 3.5 s to start and finish the scan, plus about 0.5 s to send 255 frames; a failed scan
+ * sends no frames at all (only an ERROR LOG), so this timeout is how the host learns of it.
+ */
+export const WIFI_SCAN_TIMEOUT_MS = 10_000;
+
+export interface UsbTransportOptions {
+  /** Override {@link WIFI_SCAN_TIMEOUT_MS} (tests). */
+  scanTimeoutMs?: number;
+}
+
+/** A SCAN_WIFI in flight on one device: the frames so far and how to settle its promise. */
+interface PendingScan {
+  promise: Promise<ScannedAccessPoint[]>;
+  accessPoints: ScannedAccessPoint[];
+  /** The frame count the first frame announced, or null before it arrives. */
+  total: number | null;
+  resolve(accessPoints: ScannedAccessPoint[]): void;
+  reject(err: Error): void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
 const WIFI_STATE_NAME: Record<number, DeviceWifiState> = {
   [WifiState.IDLE]: "idle",
   [WifiState.JOINING]: "joining",
@@ -90,10 +118,14 @@ export class UsbTransport extends EventEmitter {
   readonly #bridge: UsbBridgePort;
   /** MACs currently connected over USB → their reported protocol version. */
   readonly #online = new Map<string, number>();
+  /** Scans in flight, by MAC (at most one per device: the device ignores a second SCAN_WIFI). */
+  readonly #scans = new Map<string, PendingScan>();
+  readonly #scanTimeoutMs: number;
 
-  constructor(bridge: UsbBridgePort) {
+  constructor(bridge: UsbBridgePort, options: UsbTransportOptions = {}) {
     super();
     this.#bridge = bridge;
+    this.#scanTimeoutMs = options.scanTimeoutMs ?? WIFI_SCAN_TIMEOUT_MS;
     this.#bridge.on("usb", (message) => this.#onUsb(message));
   }
 
@@ -137,6 +169,59 @@ export class UsbTransport extends EventEmitter {
   }
 
   /**
+   * Ask the device to scan channels 1–13 for access points (SCAN_WIFI). Resolves with every access
+   * point it heard (empty when it heard none) once the last SCAN_RESULT arrives; rejects when the
+   * device doesn't finish within {@link WIFI_SCAN_TIMEOUT_MS} (a failed scan sends nothing), when
+   * its frames don't run 0 … total - 1 in order, or when it leaves USB first. A call while that
+   * device's scan is still running joins it rather than sending a second SCAN_WIFI. Returns null
+   * when the device isn't on USB. The caller sends it only to version ≥ 4 devices.
+   */
+  scanWifi(mac: string): Promise<ScannedAccessPoint[]> | null {
+    const running = this.#scans.get(mac);
+    if (running) return running.promise;
+    if (!this.#send(mac, scanWifiPayload())) return null;
+    let resolve!: (accessPoints: ScannedAccessPoint[]) => void;
+    let reject!: (err: Error) => void;
+    const promise = new Promise<ScannedAccessPoint[]>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    const timer = setTimeout(
+      () => this.#failScan(mac, new Error(`no complete scan result within ${this.#scanTimeoutMs / 1000} s`)),
+      this.#scanTimeoutMs,
+    );
+    this.#scans.set(mac, { promise, accessPoints: [], total: null, resolve, reject, timer });
+    return promise;
+  }
+
+  /** Fold one SCAN_RESULT frame into the device's scan in flight; frames nobody asked for are dropped. */
+  #onScanResult(mac: string, frame: ScanResultMessage): void {
+    const scan = this.#scans.get(mac);
+    if (!scan) return;
+    const expected = scan.accessPoints.length;
+    if (frame.index !== expected || (scan.total !== null && frame.total !== scan.total)) {
+      this.#failScan(mac, new Error(`scan result frame ${frame.index}/${frame.total} arrived out of order`));
+      return;
+    }
+    scan.total = frame.total;
+    if (frame.ap) scan.accessPoints.push(frame.ap);
+    // The empty frame (total 0) is the whole answer: scanned and heard nothing.
+    if (scan.accessPoints.length >= frame.total) {
+      clearTimeout(scan.timer);
+      this.#scans.delete(mac);
+      scan.resolve(scan.accessPoints);
+    }
+  }
+
+  #failScan(mac: string, err: Error): void {
+    const scan = this.#scans.get(mac);
+    if (!scan) return;
+    clearTimeout(scan.timer);
+    this.#scans.delete(mac);
+    scan.reject(err);
+  }
+
+  /**
    * Send a pre-built RELAY payload (`relayPayload(targetMac, inner)`) to a connected bridge over
    * USB. The {@link EspNowTransport} builds the envelope; this is just the online-guarded write to
    * the bridge's cable. Returns false when the bridge isn't on USB.
@@ -162,6 +247,7 @@ export class UsbTransport extends EventEmitter {
       }
       case "usbDeviceDisconnected": {
         this.#online.delete(message.mac);
+        this.#failScan(message.mac, new Error("it was unplugged before the scan finished"));
         this.emit("deviceDisconnected", { mac: message.mac });
         break;
       }
@@ -202,6 +288,8 @@ export class UsbTransport extends EventEmitter {
       // device the frame arrived on; the EspNowTransport decodes `inner` itself (the envelope is
       // the only layer the bridge adds), so we just re-emit rather than dispatch here.
       this.emit("relayed", { bridgeMac: frame.mac, srcMac: decoded.srcMac, inner: decoded.inner });
+    } else if (decoded.kind === "scanResult") {
+      this.#onScanResult(frame.mac, decoded);
     }
     // HELLO/HEARTBEAT over USB need no handling here (the shell turns HELLO into usbDeviceConnected).
   }

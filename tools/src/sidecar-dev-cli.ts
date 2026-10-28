@@ -51,6 +51,9 @@ class ReplIpc extends EventEmitter implements IpcPort, UsbBridgePort {
       // The REPL has no scan UI; summarise progress/results inline.
       const hits = event.found.map((h) => h.ip).join(", ");
       console.log(`${stamp()} SCAN ${event.status}${hits ? `: ${hits}` : ""}`);
+    } else if (event.type === "wifiScan") {
+      const result = event.error ?? (event.suggestedChannel === null ? "" : `${event.accessPoints.length} APs, suggests channel ${event.suggestedChannel}`);
+      console.log(`${stamp()} WIFI SCAN ${event.status}${event.scanner ? ` on ${event.scanner.mac}` : ""}${result ? `: ${result}` : ""}`);
     } else {
       // USB device-log stream — handy for watching a WiFi-provisioning join over the cable.
       console.log(`${stamp()} LOG ${event.mac} ${event.level.toUpperCase()}: ${event.text}`);

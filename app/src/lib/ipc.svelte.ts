@@ -20,6 +20,7 @@ import {
 	type SourceScanEvent,
 	type TransportMode,
 	type UiCommand,
+	type WifiScanEvent,
 } from "$ipc";
 
 /**
@@ -86,6 +87,8 @@ class SidecarStore {
 	#noticeSeq = 0;
 	/** Latest scan progress/result, for the settings "Scan" UI. */
 	scan = $state<SourceScanEvent | null>(null);
+	/** Latest ESP-NOW channel scan progress/result. */
+	wifiScan = $state<WifiScanEvent | null>(null);
 	/** Shell-side health (sidecar down, USB ports that won't open). */
 	health = $state<ShellHealth>(HEALTHY);
 	/**
@@ -119,6 +122,9 @@ class SidecarStore {
 				}
 				case "sourceScan":
 					this.scan = event;
+					break;
+				case "wifiScan":
+					this.wifiScan = event;
 					break;
 				case "deviceLog":
 					// Every line is in the engine's log file; the ones the operator must see arrive as

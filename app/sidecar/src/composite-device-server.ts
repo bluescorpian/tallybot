@@ -16,15 +16,15 @@
  *
  * Outgoing `sendColor` routes to the current owner. Every member's `log` lines (a USB
  * device's LOG frames, the ESP-NOW transport's notes on a light) are re-emitted as-is.
- * Provisioning + STATUS (USB-only) are delegated to the supplied `UsbTransport`.
+ * Provisioning, STATUS and WiFi scans (USB-only) are delegated to the supplied `UsbTransport`.
  */
 
 import { EventEmitter } from "node:events";
 
-import type { DeviceServerPort, ProvisioningPort } from "./app.ts";
+import type { DeviceServerPort, ProvisioningPort, WifiScanPort } from "./app.ts";
 import type { DeviceTransport } from "./ipc.ts";
 import type { DeviceTransportEvents } from "./device-events.ts";
-import type { Color } from "./protocol.ts";
+import type { Color, ScannedAccessPoint } from "./protocol.ts";
 import type { UsbStatus, UsbTransport } from "./usb-transport.ts";
 
 /** One transport plugged into the composite, with the tag devices on it carry. */
@@ -44,7 +44,10 @@ export interface CompositeDeviceServer {
   emit<K extends keyof CompositeDeviceServerEvents>(event: K, ...args: CompositeDeviceServerEvents[K]): boolean;
 }
 
-export class CompositeDeviceServer extends EventEmitter implements DeviceServerPort, ProvisioningPort {
+export class CompositeDeviceServer
+  extends EventEmitter
+  implements DeviceServerPort, ProvisioningPort, WifiScanPort
+{
   readonly #members: CompositeMember[];
   readonly #usb: UsbTransport | null;
   /** mac → (member index → reported version), for every transport currently holding it. */
@@ -118,6 +121,10 @@ export class CompositeDeviceServer extends EventEmitter implements DeviceServerP
 
   requestStatus(mac: string): boolean {
     return this.#usb?.requestStatus(mac) ?? false;
+  }
+
+  scanWifi(mac: string): Promise<ScannedAccessPoint[]> | null {
+    return this.#usb?.scanWifi(mac) ?? null;
   }
 
   // ── Dedup ──────────────────────────────────────────────────────────────────────
