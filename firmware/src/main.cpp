@@ -268,8 +268,10 @@ void loop() {
         TLOG(LOG_LEVEL_INFO, "USB host lost; reverting to WiFi\n");
         scan::abort();           // the WiFi client takes the radio back
         control::runDeferred();  // the host's last commands apply before the hand-back, as they arrived
+        // A held SET_BRIDGE made this a bridge: it owns the radio now. Checked before resetSession so
+        // the bridge's own session-lost teardown still sees the lost host and stands it down.
+        if (espnow::bridgeActive()) break;
         usb::resetSession();
-        if (espnow::bridgeActive()) break;  // a held SET_BRIDGE made this a bridge: it owns the radio now
         // TRANSPORT_WIFI, not the NVS mode: USB_OWNED is reached only from a WiFi boot, and a
         // SET_TRANSPORT received while cabled applies next boot.
         startTransportClient(TRANSPORT_WIFI, Resume::USB_RELEASED);
