@@ -112,12 +112,29 @@
 		);
 	});
 
-	// ESP-NOW values, seeded like the IP: a change made elsewhere while the drawer is open doesn't
-	// overwrite the draft.
-	let savedChannel = $state(untrack(() => espnow?.settings.channel ?? 0));
+	// ESP-NOW values: the committed one is the engine's, read live, since it can change under an
+	// open drawer (the bridge power is back to Full after a restart, which this drawer offers). A
+	// draft the operator hasn't touched follows it; one they've edited keeps their edit.
+	const savedChannel = $derived(espnow?.settings.channel ?? 0);
 	let channel = $state(untrack(() => savedChannel));
-	let savedTxPower = $state<BridgeTxPower>(untrack(() => espnow?.settings.bridgeTxPower ?? "full"));
+	const savedTxPower = $derived<BridgeTxPower>(espnow?.settings.bridgeTxPower ?? "full");
 	let txPower = $state<BridgeTxPower>(untrack(() => savedTxPower));
+	let lastChannel = untrack(() => savedChannel);
+	let lastTxPower = untrack(() => savedTxPower);
+	$effect(() => {
+		const live = savedChannel;
+		untrack(() => {
+			if (channel === lastChannel) channel = live;
+			lastChannel = live;
+		});
+	});
+	$effect(() => {
+		const live = savedTxPower;
+		untrack(() => {
+			if (txPower === lastTxPower) txPower = live;
+			lastTxPower = live;
+		});
+	});
 
 	const ipTrim = $derived(ip.trim());
 	const ipChanged = $derived(ipTrim !== savedIp);
@@ -167,14 +184,9 @@
 				connectTimer = setTimeout(() => (mockConnection = "connected"), 1600);
 			}
 		}
-		if (channelChanged) {
-			savedChannel = channel;
-			espnow?.setChannel(channel);
-		}
-		if (txPowerChanged) {
-			savedTxPower = txPower;
-			espnow?.setTxPower(txPower);
-		}
+		// The committed values move when the engine's snapshot confirms them.
+		if (channelChanged) espnow?.setChannel(channel);
+		if (txPowerChanged) espnow?.setTxPower(txPower);
 		if (launchChanged) {
 			const want = launch;
 			launchError = null;
@@ -415,6 +427,7 @@
 					settings={espnow.settings}
 					scan={espnow.scan}
 					anyCabled={espnow.anyCabled}
+					bridge={espnow.bridge}
 					{savedChannel}
 					bind:channel
 					bind:txPower

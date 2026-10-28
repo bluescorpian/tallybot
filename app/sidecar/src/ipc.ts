@@ -471,8 +471,9 @@ export interface SetEspNowChannelCommand {
 }
 
 /**
- * Set the bridge's transmit power. Persisted, and applied at once to a cabled v4 bridge; an older
- * bridge can't change it (the sidecar says so with a notice).
+ * Set the bridge's transmit power for this session (never persisted: "full" on every launch, see
+ * {@link EspNowSettings.bridgeTxPower}). Applied at once to a cabled v4 bridge, and to a bridge
+ * that starts later; an older bridge can't change it (the sidecar says so with a notice).
  */
 export interface SetBridgeTxPowerCommand {
   type: "setBridgeTxPower";

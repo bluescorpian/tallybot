@@ -56,6 +56,11 @@ export type Notice = NoticeEvent & { id: number };
 /** `sidecarDown` while the engine is down because we asked (`sidecar.rs`, the restart path). */
 const RESTART_REASON = "restart requested";
 
+/** A scan's `error` when the engine went away before answering it; the panels show it after "The scan didn't run: ". */
+const SCAN_LOST = "The engine stopped before the scan finished. Scan again.";
+/** A scan's `error` when the request couldn't reach the engine. */
+const SCAN_UNSENT = "The engine isn't running. Wait for it to restart, then scan again.";
+
 /** Notices kept at once; an older one past this is dropped (they're one-shot refusals). */
 const MAX_NOTICES = 4;
 
@@ -99,6 +104,10 @@ class SidecarStore {
 	 */
 	stale = $state(false);
 
+	/** A scan was asked for and its first event hasn't arrived: still in flight if the engine dies. */
+	#scanAsked = false;
+	#wifiScanAsked = false;
+
 	#unlisten: UnlistenFn[] = [];
 	/** Resolvers waiting for the first snapshot from a restarted sidecar. */
 	#awaitingFresh: (() => void)[] = [];
@@ -123,9 +132,11 @@ class SidecarStore {
 				}
 				case "sourceScan":
 					this.scan = event;
+					this.#scanAsked = false;
 					break;
 				case "wifiScan":
 					this.wifiScan = event;
+					this.#wifiScanAsked = false;
 					break;
 				case "deviceLog":
 					// Every line is in the engine's log file; the ones the operator must see arrive as
@@ -162,7 +173,10 @@ class SidecarStore {
 	#applyHealth(health: ShellHealth): void {
 		if (health.revision < this.health.revision) return;
 		this.health = health;
-		if (health.sidecarDown !== null) this.stale = true;
+		if (health.sidecarDown !== null) {
+			this.stale = true;
+			this.#endScans(SCAN_LOST);
+		}
 		// The restarted engine died before its first snapshot (the shell names any other reason
 		// than our own request): stop waiting for one. The "engine stopped" banner says why.
 		if (health.sidecarDown !== null && health.sidecarDown !== RESTART_REASON) {
@@ -170,12 +184,31 @@ class SidecarStore {
 		}
 	}
 
-	#send(command: UiCommand): void {
+	/**
+	 * The engine that would answer the scans is gone (down, restarting) or never got the request:
+	 * end a scan still in flight with `error`, so its Scan button comes back and says why, and
+	 * forget a finished one, which the old process ran. The panels act only on a scan they watched,
+	 * so neither shows in a drawer that wasn't waiting.
+	 */
+	#endScans(error: string): void {
+		if (this.#scanAsked || this.scan?.status === "scanning") {
+			this.scan = { type: "sourceScan", status: "done", found: [], error };
+		} else this.scan = null;
+		if (this.#wifiScanAsked || this.wifiScan?.status === "scanning") {
+			const empty = { accessPoints: [], congestion: [], suggestedChannel: null };
+			this.wifiScan = { type: "wifiScan", status: "done", scanner: null, ...empty, error };
+		} else this.wifiScan = null;
+		this.#scanAsked = this.#wifiScanAsked = false;
+	}
+
+	/** Push a command to the sidecar; `onFail` runs if it can't be delivered. */
+	#send(command: UiCommand, onFail?: () => void): void {
 		if (!isTauri) return;
 		// Rejects only while the sidecar is down — which the health banner already says.
-		invoke("send_to_sidecar", { line: serializeMessage(command) }).catch((err: unknown) =>
-			console.warn("send_to_sidecar:", err),
-		);
+		invoke("send_to_sidecar", { line: serializeMessage(command) }).catch((err: unknown) => {
+			console.warn("send_to_sidecar:", err);
+			onFail?.();
+		});
 	}
 
 	assignDevice(mac: string, inputId: number): void {
@@ -213,7 +246,8 @@ class SidecarStore {
 		this.#send({ type: "setSource", ip });
 	}
 	scanSources(): void {
-		this.#send({ type: "scanSources" });
+		this.#scanAsked = true;
+		this.#send({ type: "scanSources" }, () => this.#endScans(SCAN_UNSENT));
 	}
 	/** Set the rig's ESP-NOW channel (1–13); the sidecar persists it and retunes the bridge. */
 	setEspNowChannel(channel: number): void {
@@ -225,7 +259,8 @@ class SidecarStore {
 	}
 	/** Scan for access points from a cabled light, to suggest a quiet channel (answered in `wifiScan`). */
 	scanWifi(): void {
-		this.#send({ type: "scanWifi" });
+		this.#wifiScanAsked = true;
+		this.#send({ type: "scanWifi" }, () => this.#endScans(SCAN_UNSENT));
 	}
 	/**
 	 * Replace the running sidecar with a fresh one (Settings → Restart). Resolves once the
@@ -240,6 +275,7 @@ class SidecarStore {
 		// Its last snapshot is still on screen: mark it stale now rather than waiting for
 		// the shell's health push.
 		this.stale = true;
+		this.#endScans(SCAN_LOST);
 		await new Promise<void>((resolve) => this.#awaitingFresh.push(resolve));
 	}
 	/** Dev mode only: take an input to program on the fake ATEM (see AppState.dev). */

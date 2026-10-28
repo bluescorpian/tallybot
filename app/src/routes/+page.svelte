@@ -95,6 +95,10 @@
 		get anyCabled() {
 			return appState.devices.some((d) => d.transport === "usb");
 		},
+		get bridge() {
+			const d = appState.devices.find((x) => x.bridge);
+			return d ? { mac: d.mac, protocolVersion: d.protocolVersion } : null;
+		},
 		scanWifi: () => backend.scanWifi(),
 		setChannel: (channel) => backend.setEspNowChannel(channel),
 		setTxPower: (txPower) => backend.setBridgeTxPower(txPower),

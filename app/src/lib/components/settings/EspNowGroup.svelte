@@ -1,6 +1,11 @@
 <script lang="ts" module>
 	import type { BridgeTxPower, EspNowSettings, WifiScanEvent } from "$ipc";
 
+	export interface EspNowBridge {
+		mac: string;
+		protocolVersion: number | null;
+	}
+
 	/** What the panel needs from the engine for this group: its live state and the commands. */
 	export interface EspNowHost {
 		/** The snapshot's `espnow`. */
@@ -9,6 +14,8 @@
 		readonly scan: WifiScanEvent | null;
 		/** Whether any light is on USB, to say why nothing can scan. */
 		readonly anyCabled: boolean;
+		/** The running bridge (its MAC and firmware protocol), to say when the power can't change. */
+		readonly bridge: EspNowBridge | null;
 		scanWifi(): void;
 		setChannel(channel: number): void;
 		setTxPower(txPower: BridgeTxPower): void;
@@ -27,7 +34,7 @@
 	import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
 	import Info from "@lucide/svelte/icons/info";
 
-	import { ESPNOW_CHANNEL_MAX, ESPNOW_CHANNEL_MIN } from "$protocol";
+	import { ESPNOW_CHANNEL_MAX, ESPNOW_CHANNEL_MIN, supportsChannelSelection } from "$protocol";
 	import { shortMac } from "$lib/boardState";
 	import { Button } from "$lib/components/ui/button";
 	import * as Select from "$lib/components/ui/select";
@@ -36,6 +43,7 @@
 		settings,
 		scan,
 		anyCabled,
+		bridge,
 		savedChannel,
 		channel = $bindable(),
 		txPower = $bindable(),
@@ -47,6 +55,8 @@
 		scan: WifiScanEvent | null;
 		/** Whether any light is on USB, to say why nothing can scan. */
 		anyCabled: boolean;
+		/** The running bridge, or null. */
+		bridge: EspNowBridge | null;
 		/** The committed channel, to tell when the draft would move the rig. */
 		savedChannel: number;
 		/** Draft channel (committed by the panel's Save). */
@@ -92,6 +102,17 @@
 	const maxScore = $derived(Math.max(1, ...congestion.map((c) => c.score)));
 	const suggested = $derived(result?.suggestedChannel ?? null);
 	const networks = (n: number) => `${n} Wi-Fi ${n === 1 ? "network" : "networks"}`;
+
+	// ── Bridge power ───────────────────────────────────────────────────────────────
+	// The engine sends the power only to a running bridge whose firmware takes it (a later one gets
+	// it when it starts), so say when the setting has nothing to act on. Save still takes it.
+	const txPowerIdle = $derived(
+		bridge === null
+			? "No bridge is running. The power applies once one with current firmware starts."
+			: bridge.protocolVersion !== null && !supportsChannelSelection(bridge.protocolVersion)
+				? `Bridge ${shortMac(bridge.mac)} runs firmware too old to change its power, so it stays at Full until it's updated.`
+				: null,
+	);
 
 	// ── Channel change ─────────────────────────────────────────────────────────────
 	const moving = $derived(channel !== savedChannel);
@@ -146,7 +167,7 @@
 			<!-- Before the click: why Scan is off, or that this scan takes the bridge off-channel -->
 			{#if scanner === null && !scanning}
 				<div class="field-msg muted">{noScannerReason}</div>
-			{:else if scanner?.bridge && !result}
+			{:else if scanner?.bridge}
 				<div class="callout">
 					<TriangleAlert class="size-3.5 shrink-0" />
 					<p>
@@ -262,6 +283,12 @@
 					Some bridge boards hold the link better at reduced power. Back to Full when TallyBot
 					restarts.
 				</span>
+				{#if txPowerIdle}
+					<span class="hint power-idle">
+						<Info class="size-3.5 shrink-0" />
+						<span>{txPowerIdle}</span>
+					</span>
+				{/if}
 			</div>
 			<Select.Root type="single" bind:value={() => txPower, (v) => (txPower = v as BridgeTxPower)}>
 				<Select.Trigger class="w-28" aria-label="Bridge transmit power">
@@ -280,6 +307,14 @@
 	.mono {
 		font-family: var(--font-mono);
 		font-size: 0.72rem;
+	}
+	.power-idle {
+		display: flex;
+		gap: 6px;
+		margin-top: 4px;
+	}
+	.power-idle :global(svg) {
+		margin-top: 2px;
 	}
 	.field-msg.muted {
 		line-height: 1.45;

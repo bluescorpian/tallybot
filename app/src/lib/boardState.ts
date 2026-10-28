@@ -37,7 +37,7 @@ export function shortMac(mac: string): string {
 function provisioning(d: Device, rigChannel: number) {
 	// STATUS's channel means something only for a light set up for ESP-NOW; the bridge's own channel
 	// is the rig's (SET_BRIDGE retunes it), so it's never flagged.
-	const espnowLight = d.provisionedMode === "espnow" && !d.bridge && d.espnowChannel !== null;
+	const espnowLight = d.provisionedMode === "espnow" && !d.bridge && d.espnowChannel != null;
 	return {
 		transport: d.transport,
 		provisionedMode: d.provisionedMode ?? null,
