@@ -105,12 +105,22 @@ export const Transport = {
 } as const;
 
 /**
- * The default ESP-NOW channel the host sends in `SET_TRANSPORT(ESPNOW)` and `SET_BRIDGE`.
- * Channel 1 is legal everywhere and is what the sidecar emits unconditionally today —
- * configurability is wire-level (the byte is on every frame), not surfaced in the UI: it's
- * the escape hatch for a crowded venue (a host update re-channels every light, no re-flash).
+ * The default ESP-NOW channel: the session channel until the operator picks another (the
+ * sidecar's state file holds it, and every `SET_TRANSPORT(ESPNOW)` and `SET_BRIDGE` carries it),
+ * and what a device uses when it has stored none.
  */
 export const ESPNOW_CHANNEL = 1;
+/**
+ * The channels an ESP-NOW rig may use: the firmware's radio country is ZA (channels 1–13) and it
+ * refuses any other channel on the wire (mirrors `ESPNOW_CHANNEL_MIN`/`MAX` in `protocol.h`).
+ */
+export const ESPNOW_CHANNEL_MIN = 1;
+export const ESPNOW_CHANNEL_MAX = 13;
+
+/** True for a channel the firmware accepts ({@link ESPNOW_CHANNEL_MIN}–{@link ESPNOW_CHANNEL_MAX}). */
+export function isEspnowChannel(channel: number): boolean {
+  return Number.isInteger(channel) && channel >= ESPNOW_CHANNEL_MIN && channel <= ESPNOW_CHANNEL_MAX;
+}
 
 /**
  * A light that hears no frame from its host this long, on any transport (USB, TCP, the ESP-NOW
@@ -140,7 +150,8 @@ export const CHANNEL_DWELL_MS = 150;
 
 /**
  * The bridge's ESP-NOW transmit power, in esp_wifi's quarter-dBm units, as SET_BRIDGE's optional
- * `txPower` byte carries it (v4). FULL (19.5 dBm) is what a bridge uses when the byte is absent.
+ * `txPower` byte carries it (v4). FULL is what a bridge uses when the byte is absent; the radio
+ * rounds 78 down to 72, so it is really 18 dBm. REDUCED is 8.5 dBm exactly.
  */
 export const BRIDGE_TX_POWER = {
   FULL: 78,
@@ -222,6 +233,14 @@ export type UnsupportedReason = Exclude<DeviceCompatibility, "supported">;
 /** True when a device at this protocol version understands the ESP-NOW frames. */
 export function supportsEspNow(version: number): boolean {
   return version >= PROTOCOL_VERSION.ESPNOW;
+}
+
+/**
+ * True when a device at this protocol version follows a channel change without a cable, answers
+ * SCAN_WIFI, and accepts SET_BRIDGE's txPower byte ({@link PROTOCOL_VERSION.CHANNEL_SELECTION}).
+ */
+export function supportsChannelSelection(version: number): boolean {
+  return version >= PROTOCOL_VERSION.CHANNEL_SELECTION;
 }
 
 // ── Colours ──────────────────────────────────────────────────────────────────
@@ -319,6 +338,14 @@ function assertByte(name: string, value: number): void {
   }
 }
 
+function assertEspnowChannel(channel: number): void {
+  if (!isEspnowChannel(channel)) {
+    throw new RangeError(
+      `channel must be an integer in ${ESPNOW_CHANNEL_MIN}–${ESPNOW_CHANNEL_MAX}, got ${channel}`,
+    );
+  }
+}
+
 /** SET_COLOR payload: `[type][R][G][B][brightness]`. */
 export function setColorPayload(color: Color, brightness: number = DEFAULT_BRIGHTNESS): Uint8Array {
   assertByte("r", color.r);
@@ -385,15 +412,16 @@ export function setWifiPayload(ssid: string, password: string): Uint8Array {
 
 /**
  * SET_TRANSPORT payload (USB only). `mode` is a {@link Transport} value. `[type][mode]` for
- * No-TX/WiFi; `[type][mode][channel]` when a channel is given (ESP-NOW callers pass
- * {@link ESPNOW_CHANNEL}) — the device persists the channel, defaulting to 1 when the byte is absent.
+ * No-TX/WiFi; `[type][mode][channel]` when a channel is given (ESP-NOW callers pass the session
+ * channel) — the device persists the channel, defaulting to {@link ESPNOW_CHANNEL} when the byte is
+ * absent. A channel outside 1–13 throws: the device would ignore the whole frame.
  */
 export function setTransportPayload(mode: number, channel?: number): Uint8Array {
   assertByte("mode", mode);
   if (channel === undefined) {
     return Uint8Array.of(ServerMessageType.SET_TRANSPORT, mode);
   }
-  assertByte("channel", channel);
+  assertEspnowChannel(channel);
   return Uint8Array.of(ServerMessageType.SET_TRANSPORT, mode, channel);
 }
 
@@ -419,13 +447,13 @@ export function relayPayload(targetMac: string, inner: Uint8Array): Uint8Array {
  * SET_BRIDGE payload: `[type][enabled][channel]`, or `[type][enabled][channel][txPower]` when
  * `txPower` is given (USB only). Runtime-only — the sidecar persists the designation and
  * re-asserts it on every USB (re)connect; the device never stores it. `channel` is the ESP-NOW
- * channel to bridge on ({@link ESPNOW_CHANNEL}); it's required even when disabling (the device
- * ignores it then). `txPower` is the bridge's transmit power in quarter-dBm
+ * channel to bridge on (the session channel); it's required even when disabling (the device
+ * ignores it then), and one outside 1–13 throws (the device would refuse to bridge). `txPower` is the bridge's transmit power in quarter-dBm
  * ({@link BRIDGE_TX_POWER}); absent means full power. Pass it only to a device at
  * {@link PROTOCOL_VERSION.CHANNEL_SELECTION} or later: older firmware rejects a 4-byte SET_BRIDGE.
  */
 export function setBridgePayload(enabled: boolean, channel: number, txPower?: number): Uint8Array {
-  assertByte("channel", channel);
+  assertEspnowChannel(channel);
   if (txPower === undefined) {
     return Uint8Array.of(ServerMessageType.SET_BRIDGE, enabled ? 1 : 0, channel);
   }

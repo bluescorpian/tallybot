@@ -17,7 +17,8 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
-import { DEFAULT_BRIGHTNESS, isMac } from "./protocol.ts";
+import type { BridgeTxPower } from "./ipc.ts";
+import { DEFAULT_BRIGHTNESS, ESPNOW_CHANNEL, Transport, isEspnowChannel, isMac } from "./protocol.ts";
 
 /** One device's persisted configuration. */
 export interface DeviceConfig {
@@ -32,6 +33,20 @@ export interface DeviceConfig {
    * a device with no WiFi config keeps the minimal `{ inputId, brightness }` shape).
    */
   ssid?: string;
+  /**
+   * The protocol version the device last reported (its HELLO), and its provisioned transport (the
+   * wire {@link Transport} value its STATUS reports, or ESP-NOW when it was heard over the radio).
+   * Recorded so the sidecar knows which ESP-NOW lights can't follow a channel change while they
+   * aren't connected. Omitted until known.
+   */
+  protocolVersion?: number;
+  transport?: number;
+}
+
+/** What {@link ConfigStore.noteReported} records about a device; an absent field is left as it is. */
+export interface DeviceReport {
+  protocolVersion?: number;
+  transport?: number;
 }
 
 /** Current on-disk schema version, so a future format change can migrate. */
@@ -46,7 +61,30 @@ interface PersistedShape {
    * survive restarts so a replugged bridge re-asserts automatically (v1.3 spec).
    */
   bridgeMac: string | null;
+  /** The rig's ESP-NOW channel (1–13), session-level like `bridgeMac`. */
+  espnowChannel: number;
+  /** The designated bridge's transmit power, session-level like `bridgeMac`. */
+  bridgeTxPower: BridgeTxPower;
   devices: Record<string, DeviceConfig>;
+}
+
+/** The session-level settings, as loaded and held in memory. */
+interface Session {
+  sourceIp: string | null;
+  bridgeMac: string | null;
+  espnowChannel: number;
+  bridgeTxPower: BridgeTxPower;
+}
+
+const DEFAULT_SESSION: Session = {
+  sourceIp: null,
+  bridgeMac: null,
+  espnowChannel: ESPNOW_CHANNEL,
+  bridgeTxPower: "full",
+};
+
+function isBridgeTxPower(value: unknown): value is BridgeTxPower {
+  return value === "full" || value === "reduced";
 }
 
 function isByte(value: unknown): value is number {
@@ -56,29 +94,45 @@ function isByte(value: unknown): value is number {
 /** Coerce one parsed device entry, or null if it has nothing usable. */
 function coerceDevice(value: unknown): DeviceConfig | null {
   if (typeof value !== "object" || value === null) return null;
-  const raw = value as { inputId?: unknown; brightness?: unknown; ssid?: unknown };
+  const raw = value as {
+    inputId?: unknown;
+    brightness?: unknown;
+    ssid?: unknown;
+    protocolVersion?: unknown;
+    transport?: unknown;
+  };
   const inputId =
     typeof raw.inputId === "number" && Number.isInteger(raw.inputId) ? raw.inputId : null;
   const brightness = isByte(raw.brightness) ? raw.brightness : DEFAULT_BRIGHTNESS;
   const device: DeviceConfig = { inputId, brightness };
   // Keep the key absent when there's no SSID, so a non-WiFi device stays `{ inputId, brightness }`.
   if (typeof raw.ssid === "string" && raw.ssid !== "") device.ssid = raw.ssid;
+  if (isByte(raw.protocolVersion)) device.protocolVersion = raw.protocolVersion;
+  if (isByte(raw.transport)) device.transport = raw.transport;
   return device;
 }
 
 /** Salvage whatever is recognisable from a parsed file; unknown shapes → defaults. */
-function coerceShape(value: unknown): {
-  sourceIp: string | null;
-  bridgeMac: string | null;
-  devices: Map<string, DeviceConfig>;
-} {
+function coerceShape(value: unknown): { session: Session; devices: Map<string, DeviceConfig> } {
   const devices = new Map<string, DeviceConfig>();
-  if (typeof value !== "object" || value === null) return { sourceIp: null, bridgeMac: null, devices };
-  const raw = value as { sourceIp?: unknown; bridgeMac?: unknown; devices?: unknown };
+  if (typeof value !== "object" || value === null) return { session: { ...DEFAULT_SESSION }, devices };
+  const raw = value as {
+    sourceIp?: unknown;
+    bridgeMac?: unknown;
+    espnowChannel?: unknown;
+    bridgeTxPower?: unknown;
+    devices?: unknown;
+  };
   const sourceIp = typeof raw.sourceIp === "string" ? raw.sourceIp : null;
   // A stored bridge MAC must be a full MAC to be trusted (anything else is garbage from a hand-
   // edited or corrupt file); fall back to "no bridge" rather than re-asserting onto a bogus MAC.
   const bridgeMac = typeof raw.bridgeMac === "string" && isMac(raw.bridgeMac) ? raw.bridgeMac : null;
+  // A channel the firmware would refuse falls back to the default rather than strand the bridge.
+  const espnowChannel =
+    typeof raw.espnowChannel === "number" && isEspnowChannel(raw.espnowChannel)
+      ? raw.espnowChannel
+      : ESPNOW_CHANNEL;
+  const bridgeTxPower = isBridgeTxPower(raw.bridgeTxPower) ? raw.bridgeTxPower : "full";
   if (typeof raw.devices === "object" && raw.devices !== null) {
     for (const [mac, entry] of Object.entries(raw.devices)) {
       // Drop keys that aren't a full MAC. Devices are keyed by their 6-octet MAC;
@@ -89,26 +143,19 @@ function coerceShape(value: unknown): {
       if (device) devices.set(mac, device);
     }
   }
-  return { sourceIp, bridgeMac, devices };
+  return { session: { sourceIp, bridgeMac, espnowChannel, bridgeTxPower }, devices };
 }
 
 export class ConfigStore {
   readonly #filePath: string;
-  #sourceIp: string | null;
-  #bridgeMac: string | null;
+  readonly #session: Session;
   readonly #devices: Map<string, DeviceConfig>;
   /** Serialises writes so two saves can't interleave on the temp file. */
   #writeChain: Promise<void> = Promise.resolve();
 
-  private constructor(
-    filePath: string,
-    sourceIp: string | null,
-    bridgeMac: string | null,
-    devices: Map<string, DeviceConfig>,
-  ) {
+  private constructor(filePath: string, session: Session, devices: Map<string, DeviceConfig>) {
     this.#filePath = filePath;
-    this.#sourceIp = sourceIp;
-    this.#bridgeMac = bridgeMac;
+    this.#session = session;
     this.#devices = devices;
   }
 
@@ -122,7 +169,7 @@ export class ConfigStore {
       text = await readFile(filePath, "utf8");
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        return new ConfigStore(filePath, null, null, new Map());
+        return new ConfigStore(filePath, { ...DEFAULT_SESSION }, new Map());
       }
       throw err;
     }
@@ -132,19 +179,29 @@ export class ConfigStore {
     } catch {
       parsed = null; // corrupt JSON → start from defaults rather than refuse to launch
     }
-    const { sourceIp, bridgeMac, devices } = coerceShape(parsed);
-    return new ConfigStore(filePath, sourceIp, bridgeMac, devices);
+    const { session, devices } = coerceShape(parsed);
+    return new ConfigStore(filePath, session, devices);
   }
 
   // ── Reads ──────────────────────────────────────────────────────────────────
 
   get sourceIp(): string | null {
-    return this.#sourceIp;
+    return this.#session.sourceIp;
   }
 
   /** MAC of the designated ESP-NOW bridge, or null when none is designated. */
   get bridgeMac(): string | null {
-    return this.#bridgeMac;
+    return this.#session.bridgeMac;
+  }
+
+  /** The rig's ESP-NOW channel (1–13; {@link ESPNOW_CHANNEL} until one is set). */
+  get espnowChannel(): number {
+    return this.#session.espnowChannel;
+  }
+
+  /** The designated bridge's transmit power ("full" until one is set). */
+  get bridgeTxPower(): BridgeTxPower {
+    return this.#session.bridgeTxPower;
   }
 
   /** The persisted config for one device, if any. */
@@ -160,13 +217,28 @@ export class ConfigStore {
   // ── Mutations (each persists) ────────────────────────────────────────────────
 
   setSourceIp(ip: string | null): Promise<void> {
-    this.#sourceIp = ip;
+    this.#session.sourceIp = ip;
     return this.#persist();
   }
 
   /** Designate (or clear, with null) the ESP-NOW bridge — one per session, survives restarts. */
   setBridgeMac(mac: string | null): Promise<void> {
-    this.#bridgeMac = mac;
+    this.#session.bridgeMac = mac;
+    return this.#persist();
+  }
+
+  /**
+   * Set the rig's ESP-NOW channel. Throws a RangeError, changing nothing, outside 1–13: a caller
+   * bug, not a failed save (the orchestrator refuses a bad channel before it gets here).
+   */
+  setEspnowChannel(channel: number): Promise<void> {
+    if (!isEspnowChannel(channel)) throw new RangeError(`not an ESP-NOW channel (1–13): ${channel}`);
+    this.#session.espnowChannel = channel;
+    return this.#persist();
+  }
+
+  setBridgeTxPower(txPower: BridgeTxPower): Promise<void> {
+    this.#session.bridgeTxPower = txPower;
     return this.#persist();
   }
 
@@ -196,6 +268,24 @@ export class ConfigStore {
     return this.#persist();
   }
 
+  /**
+   * Record what a device reported (its protocol version, its provisioned transport). Writes only
+   * when something changed, since STATUS streams; resolves at once otherwise.
+   */
+  noteReported(mac: string, report: DeviceReport): Promise<void> {
+    const device = this.#ensure(mac);
+    let changed = false;
+    if (report.protocolVersion !== undefined && device.protocolVersion !== report.protocolVersion) {
+      device.protocolVersion = report.protocolVersion;
+      changed = true;
+    }
+    if (report.transport !== undefined && device.transport !== report.transport) {
+      device.transport = report.transport;
+      changed = true;
+    }
+    return changed ? this.#persist() : Promise.resolve();
+  }
+
   #ensure(mac: string): DeviceConfig {
     let device = this.#devices.get(mac);
     if (!device) {
@@ -217,21 +307,25 @@ export class ConfigStore {
 
   /** Snapshot the working set and queue an atomic write of it. */
   #persist(): Promise<void> {
-    // Prune entries that carry no real configuration so the file stays tidy.
+    // Prune entries that carry no real configuration so the file stays tidy. An ESP-NOW light is
+    // kept regardless: the channel picker has to know about it while it's away.
     const devices: Record<string, DeviceConfig> = {};
     for (const [mac, config] of this.#devices) {
-      if (config.inputId === null && config.brightness === DEFAULT_BRIGHTNESS && config.ssid == null)
+      if (
+        config.inputId === null &&
+        config.brightness === DEFAULT_BRIGHTNESS &&
+        config.ssid == null &&
+        config.transport !== Transport.ESPNOW
+      )
         continue;
       const entry: DeviceConfig = { inputId: config.inputId, brightness: config.brightness };
-      if (config.ssid != null) entry.ssid = config.ssid; // omit when unset (keeps the file minimal)
+      // Optional keys are omitted when unset (keeps the file minimal).
+      if (config.ssid != null) entry.ssid = config.ssid;
+      if (config.protocolVersion !== undefined) entry.protocolVersion = config.protocolVersion;
+      if (config.transport !== undefined) entry.transport = config.transport;
       devices[mac] = entry;
     }
-    const payload: PersistedShape = {
-      version: SCHEMA_VERSION,
-      sourceIp: this.#sourceIp,
-      bridgeMac: this.#bridgeMac,
-      devices,
-    };
+    const payload: PersistedShape = { version: SCHEMA_VERSION, ...this.#session, devices };
     const json = `${JSON.stringify(payload, null, 2)}\n`;
     // This write's own result goes to its caller (it rejects if the write failed), but the chain
     // carries on past a failure: every write is the whole working set, so the next one retries

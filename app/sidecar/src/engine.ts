@@ -101,6 +101,8 @@ export interface DeviceRecord {
    * UI shows. Optional so pure-engine record literals need no change.
    */
   bridge?: boolean;
+  /** The ESP-NOW channel the device's STATUS reports while cabled, or null. Optional (see above). */
+  espnowChannel?: number | null;
 }
 
 /**
@@ -124,7 +126,7 @@ export interface DeviceColor {
 
 export interface EngineResult {
   /** The snapshot to emit to the UI, less the faults the orchestrator owns and adds. */
-  state: Omit<AppState, "faults">;
+  state: Omit<AppState, "faults" | "espnow">;
   /** Target LED colour for every *online* device (offline devices are omitted). */
   colors: DeviceColor[];
 }
@@ -239,6 +241,7 @@ export function computeEngine(
       provisionedMode: device.provisionedMode ?? null,
       ssid: device.ssid ?? null,
       bridge: device.bridge ?? false,
+      espnowChannel: device.espnowChannel ?? null,
     });
     if (device.online) {
       const { color, anim } = colorFor(device, source, gate);

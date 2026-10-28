@@ -27,6 +27,7 @@
 // shown on its Configure → Wi-Fi page.
 import { untrack } from "svelte";
 import type { AppState, Device, DeviceFirmware, Input, Tally, TransportMode } from "$ipc";
+import { ESPNOW_CHANNEL } from "$protocol";
 import type { Backend, BoardHealth } from "$lib/backend";
 import type { FlashSession } from "$lib/flasher/session.svelte";
 import type { LightSettings } from "$lib/components/flasher/FlasherDialog.svelte";
@@ -73,6 +74,7 @@ function mock(
 		wifiState: opts.wifiState ?? null,
 		rssi: opts.rssi ?? null,
 		bridge: opts.bridge ?? false,
+		espnowChannel: null,
 	};
 }
 
@@ -225,6 +227,7 @@ export class MockBoard implements Backend {
 			devices: this.devices,
 			programGate: { active: this.override, source: null },
 			faults: [],
+			espnow: { channel: ESPNOW_CHANNEL, bridgeTxPower: "full", legacyLights: [] },
 		};
 	});
 

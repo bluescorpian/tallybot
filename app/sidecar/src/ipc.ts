@@ -136,6 +136,34 @@ export interface Device {
    * reflects the device-confirmed state the UI should display.
    */
   bridge?: boolean;
+  /**
+   * The ESP-NOW channel stored on the device, as its STATUS reports it while cabled; null when it
+   * isn't on USB or its firmware predates the channel byte (v3). The UI compares it with
+   * {@link EspNowSettings.channel} to flag a light that won't be on the rig's channel.
+   */
+  espnowChannel: number | null;
+}
+
+/**
+ * The bridge's ESP-NOW transmit power setting. `"full"` is the radio's maximum (18 dBm: the SDK
+ * rounds the requested 19.5 down); `"reduced"` is 8.5 dBm, for boards whose antenna misbehaves at
+ * full power. Only a v4 bridge honours it; an older one always transmits at full power.
+ */
+export type BridgeTxPower = "full" | "reduced";
+
+/** The rig-wide ESP-NOW settings the sidecar persists beside the bridge designation. */
+export interface EspNowSettings {
+  /** The channel the bridge runs on and every newly provisioned ESP-NOW light is given (1–13). */
+  channel: number;
+  /** The designated bridge's transmit power (sent to v4 bridges only). */
+  bridgeTxPower: BridgeTxPower;
+  /**
+   * MACs of the ESP-NOW lights the sidecar knows of (its state file) whose firmware predates
+   * channel hunting (protocol < 4): they stay on their stored channel, so after a channel change
+   * each needs re-cabling (or a firmware update) to follow. Every MAC is also in
+   * {@link AppState.devices}.
+   */
+  legacyLights: string[];
 }
 
 /**
@@ -176,6 +204,8 @@ export interface AppState {
    * Every live {@link Fault}, oldest first. Added by the orchestrator, not the pure engine.
    */
   faults: Fault[];
+  /** The rig-wide ESP-NOW channel and bridge power, and the lights that can't follow a change. */
+  espnow: EspNowSettings;
   /**
    * True when the sidecar is running against the fake ATEM (the dev entry point,
    * `tools/src/sidecar-fake-main.ts`). The UI uses it to make the board's input keys
@@ -337,6 +367,27 @@ export interface SetBridgeCommand {
   mac: string | null;
 }
 
+/**
+ * Set the rig's ESP-NOW channel (an integer in 1–13; anything else is refused with a notice).
+ * The sidecar persists it, retunes a cabled bridge at once (a v4 bridge in place, an older one by
+ * leaving and re-entering bridge mode), and gives it to every light provisioned for ESP-NOW from
+ * then on. Uncabled v4 lights find the new channel by hunting; {@link EspNowSettings.legacyLights}
+ * can't.
+ */
+export interface SetEspNowChannelCommand {
+  type: "setEspNowChannel";
+  channel: number;
+}
+
+/**
+ * Set the bridge's transmit power. Persisted, and applied at once to a cabled v4 bridge; an older
+ * bridge can't change it (the sidecar says so with a notice).
+ */
+export interface SetBridgeTxPowerCommand {
+  type: "setBridgeTxPower";
+  txPower: BridgeTxPower;
+}
+
 export type UiCommand =
   | AssignDeviceCommand
   | UnassignDeviceCommand
@@ -348,7 +399,9 @@ export type UiCommand =
   | SetProgramCommand
   | ProvisionWifiCommand
   | SetTransportCommand
-  | SetBridgeCommand;
+  | SetBridgeCommand
+  | SetEspNowChannelCommand
+  | SetBridgeTxPowerCommand;
 
 // ── Transport (NDJSON over stdio) ───────────────────────────────────────────────
 
@@ -374,6 +427,8 @@ export const COMMAND_TYPES = [
   "provisionWifi",
   "setTransport",
   "setBridge",
+  "setEspNowChannel",
+  "setBridgeTxPower",
 ] as const satisfies readonly UiCommand["type"][];
 
 const eventTypes = new Set<string>(EVENT_TYPES);

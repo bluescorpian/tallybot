@@ -2,6 +2,7 @@
 // espflash in the shell and the Tauri updater plugin. The mock is $lib/mock/board.svelte.ts.
 import type { AppState, TransportMode } from "$ipc";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { ESPNOW_CHANNEL } from "$protocol";
 import type { Backend, EngineControls } from "$lib/backend";
 import { autostart, sidecar } from "$lib/ipc.svelte";
 import { TauriFlasher } from "$lib/flasher/tauri.svelte";
@@ -14,6 +15,7 @@ const EMPTY_STATE: AppState = {
 	devices: [],
 	programGate: { active: false, source: null },
 	faults: [],
+	espnow: { channel: ESPNOW_CHANNEL, bridgeTxPower: "full", legacyLights: [] },
 };
 
 export class LiveBackend implements Backend {

@@ -24,14 +24,30 @@ import {
 } from "./engine.ts";
 import type { DeviceTransportEvents } from "./device-events.ts";
 import { FaultBook, type FaultReport, describeError } from "./faults.ts";
-import type { DeviceConfig } from "./store.ts";
-import type { DeviceFirmware, DeviceTransport, DeviceWifiState, LogLevelName, SidecarEvent, SourceScanHit, UiCommand } from "./ipc.ts";
+import type { DeviceConfig, DeviceReport } from "./store.ts";
+import type {
+  BridgeTxPower,
+  DeviceFirmware,
+  DeviceTransport,
+  DeviceWifiState,
+  EspNowSettings,
+  LogLevelName,
+  SidecarEvent,
+  SourceScanHit,
+  UiCommand,
+} from "./ipc.ts";
 import {
+  BRIDGE_TX_POWER,
   type Color,
   DEFAULT_BRIGHTNESS,
+  ESPNOW_CHANNEL_MAX,
+  ESPNOW_CHANNEL_MIN,
   HOST_SILENCE_TIMEOUT_MS,
+  Transport,
+  isEspnowChannel,
   isIPv4,
   macTail,
+  supportsChannelSelection,
   supportsEspNow,
   wifiCredentialsProblem,
 } from "./protocol.ts";
@@ -57,13 +73,18 @@ export interface ProvisioningPort {
   transportOf(mac: string): DeviceTransport | null;
   /** Provision WiFi creds over USB and trigger a validating join. */
   provisionWifi(mac: string, ssid: string, password: string): boolean;
-  /** Set the device's unplugged transport mode (a wire {@link Transport} value). */
-  setTransport(mac: string, mode: number): boolean;
   /**
-   * Enter/leave ESP-NOW bridge mode on a USB device (runtime-only on the device — re-asserted by
-   * the host). Sent only to version ≥ 3 devices by the caller. Returns false when the MAC isn't on USB.
+   * Set the device's unplugged transport mode (a wire {@link Transport} value); `channel` rides
+   * with ESP-NOW (the session channel).
    */
-  setBridge(mac: string, enabled: boolean): boolean;
+  setTransport(mac: string, mode: number, channel?: number): boolean;
+  /**
+   * Enter/leave ESP-NOW bridge mode on a USB device on `channel` (runtime-only on the device —
+   * re-asserted by the host), at `txPower` quarter-dBm when given. Sent only to version ≥ 3
+   * devices by the caller, and `txPower` only to version ≥ 4 ones. Returns false when the MAC
+   * isn't on USB.
+   */
+  setBridge(mac: string, enabled: boolean, channel: number, txPower?: number): boolean;
   /** Pull a fresh STATUS from a USB device (e.g. right after it connects). */
   requestStatus(mac: string): boolean;
   on(
@@ -103,11 +124,20 @@ export interface StorePort {
   readonly sourceIp: string | null;
   /** MAC of the designated ESP-NOW bridge, or null when none. Persisted (survives restarts). */
   readonly bridgeMac: string | null;
+  /** The rig's ESP-NOW channel (1–13). Persisted. */
+  readonly espnowChannel: number;
+  /** The designated bridge's transmit power. Persisted. */
+  readonly bridgeTxPower: BridgeTxPower;
   device(mac: string): DeviceConfig | undefined;
   devices(): Array<[string, DeviceConfig]>;
   setSourceIp(ip: string | null): Promise<void>;
   /** Designate (or clear, with null) the ESP-NOW bridge. */
   setBridgeMac(mac: string | null): Promise<void>;
+  /** Set the rig's ESP-NOW channel; throws outside 1–13. */
+  setEspnowChannel(channel: number): Promise<void>;
+  setBridgeTxPower(txPower: BridgeTxPower): Promise<void>;
+  /** Record a device's reported protocol version / provisioned transport (writes only on a change). */
+  noteReported(mac: string, report: DeviceReport): Promise<void>;
   assign(mac: string, inputId: number): Promise<void>;
   unassign(mac: string): Promise<void>;
   setBrightness(mac: string, brightness: number): Promise<void>;
@@ -284,7 +314,7 @@ export class SidecarApp {
   /** Latest USB STATUS per device — surfaced for the provisioning wizard (mode + join progress). */
   readonly #usbStatus = new Map<
     string,
-    { mode: number; wifiState: DeviceWifiState | null; rssi: number | null }
+    { mode: number; wifiState: DeviceWifiState | null; rssi: number | null; channel: number | null }
   >();
   /**
    * MACs whose latest STATUS confirmed bridge mode (its trailing `bridging` byte). The store holds the *designation*;
@@ -333,6 +363,14 @@ export class SidecarApp {
       // SET_BRIDGE is runtime-only on the device, so the host re-asserts it on every (re)connect of
       // the designated bridge — a replug or reboot re-enters bridge mode without operator action.
       this.#assertBridgeIfDesignated(mac, version);
+      // Keep the version of every light the store knows, and learn any light heard over the radio
+      // (it is an ESP-NOW light by definition), so the channel picker can name the ones too old to
+      // follow a change even while they're away.
+      if (this.#provisioning.transportOf(mac) === "espnow") {
+        this.#noteReported(mac, { protocolVersion: version, transport: Transport.ESPNOW });
+      } else if (this.#store.device(mac)) {
+        this.#noteReported(mac, { protocolVersion: version });
+      }
       this.#log(`device connected: ${mac} (protocol v${version})`);
       this.#sync();
     });
@@ -371,8 +409,8 @@ export class SidecarApp {
     );
 
     // USB provisioning + diagnostics.
-    this.#provisioning.on("status", ({ mac, mode, wifiState, rssi, ssid, bridge }) => {
-      this.#usbStatus.set(mac, { mode, wifiState, rssi });
+    this.#provisioning.on("status", ({ mac, mode, wifiState, rssi, ssid, channel, bridge }) => {
+      this.#usbStatus.set(mac, { mode, wifiState, rssi, channel });
       // Track the device-confirmed bridge flag so the snapshot's `Device.bridge` reflects the
       // device's own STATUS, not just our designation intent (the two can briefly disagree).
       if (bridge) this.#bridgeConfirmed.add(mac);
@@ -383,6 +421,13 @@ export class SidecarApp {
       // the in-memory config synchronously, so the #sync() below already reflects it.
       const stored = this.#store.device(mac)?.ssid ?? "";
       if (ssid !== stored) void this.#save(this.#store.setSsid(mac, ssid === "" ? null : ssid));
+      // The provisioned mode is device truth too. Recorded for an ESP-NOW light (which the store
+      // then keeps), and for any device it already knows, so one re-provisioned away from ESP-NOW
+      // stops being counted as an ESP-NOW light; other devices aren't added for it.
+      if (mode === Transport.ESPNOW || this.#store.device(mac)) {
+        const version = this.#online.get(mac);
+        this.#noteReported(mac, { transport: mode, ...(version !== undefined ? { protocolVersion: version } : {}) });
+      }
       this.#sync(); // the wizard reads mode/wifiState/rssi off the snapshot
     });
     // A light's WARN/ERROR lines (its own LOG frames, relayed ones such as an ESP-NOW relink gap,
@@ -534,7 +579,9 @@ export class SidecarApp {
           this.#ipc.notice("info", `Tally ${macTail(command.mac, 2)} runs firmware too old for ESP-NOW — can't switch it.`);
           break;
         }
-        if (this.#provisioning.setTransport(command.mac, transportModeValue(command.mode))) {
+        const mode = transportModeValue(command.mode);
+        const channel = mode === Transport.ESPNOW ? this.#store.espnowChannel : undefined;
+        if (this.#provisioning.setTransport(command.mac, mode, channel)) {
           // No-TX has no network — drop any remembered SSID so a re-plug doesn't show a stale one.
           if (command.mode === "notx") await this.#save(this.#store.setSsid(command.mac, null));
           this.#sync();
@@ -545,6 +592,12 @@ export class SidecarApp {
       }
       case "setBridge":
         await this.#designateBridge(command.mac);
+        break;
+      case "setEspNowChannel":
+        await this.#setEspNowChannel(command.channel);
+        break;
+      case "setBridgeTxPower":
+        await this.#setBridgeTxPower(command.txPower);
         break;
       case "scanSources":
         void this.#scan();
@@ -590,13 +643,100 @@ export class SidecarApp {
   }
 
   /**
-   * Send SET_BRIDGE to a device, but only when it's USB-connected and its version
-   * {@link supportsEspNow}. A no-op otherwise — an offline or old device simply can't be a
+   * Send SET_BRIDGE to a device on the session channel, but only when it's USB-connected and its
+   * version {@link supportsEspNow}. A no-op otherwise — an offline or old device simply can't be a
    * bridge, and the designation is re-asserted when it next connects with a new-enough version.
+   * Entering bridge mode on a v4 device always carries the txPower byte (full included), so a
+   * re-sent SET_BRIDGE moves an already-bridging v4 device to the current power as well as the
+   * current channel; an older device is never sent it (it refuses a 4-byte SET_BRIDGE outright).
    */
   #sendBridge(mac: string, enabled: boolean, version: number | undefined): void {
     if (version === undefined || !supportsEspNow(version)) return;
-    this.#provisioning.setBridge(mac, enabled);
+    const txPower =
+      enabled && supportsChannelSelection(version)
+        ? this.#store.bridgeTxPower === "reduced"
+          ? BRIDGE_TX_POWER.REDUCED
+          : BRIDGE_TX_POWER.FULL
+        : undefined;
+    this.#provisioning.setBridge(mac, enabled, this.#store.espnowChannel, txPower);
+  }
+
+  /**
+   * Move the cabled bridge to the current session settings. A v4 bridge retunes in place on a
+   * re-sent SET_BRIDGE 1; a v3 bridge ignores SET_BRIDGE while bridging, so it leaves bridge mode
+   * and re-enters it on the new channel (its lights blink for that moment either way).
+   */
+  #retuneBridge(): void {
+    const mac = this.#store.bridgeMac;
+    if (mac === null) return;
+    const version = this.#online.get(mac);
+    if (version === undefined || !supportsEspNow(version)) return;
+    if (!supportsChannelSelection(version)) this.#sendBridge(mac, false, version);
+    this.#sendBridge(mac, true, version);
+  }
+
+  /**
+   * Set the rig's ESP-NOW channel: refuse one the firmware would refuse, persist it, and retune
+   * the cabled bridge at once. Uncabled v4 lights follow by hunting; older ones can't (the
+   * snapshot's `espnow.legacyLights` names them for the UI's warning).
+   */
+  async #setEspNowChannel(channel: number): Promise<void> {
+    if (!isEspnowChannel(channel)) {
+      this.#ipc.notice(
+        "warn",
+        `ESP-NOW channel ${channel} isn't one TallyBot can use: pick ${ESPNOW_CHANNEL_MIN}–${ESPNOW_CHANNEL_MAX}.`,
+      );
+      return;
+    }
+    if (channel !== this.#store.espnowChannel) {
+      await this.#save(this.#store.setEspnowChannel(channel));
+      this.#log(`ESP-NOW channel set to ${channel}`);
+      this.#retuneBridge();
+    }
+    this.#sync();
+  }
+
+  /** Set the bridge's transmit power: persist it and apply it at once to a cabled v4 bridge. */
+  async #setBridgeTxPower(txPower: BridgeTxPower): Promise<void> {
+    if (txPower !== "full" && txPower !== "reduced") {
+      this.#ipc.notice("warn", `Unknown bridge transmit power "${String(txPower)}".`);
+      return;
+    }
+    if (txPower !== this.#store.bridgeTxPower) {
+      await this.#save(this.#store.setBridgeTxPower(txPower));
+      this.#log(`bridge transmit power set to ${txPower}`);
+      const mac = this.#store.bridgeMac;
+      const version = mac === null ? undefined : this.#online.get(mac);
+      if (mac !== null && version !== undefined && supportsEspNow(version)) {
+        if (supportsChannelSelection(version)) this.#sendBridge(mac, true, version);
+        else {
+          this.#ipc.notice(
+            "info",
+            `Bridge ${macTail(mac, 2)} runs firmware too old to change its transmit power; it stays at full power until it's updated.`,
+          );
+        }
+      }
+    }
+    this.#sync();
+  }
+
+  /** Record what a device reported, reporting a failed write like any other save. */
+  #noteReported(mac: string, report: DeviceReport): void {
+    void this.#save(this.#store.noteReported(mac, report));
+  }
+
+  /** The snapshot's ESP-NOW settings, with every known ESP-NOW light too old to hunt channels. */
+  #espnowSettings(): EspNowSettings {
+    const legacyLights = this.#store
+      .devices()
+      .filter(
+        ([, config]) =>
+          config.transport === Transport.ESPNOW &&
+          config.protocolVersion !== undefined &&
+          !supportsChannelSelection(config.protocolVersion),
+      )
+      .map(([mac]) => mac);
+    return { channel: this.#store.espnowChannel, bridgeTxPower: this.#store.bridgeTxPower, legacyLights };
   }
 
   /**
@@ -647,6 +787,8 @@ export class SidecarApp {
         // The device is the bridge only while it's the designated MAC *and* its STATUS confirms
         // bridge mode (a designation we can't yet confirm — offline, or mid-handshake — reads false).
         bridge: mac === this.#store.bridgeMac && this.#bridgeConfirmed.has(mac),
+        // The channel the device has stored, as its live STATUS reports it (cabled only).
+        espnowChannel: status?.channel ?? null,
       });
     }
     return records;
@@ -671,7 +813,10 @@ export class SidecarApp {
     const { state, colors } = computeEngine(this.#source, this.#gate, this.#deviceRecords());
     this.#applyColors(colors);
     const faults = this.#faults.list();
-    this.#ipc.send({ type: "state", state: { ...state, faults, ...(this.#dev ? { dev: true } : {}) } });
+    this.#ipc.send({
+      type: "state",
+      state: { ...state, faults, espnow: this.#espnowSettings(), ...(this.#dev ? { dev: true } : {}) },
+    });
   }
 
   // ── Faults ─────────────────────────────────────────────────────────────────────

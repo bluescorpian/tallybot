@@ -141,7 +141,8 @@
 #define ESPNOW_CHANNEL_MAX 13
 inline bool isEspnowChannel(unsigned ch) { return ch >= ESPNOW_CHANNEL_MIN && ch <= ESPNOW_CHANNEL_MAX; }
 // Bridge transmit power in esp_wifi's quarter-dBm units, as SET_BRIDGE's optional txPower byte
-// carries it. FULL (19.5 dBm) applies when the byte is absent and when bridge mode ends.
+// carries it. FULL applies when the byte is absent and when bridge mode ends; the SDK rounds 78
+// down to 72, so it is really 18 dBm.
 #define BRIDGE_TX_POWER_FULL 78
 #define BRIDGE_TX_POWER_REDUCED 34  // 8.5 dBm; the host's "Reduced" setting (protocol.ts BRIDGE_TX_POWER)
 
