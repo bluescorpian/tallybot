@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -114,12 +114,150 @@ test("fully-default device entries are pruned from the file", async () => {
   });
 });
 
-test("a corrupt file falls back to defaults instead of throwing", async () => {
+test("a file that isn't a JSON object is kept aside as <name>.corrupt-<timestamp> and the store starts empty", async () => {
+  for (const text of ["{ this is not json", "[1, 2]", "\"a string\"", "null"]) {
+    await withTempFile(async (path) => {
+      await writeFile(path, text, "utf8");
+      const store = await ConfigStore.load(path);
+      assert.equal(store.sourceIp, null, text);
+      assert.deepEqual(store.devices(), [], text);
+
+      const problem = store.problem;
+      assert.equal(problem?.kind, "corrupt", text);
+      const keptAs = problem?.kind === "corrupt" ? problem.keptAs : null;
+      assert.ok(keptAs?.startsWith(`${path}.corrupt-`), `kept as ${keptAs}`);
+      assert.equal(await readFile(keptAs!, "utf8"), text, "the damaged file is kept intact");
+
+      // The fresh store saves normally, beside the kept copy.
+      await store.setSourceIp("10.0.0.5");
+      assert.equal((await ConfigStore.load(path)).sourceIp, "10.0.0.5");
+      assert.equal(await readFile(keptAs!, "utf8"), text);
+    });
+  }
+});
+
+test("a corrupt file that can't be moved aside leaves the store read-only, the file untouched", async (t) => {
+  if (process.getuid?.() === 0) return t.skip("root can rename in a read-only directory");
   await withTempFile(async (path) => {
     await writeFile(path, "{ this is not json", "utf8");
+    await chmod(dirname(path), 0o555);
+    try {
+      const store = await ConfigStore.load(path);
+      assert.deepEqual(store.problem, { kind: "corrupt", keptAs: null });
+      assert.equal(store.readOnly, true);
+      await store.assign("aa:bb:cc:dd:ee:ff", 2);
+      await store.flush();
+      assert.equal(store.device("aa:bb:cc:dd:ee:ff")?.inputId, 2, "the change applies in memory");
+      assert.equal(await readFile(path, "utf8"), "{ this is not json");
+      assert.deepEqual(await readdir(dirname(path)), ["state.json"]);
+    } finally {
+      await chmod(dirname(path), 0o755);
+    }
+  });
+});
+
+test("a file from a newer version loads what it recognises, read-only: changes apply in memory, the file is never rewritten", async () => {
+  for (const version of [2, "two"]) {
+    await withTempFile(async (path) => {
+      const text = JSON.stringify({
+        version,
+        sourceIp: "10.0.0.9",
+        espnowChannel: 6,
+        devices: { "aa:bb:cc:dd:ee:ff": { inputId: 4, brightness: 100 } },
+        futureField: { anything: true },
+      });
+      await writeFile(path, text, "utf8");
+      const store = await ConfigStore.load(path);
+      assert.equal(store.problem?.kind, "newer", String(version));
+      assert.equal(store.sourceIp, "10.0.0.9");
+      assert.equal(store.espnowChannel, 6);
+      assert.deepEqual(store.device("aa:bb:cc:dd:ee:ff"), { inputId: 4, brightness: 100 });
+
+      await store.assign("aa:bb:cc:dd:ee:ff", 7);
+      await store.setSourceIp("10.0.0.1");
+      await store.flush();
+      assert.equal(store.device("aa:bb:cc:dd:ee:ff")?.inputId, 7);
+      assert.equal(store.sourceIp, "10.0.0.1");
+      assert.equal(await readFile(path, "utf8"), text, "the newer file is byte-for-byte untouched");
+    });
+  }
+});
+
+test("a file with no version loads as version 1 and saves normally", async () => {
+  await withTempFile(async (path) => {
+    await writeFile(
+      path,
+      JSON.stringify({ sourceIp: "10.0.0.9", devices: { "aa:bb:cc:dd:ee:ff": { inputId: 4, brightness: 100 } } }),
+      "utf8",
+    );
     const store = await ConfigStore.load(path);
-    assert.equal(store.sourceIp, null);
-    assert.deepEqual(store.devices(), []);
+    assert.equal(store.problem, null);
+    assert.equal(store.sourceIp, "10.0.0.9");
+    assert.deepEqual(store.device("aa:bb:cc:dd:ee:ff"), { inputId: 4, brightness: 100 });
+
+    await store.setSourceIp("10.0.0.1");
+    assert.equal((await ConfigStore.load(path)).sourceIp, "10.0.0.1");
+  });
+});
+
+test("a mutation with a bad argument throws RangeError and changes nothing, in memory or on disk", async () => {
+  await withTempFile(async (path) => {
+    const store = await ConfigStore.load(path);
+    await store.assign("aa:bb:cc:dd:ee:ff", 2);
+    await store.setBridgeMac("aa:bb:cc:dd:ee:ff");
+    await store.flush();
+    const before = await readFile(path, "utf8");
+
+    const bad: Array<[string, () => unknown]> = [
+      ["non-MAC assign", () => store.assign("not-a-mac", 1)],
+      ["short MAC brightness", () => store.setBrightness("dd:ee:ff", 10)],
+      ["non-MAC SSID", () => store.setSsid("bogus", "net")],
+      ["non-MAC bridge", () => store.setBridgeMac("not-a-mac")],
+      ["negative input", () => store.assign("aa:bb:cc:dd:ee:ff", -1)],
+      ["fractional input", () => store.assign("aa:bb:cc:dd:ee:ff", 1.5)],
+      ["NaN brightness", () => store.setBrightness("aa:bb:cc:dd:ee:ff", Number.NaN)],
+      ["infinite brightness", () => store.setBrightness("aa:bb:cc:dd:ee:ff", Number.POSITIVE_INFINITY)],
+    ];
+    for (const [what, mutate] of bad) assert.throws(mutate, RangeError, what);
+
+    await store.flush();
+    assert.deepEqual(store.devices(), [["aa:bb:cc:dd:ee:ff", { inputId: 2, brightness: DEFAULT_BRIGHTNESS }]]);
+    assert.equal(store.bridgeMac, "aa:bb:cc:dd:ee:ff");
+    assert.equal(await readFile(path, "utf8"), before);
+  });
+});
+
+test("MACs are keyed lower-case: from the API, from a hand-edited file (lower-case wins a clash), and for the bridge", async () => {
+  await withTempFile(async (path) => {
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 1,
+        sourceIp: null,
+        bridgeMac: "AA:BB:CC:DD:EE:FF",
+        devices: {
+          "11:22:33:44:55:AA": { inputId: 1, brightness: 10 },
+          "66:77:88:99:aa:bb": { inputId: 3, brightness: 30 },
+          "66:77:88:99:AA:BB": { inputId: 2, brightness: 20 }, // clashes with the lower-case entry above
+        },
+      }),
+      "utf8",
+    );
+    const store = await ConfigStore.load(path);
+    assert.equal(store.bridgeMac, "aa:bb:cc:dd:ee:ff");
+    assert.deepEqual(store.devices().sort(), [
+      ["11:22:33:44:55:aa", { inputId: 1, brightness: 10 }],
+      ["66:77:88:99:aa:bb", { inputId: 3, brightness: 30 }],
+    ]);
+
+    await store.assign("CC:DD:EE:FF:00:11", 5);
+    await store.setBridgeMac("CC:DD:EE:FF:00:11");
+    assert.equal(store.bridgeMac, "cc:dd:ee:ff:00:11");
+    assert.ok(store.devices().some(([mac]) => mac === "cc:dd:ee:ff:00:11"));
+    const reloaded = await ConfigStore.load(path);
+    assert.deepEqual(reloaded.device("cc:dd:ee:ff:00:11"), { inputId: 5, brightness: DEFAULT_BRIGHTNESS });
+    assert.equal(reloaded.bridgeMac, "cc:dd:ee:ff:00:11");
+    assert.ok(reloaded.devices().every(([mac]) => mac === mac.toLowerCase()));
   });
 });
 

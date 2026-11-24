@@ -759,6 +759,35 @@ mod tests {
         assert_eq!(layout(&beyond), vec![(0x0, 0xC000)]);
     }
 
+    /// A partition table as read off a board: `entries`, then erased flash.
+    fn board_table(entries: &[[u8; 32]]) -> Vec<u8> {
+        let mut t = vec![0xFFu8; TABLE_LEN];
+        for (i, e) in entries.iter().enumerate() {
+            t[i * 32..i * 32 + 32].copy_from_slice(e);
+        }
+        t
+    }
+
+    #[test]
+    fn settings_are_kept_only_when_the_board_keeps_nvs_where_the_image_does() {
+        let nvs = entry(0x01, 0x02, 0x9000, 0x5000);
+        let app = entry(0x00, 0x00, 0x10000, 0x20000);
+        let img = image(0x40000, &[nvs, app]);
+
+        // Same NVS (the rest of the table, and its order, don't matter).
+        assert_eq!(check_settings_layout(&img, &board_table(&[app, nvs])), Ok(()));
+
+        // NVS moved, resized, or missing on the board: refuse, saying why.
+        for board in [
+            board_table(&[entry(0x01, 0x02, 0xA000, 0x5000), app]),
+            board_table(&[entry(0x01, 0x02, 0x9000, 0x6000), app]),
+            board_table(&[app]),
+        ] {
+            let refusal = check_settings_layout(&img, &board).expect_err("a different NVS must refuse");
+            assert!(!refusal.is_empty());
+        }
+    }
+
     #[test]
     fn write_progress_is_one_bar_across_segments_weighted_by_size() {
         // 100 bytes in 4 chunks, then 300 bytes in 3 chunks: 400 bytes in all.

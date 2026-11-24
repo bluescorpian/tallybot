@@ -9,13 +9,14 @@ import {
   type EspNowBridgePort,
   type IpcPort,
   type ProvisioningPort,
+  type Schedule,
   type SidecarAppDeps,
   type StorePort,
   type WifiScanPort,
   SidecarApp,
 } from "./app.ts";
 import type { SourceSnapshot } from "./engine.ts";
-import type { DeviceConfig, DeviceReport } from "./store.ts";
+import type { DeviceConfig, DeviceReport, StoreProblem } from "./store.ts";
 import type {
   BridgeTxPower,
   DeviceTransport,
@@ -26,7 +27,7 @@ import type {
   WifiAccessPoint,
   WifiScanEvent,
 } from "./ipc.ts";
-import { type Color, COLORS, DEFAULT_BRIGHTNESS, SETUP_COLOR, Transport } from "./protocol.ts";
+import { type Color, COLORS, DEFAULT_BRIGHTNESS, FIRMWARE_GRACE_MS, SETUP_COLOR, Transport } from "./protocol.ts";
 
 // ── In-memory fakes for the orchestrator's ports ─────────────────────────────────
 
@@ -108,6 +109,8 @@ class FakeStore implements StorePort {
   sourceIp: string | null = null;
   bridgeMac: string | null = null;
   espnowChannel = 1;
+  /** What ConfigStore reports about the file it loaded (read once, when the app is built). */
+  problem: StoreProblem | null = null;
   /** When set, every write fails with it (the change still lands in memory, as ConfigStore's does). */
   failWrites: Error | null = null;
   readonly #devices = new Map<string, DeviceConfig>();
@@ -254,6 +257,26 @@ class FakeAnimClock implements AnimationClock {
   }
 }
 
+/** One-shot timers on a clock the test advances by hand (the injected {@link Schedule}). */
+class FakeTimers {
+  #now = 0;
+  #pending = new Set<{ at: number; fn: () => void }>();
+  readonly schedule: Schedule = (ms, fn) => {
+    const timer = { at: this.#now + ms, fn };
+    this.#pending.add(timer);
+    return () => this.#pending.delete(timer);
+  };
+  /** Move the clock forward, firing every timer that falls due. */
+  advance(ms: number): void {
+    this.#now += ms;
+    for (const timer of [...this.#pending].sort((a, b) => a.at - b.at)) {
+      if (timer.at > this.#now || !this.#pending.has(timer)) continue;
+      this.#pending.delete(timer);
+      timer.fn();
+    }
+  }
+}
+
 // ── Harness ──────────────────────────────────────────────────────────────────
 
 const MAC = "aa:bb:cc:dd:ee:01";
@@ -284,20 +307,22 @@ interface Harness {
   espnow: FakeEspNow;
   anim: FakeAnimClock;
   refresh: FakeAnimClock;
+  timers: FakeTimers;
 }
 
 function setup(
   source: SourceSnapshot = connectedSource(),
   overrides: Partial<Pick<SidecarAppDeps, "scanNetwork" | "wifiScan">> = {},
+  store: FakeStore = new FakeStore(),
 ): Harness {
   const server = new FakeDeviceServer();
   const atem = new FakeAtemSource(source);
   const ipc = new FakeIpc();
-  const store = new FakeStore();
   const provisioning = new FakeProvisioning();
   const espnow = new FakeEspNow();
   const anim = new FakeAnimClock();
   const refresh = new FakeAnimClock();
+  const timers = new FakeTimers();
   const app = new SidecarApp({
     atem,
     deviceServer: server,
@@ -308,13 +333,14 @@ function setup(
     animClock: anim,
     animTickMs: FLASH_HALF_MS, // one step == one flash half-cycle, so flash tests read as toggles
     refreshClock: refresh, // steppable so the keyframe re-send is deterministic (no real timer)
+    schedule: timers.schedule,
     log: () => {},
     scanNetwork: () => Promise.resolve([]),
     ...overrides,
     // No scan reaches a device unless a test injects one.
     wifiScan: overrides.wifiScan ?? { scanWifi: () => null },
   });
-  return { app, server, atem, ipc, store, provisioning, espnow, anim, refresh };
+  return { app, server, atem, ipc, store, provisioning, espnow, anim, refresh, timers };
 }
 
 /** Let an async command handler (which awaits the store) settle. */
@@ -918,6 +944,24 @@ test("a failed save is a state.write error fault, the change still takes effect,
   assert.equal(faultsOf(ipc).find((f) => f.key === "state.write"), undefined);
 });
 
+test("a state file the store couldn't load as-is is a state.load fault: warn when newer, error when corrupt", async () => {
+  const cases: Array<[StoreProblem, "warn" | "error"]> = [
+    [{ kind: "newer", version: 2 }, "warn"],
+    [{ kind: "corrupt", keptAs: "/state/state.json.corrupt-2026" }, "error"],
+    [{ kind: "corrupt", keptAs: null }, "error"],
+  ];
+  for (const [problem, level] of cases) {
+    const store = new FakeStore();
+    store.problem = problem;
+    const { app, ipc } = setup(connectedSource(), {}, store);
+    await app.start();
+    assert.equal(faultsOf(ipc).find((f) => f.key === "state.load")?.level, level, JSON.stringify(problem));
+  }
+  const { app, ipc } = setup();
+  await app.start();
+  assert.equal(faultsOf(ipc).find((f) => f.key === "state.load"), undefined, "a clean load raises none");
+});
+
 test("an ATEM error while connecting is an atem fault until it connects or is disconnected; while connected it isn't one", async () => {
   const { app, atem, ipc } = setup({ ...connectedSource(), connection: "connecting" });
   await app.start();
@@ -966,21 +1010,60 @@ test("a light's WARN/ERROR log line is its fault, holding the latest line, until
   assert.deepEqual(logFaults(), []);
 });
 
-test("a connected light that sent no FIRMWARE reads legacy over TCP or USB, but unknown over ESP-NOW", async () => {
+test("a light that sent no FIRMWARE reads unknown until the grace runs out, then legacy over TCP or USB; ESP-NOW stays unknown", async () => {
   const TCP = "aa:bb:cc:dd:ee:01";
   const USB = "aa:bb:cc:dd:ee:02";
   const ESPNOW = "aa:bb:cc:dd:ee:03";
-  const { app, server, ipc, provisioning } = setup();
+  const { app, server, ipc, provisioning, timers } = setup();
   await app.start();
   provisioning.wired.add(USB);
   provisioning.espnow.add(ESPNOW);
   for (const mac of [TCP, USB, ESPNOW]) server.connectDevice(mac, 3);
   const firmwareOf = (mac: string) => ipc.lastState()!.state.devices.find((d) => d.mac === mac)!.firmware;
 
+  timers.advance(FIRMWARE_GRACE_MS - 1);
+  for (const mac of [TCP, USB, ESPNOW]) assert.deepEqual(firmwareOf(mac), { kind: "unknown" }, mac);
+
+  timers.advance(1);
   assert.deepEqual(firmwareOf(TCP), { kind: "legacy" });
   assert.deepEqual(firmwareOf(USB), { kind: "legacy" });
   // ESP-NOW is fire-and-forget: a lost FIRMWARE is no evidence of old firmware.
   assert.deepEqual(firmwareOf(ESPNOW), { kind: "unknown" });
+});
+
+test("a FIRMWARE inside the grace window gives the light its version, never legacy", async () => {
+  const { app, server, ipc, timers } = setup();
+  await app.start();
+  server.connectDevice(MAC, 3);
+  const firmwareOf = () => ipc.lastState()!.state.devices.find((d) => d.mac === MAC)!.firmware;
+
+  timers.advance(FIRMWARE_GRACE_MS - 1);
+  server.emit("firmware", { mac: MAC, version: "1.2.0" });
+  timers.advance(FIRMWARE_GRACE_MS);
+  assert.deepEqual(firmwareOf(), { kind: "reported", version: "1.2.0" });
+});
+
+test("disconnecting cancels the FIRMWARE wait and a reconnect starts a fresh one", async () => {
+  const { app, server, ipc, timers } = setup();
+  await app.start();
+  const firmwareOf = () => ipc.lastState()!.state.devices.find((d) => d.mac === MAC)!.firmware;
+
+  server.connectDevice(MAC, 3);
+  timers.advance(FIRMWARE_GRACE_MS - 1);
+  server.disconnectDevice(MAC);
+  server.connectDevice(MAC, 3);
+  timers.advance(FIRMWARE_GRACE_MS - 1); // past the first HELLO's deadline, not the second's
+  assert.deepEqual(firmwareOf(), { kind: "unknown" });
+
+  timers.advance(1);
+  assert.deepEqual(firmwareOf(), { kind: "legacy" });
+
+  // A light that already read legacy gets a fresh wait too (it may have been reflashed meanwhile).
+  server.disconnectDevice(MAC);
+  server.connectDevice(MAC, 3);
+  assert.deepEqual(firmwareOf(), { kind: "unknown" });
+  timers.advance(FIRMWARE_GRACE_MS);
+  assert.deepEqual(firmwareOf(), { kind: "legacy" });
 });
 
 test("provisionWifi refuses credentials over a light's limits with a warning, sending and storing nothing", async () => {
