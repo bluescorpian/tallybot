@@ -32,6 +32,8 @@
 //   legacy — the rig is on channel 6; B2:5A runs firmware that can't follow a channel change and
 //            C1:08 hasn't been seen since the update (both named when the channel changes), and
 //            the wired D2:44 light is set up for ESP-NOW but stored channel 1 (its menu flags it)
+// `?mes=<n>` makes the source a switcher with n mix effects (default 1, an ATEM Mini), so each
+// light's menu offers the ME choice. The mock models only ME 1's buses: every ME reads like it.
 import { untrack } from "svelte";
 import type {
 	AppState,
@@ -92,6 +94,8 @@ function mock(
 		macTail,
 		state,
 		inputId,
+		mixEffects: [0],
+		tally: null, // derived from the inputs when the mock's state is built
 		brightness: 128,
 		protocolVersion: opts.protocolVersion ?? (opts.transport === "usb" ? 2 : 1),
 		firmware: opts.firmware ?? { kind: "unknown" },
@@ -240,11 +244,14 @@ export class MockBoard implements Backend {
 	bridgeTxPower = $state<BridgeTxPower>("full");
 	#legacyLights: string[] = [];
 	#unseenLights: string[] = [];
+	readonly #mixEffectCount: number;
 	wifiScan = $state<WifiScanEvent | null>(null);
 
 	constructor(params: URLSearchParams) {
 		const demo = params.get("demo");
 		const fail = params.get("fail");
+		const mes = Number(params.get("mes") ?? 1);
+		this.#mixEffectCount = Number.isInteger(mes) && mes >= 1 ? mes : 1;
 		this.engineDown = demo === "enginedown";
 		this.sourceMode = demo === "firstrun" ? "unconfigured" : demo === "unreachable" ? "disconnected" : "connected";
 		this.#wrongOnce = fail === "wronglight";
@@ -311,9 +318,20 @@ export class MockBoard implements Backend {
 						: mode === "connecting"
 							? "connecting"
 							: "disconnected",
+				mixEffectCount: mode === "unconfigured" ? 0 : this.#mixEffectCount,
 			},
 			inputs: this.#inputs,
-			devices: this.devices,
+			// As the engine does, each assigned light carries its own tally: here its input's (every
+			// ME reads like ME 1), idle under the override, unknown on an input the source lacks.
+			devices: this.devices.map((d) => ({
+				...d,
+				tally:
+					d.inputId === null
+						? null
+						: this.override
+							? "idle"
+							: (this.#inputs.find((i) => i.id === d.inputId)?.tally ?? "unknown"),
+			})),
 			programGate: { active: this.override, source: null },
 			faults: [],
 			espnow: {
@@ -387,6 +405,10 @@ export class MockBoard implements Backend {
 	setBrightness(mac: string, brightness: number) {
 		const d = this.#find(mac);
 		if (d) d.brightness = brightness;
+	}
+	setMixEffects(mac: string, mixEffects: number[]) {
+		const d = this.#find(mac);
+		if (d && mixEffects.length > 0) d.mixEffects = [...new Set(mixEffects)].sort((a, b) => a - b);
 	}
 	// Save-only, as on the device: SET_WIFI persists the credentials and the device confirms at
 	// once (no live join), so the provisioned mode shows straight away.

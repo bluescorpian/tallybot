@@ -34,6 +34,12 @@ export interface BoardLight {
 	state: LightState;
 	/** Per-device LED brightness as the protocol byte (0–255). */
 	brightness: number;
+	/**
+	 * Which mix effects the light follows, for its menu's ME choice: `following` is 0-based (`[0]`
+	 * is ME 1), `count` the switcher's ME count. Null when there's no choice to offer (a one-ME
+	 * switcher, such as an ATEM Mini, with the light on ME 1), so the menu shows no ME row.
+	 */
+	mixEffects: { following: number[]; count: number } | null;
 	/** Transport currently carrying the device — `"usb"` shows the wired indicator. */
 	transport: DeviceTransport;
 	/** Persisted "when unplugged" mode; null until the device is provisioned. */
@@ -84,6 +90,8 @@ export interface LightActions {
 	flash?: (mac: string) => void;
 	/** Set a device's LED brightness (protocol byte, 0–255). */
 	setBrightness?: (mac: string, value: number) => void;
+	/** Choose the MEs (0-based, non-empty) a light's tally follows. */
+	setMixEffects?: (mac: string, mixEffects: number[]) => void;
 	/** Provision a device's Wi-Fi (persist creds; save-only — no live join). */
 	provisionWifi?: (mac: string, ssid: string, pass: string) => void;
 	/** Set a device's unplugged transport mode. */

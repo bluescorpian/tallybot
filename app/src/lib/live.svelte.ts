@@ -10,7 +10,7 @@ import { TauriUpdater } from "$lib/updater/tauri.svelte";
 
 // What the board shows before the first snapshot lands: an unconfigured source.
 const EMPTY_STATE: AppState = {
-	source: { kind: "atem", ip: null, connection: "disconnected" },
+	source: { kind: "atem", ip: null, connection: "disconnected", mixEffectCount: 0 },
 	inputs: [],
 	devices: [],
 	programGate: { active: false, source: null },
@@ -79,6 +79,9 @@ export class LiveBackend implements Backend {
 	}
 	setBrightness(mac: string, brightness: number) {
 		sidecar.setBrightness(mac, brightness);
+	}
+	setMixEffects(mac: string, mixEffects: number[]) {
+		sidecar.setMixEffects(mac, mixEffects);
 	}
 	provisionWifi(mac: string, ssid: string, password: string) {
 		sidecar.provisionWifi(mac, ssid, password);

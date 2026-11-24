@@ -224,6 +224,10 @@ class SidecarStore {
 	setBrightness(mac: string, brightness: number): void {
 		this.#send({ type: "setBrightness", mac, brightness });
 	}
+	/** Choose the MEs (0-based, non-empty) a light's tally follows. */
+	setMixEffects(mac: string, mixEffects: number[]): void {
+		this.#send({ type: "setMixEffects", mac, mixEffects });
+	}
 	/** Provision a USB device's WiFi creds + kick off the validating join (v1.2). */
 	provisionWifi(mac: string, ssid: string, password: string): void {
 		this.#send({ type: "provisionWifi", mac, ssid, password });

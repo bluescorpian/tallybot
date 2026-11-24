@@ -378,6 +378,7 @@
 				// the board already echoes a local blink; this streams the real locate flash too
 				flash: (mac) => backend.identify(mac),
 				setBrightness: (mac, v) => backend.setBrightness(mac, v),
+				setMixEffects: (mac, mixEffects) => backend.setMixEffects(mac, mixEffects),
 				provisionWifi: (mac, ssid, pass) => backend.provisionWifi(mac, ssid, pass),
 				setTransport: (mac, mode) => backend.setTransport(mac, mode),
 				setBridge: (mac) => backend.setBridge(mac),

@@ -109,6 +109,18 @@
 		actions.unassign?.(light.mac);
 		open = false;
 	}
+
+	// Every ME the switcher has, plus any the light still follows that it doesn't (so it can be
+	// turned off), in ME order.
+	function meOptions({ following, count }: { following: number[]; count: number }): number[] {
+		const all = new Set([...Array.from({ length: count }, (_, i) => i), ...following]);
+		return [...all].sort((a, b) => a - b);
+	}
+	function toggleMe(me: number) {
+		const following = light.mixEffects?.following ?? [0];
+		const next = following.includes(me) ? following.filter((i) => i !== me) : [...following, me];
+		if (next.length > 0) actions.setMixEffects?.(light.mac, next.sort((a, b) => a - b));
+	}
 </script>
 
 <Popover bind:open onOpenChangeComplete={onclosed}>
@@ -258,6 +270,33 @@
 			<p class="text-muted-foreground pb-1.5 text-[0.68rem]">Brightness</p>
 			<BrightnessBar value={light.brightness} onchange={(v) => actions.setBrightness?.(light.mac, v)} />
 		</div>
+
+		{#if light.mixEffects}
+			{@const following = light.mixEffects.following}
+			<!-- Mix effects: which MEs' buses this light's tally follows (Live > Preview > Idle across
+			     them). Only on a switcher with more than one ME. A toggle per ME; the last one on can't
+			     be turned off, since a light must follow at least one. -->
+			<div class="bg-border h-px"></div>
+			<div class="px-3 py-2.5">
+				<p class="text-muted-foreground pb-1.5 text-[0.68rem]">Follows</p>
+				<div class="flex flex-wrap gap-1">
+					{#each meOptions(light.mixEffects) as me (me)}
+						{@const on = following.includes(me)}
+						<button
+							type="button"
+							aria-pressed={on}
+							disabled={on && following.length === 1}
+							class="focus-visible:ring-ring rounded-md border px-2 py-0.5 text-xs outline-none focus-visible:ring-2 disabled:cursor-default {on
+								? 'bg-primary text-primary-foreground border-primary'
+								: 'border-border hover:bg-accent cursor-pointer'}"
+							onclick={() => toggleMe(me)}
+						>
+							ME {me + 1}
+						</button>
+					{/each}
+				</div>
+			</div>
+		{/if}
 
 		<div class="bg-border h-px"></div>
 

@@ -55,6 +55,17 @@ function provisioning(d: Device, rigChannel: number) {
 	};
 }
 
+/**
+ * The light's ME choice, or null when there's none to offer: a one-ME switcher (or none reported)
+ * with the light on ME 1. A light still set to an ME the switcher lacks keeps the row, so it can
+ * be moved back.
+ */
+function meChoice(d: Device, count: number): BoardLight["mixEffects"] {
+	const onlyMe1 = d.mixEffects.length === 1 && d.mixEffects[0] === 0;
+	if (count <= 1 && onlyMe1) return null;
+	return { following: d.mixEffects, count };
+}
+
 export function inputToBoard(i: Input): BoardInput {
 	return { id: String(i.id), n: i.id, label: i.label, state: inputState(i.tally) };
 }
@@ -79,13 +90,14 @@ const DEFAULT_INPUTS: BoardInput[] = [1, 2, 3, 4].map((n) => ({
  * viewable and — when online — flashable, but cannot be wired to an input.
  * Offline keeps its device-blue; everything else shows the setup colour.
  */
-function dockLight(d: Device, rigChannel: number): BoardLight {
+function dockLight(d: Device, rigChannel: number, meCount: number): BoardLight {
 	return {
 		mac: d.mac,
 		label: shortMac(d.mac),
 		inputId: null,
 		state: d.state === "offline" ? "offline" : "setup",
 		brightness: d.brightness,
+		mixEffects: meChoice(d, meCount),
 		...provisioning(d, rigChannel),
 	};
 }
@@ -95,9 +107,11 @@ function dockLight(d: Device, rigChannel: number): BoardLight {
  *   offline               → offline (steady blue, device-local)
  *   unassigned / orphan   → setup   (magenta, sits in the dock)
  *   assigned + override   → idle    (the gate blocks program — every light idles)
- *   assigned + tally      → that tally, with `unknown` → fault (flashing blue:
- *                           the sidecar drives connected lights to fault when it
- *                           can't trust the source — never a confident idle)
+ *   assigned + tally      → the device's own tally, with `unknown` → fault (flashing
+ *                           blue: the sidecar drives connected lights to fault when it
+ *                           can't trust the source — never a confident idle). The
+ *                           device's tally, not its input's: a light follows its own
+ *                           MEs, while the input key shows ME 1.
  *
  * A device is only *seated* when its `inputId` is actually present in the current
  * input list. An assignment to a now-missing input (e.g. a bigger switcher's input
@@ -112,6 +126,7 @@ export function deviceToBoard(
 	inputs: Input[],
 	override: boolean,
 	rigChannel: number,
+	meCount: number,
 ): BoardLight {
 	const seated = d.inputId !== null && inputs.some((i) => i.id === d.inputId);
 	const inputId = seated ? String(d.inputId) : null;
@@ -120,7 +135,7 @@ export function deviceToBoard(
 	else if (d.state === "unassigned" || !seated) state = "setup";
 	else if (override) state = "idle";
 	else {
-		const tally = inputs.find((i) => i.id === d.inputId)?.tally ?? "unknown";
+		const tally = d.tally ?? "unknown";
 		state = tally === "unknown" ? "fault" : tally;
 	}
 	return {
@@ -129,6 +144,7 @@ export function deviceToBoard(
 		inputId,
 		state,
 		brightness: d.brightness,
+		mixEffects: meChoice(d, meCount),
 		...provisioning(d, rigChannel),
 	};
 }
@@ -180,7 +196,9 @@ export function toBoardProps(state: AppState): BoardProps {
 	return {
 		inputs: noSource ? DEFAULT_INPUTS : real.map(inputToBoard),
 		lights: state.devices.map((d) =>
-			assignable ? deviceToBoard(d, real, override, state.espnow.channel) : dockLight(d, state.espnow.channel),
+			assignable
+				? deviceToBoard(d, real, override, state.espnow.channel, state.source.mixEffectCount)
+				: dockLight(d, state.espnow.channel, state.source.mixEffectCount),
 		),
 		sourceStatus: sourceStatus(state.source),
 		sourceConnected: connected,

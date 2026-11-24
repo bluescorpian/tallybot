@@ -36,6 +36,8 @@ export interface Backend extends FlashBackend {
 
 	/** Flash-to-identify: stream the locate flash to a light. */
 	identify(mac: string): void;
+	/** Choose the MEs (0-based, non-empty) a light's tally follows. */
+	setMixEffects(mac: string, mixEffects: number[]): void;
 	setSource(ip: string): void;
 	/** Settings → ESP-NOW: the rig's channel (1–13). */
 	setEspNowChannel(channel: number): void;
