@@ -3,7 +3,7 @@
  * must survive an app restart (docs/architecture.md "Device Identity").
  *
  * State is a small JSON file: the source IP plus, keyed by device MAC, the input a
- * device is assigned to and its per-device brightness. The in-memory copy is the
+ * device is assigned to, the MEs it follows and its brightness. The in-memory copy is the
  * working set; every mutation writes the file back **atomically** (temp file +
  * rename) so a crash mid-write can't corrupt it, and writes are serialised so they
  * can't interleave. Loading a missing file yields empty defaults; a corrupt or
@@ -17,6 +17,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
+import { DEFAULT_MIX_EFFECTS, normalizeMixEffects } from "./engine.ts";
 import { DEFAULT_BRIGHTNESS, ESPNOW_CHANNEL, Transport, isEspnowChannel, isMac } from "./protocol.ts";
 
 /** One device's persisted configuration. */
@@ -25,6 +26,11 @@ export interface DeviceConfig {
   inputId: number | null;
   /** Per-device LED brightness, 0–255. */
   brightness: number;
+  /**
+   * The MEs (0-based) the device's tally follows, in canonical form ({@link normalizeMixEffects}).
+   * Omitted for the default, ME 1 only, so a single-ME rig's file never carries it.
+   */
+  mixEffects?: number[];
   /**
    * SSID the device was provisioned to join. Set when the app provisions it, and adopted from
    * the SSID the device's STATUS reports while cabled (its NVS value, the source of truth), so
@@ -85,12 +91,17 @@ function isByte(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 255;
 }
 
+function isDefaultMixEffects(list: readonly number[]): boolean {
+  return list.length === DEFAULT_MIX_EFFECTS.length && list.every((i, n) => i === DEFAULT_MIX_EFFECTS[n]);
+}
+
 /** Coerce one parsed device entry, or null if it has nothing usable. */
 function coerceDevice(value: unknown): DeviceConfig | null {
   if (typeof value !== "object" || value === null) return null;
   const raw = value as {
     inputId?: unknown;
     brightness?: unknown;
+    mixEffects?: unknown;
     ssid?: unknown;
     protocolVersion?: unknown;
     transport?: unknown;
@@ -99,6 +110,9 @@ function coerceDevice(value: unknown): DeviceConfig | null {
     typeof raw.inputId === "number" && Number.isInteger(raw.inputId) ? raw.inputId : null;
   const brightness = isByte(raw.brightness) ? raw.brightness : DEFAULT_BRIGHTNESS;
   const device: DeviceConfig = { inputId, brightness };
+  // An unreadable list falls back to the default (ME 1) rather than costing the device its entry.
+  const mixEffects = normalizeMixEffects(raw.mixEffects);
+  if (mixEffects && !isDefaultMixEffects(mixEffects)) device.mixEffects = mixEffects;
   // Keep the key absent when there's no SSID, so a non-WiFi device stays `{ inputId, brightness }`.
   if (typeof raw.ssid === "string" && raw.ssid !== "") device.ssid = raw.ssid;
   if (isByte(raw.protocolVersion)) device.protocolVersion = raw.protocolVersion;
@@ -242,6 +256,19 @@ export class ConfigStore {
     return this.#persist();
   }
 
+  /**
+   * Set the MEs a device's tally follows. Throws a RangeError, changing nothing, on a list
+   * {@link normalizeMixEffects} rejects: a caller bug (the orchestrator refuses one first).
+   */
+  setMixEffects(mac: string, mixEffects: readonly number[]): Promise<void> {
+    const list = normalizeMixEffects(mixEffects);
+    if (!list) throw new RangeError(`not a list of ME indices: ${JSON.stringify(mixEffects)}`);
+    const device = this.#ensure(mac);
+    if (isDefaultMixEffects(list)) delete device.mixEffects;
+    else device.mixEffects = list;
+    return this.#persist();
+  }
+
   /** Remember (or clear) the SSID a device was provisioned to join over USB. */
   setSsid(mac: string, ssid: string | null): Promise<void> {
     const device = this.#ensure(mac);
@@ -296,12 +323,14 @@ export class ConfigStore {
       if (
         config.inputId === null &&
         config.brightness === DEFAULT_BRIGHTNESS &&
+        config.mixEffects === undefined &&
         config.ssid == null &&
         config.transport !== Transport.ESPNOW
       )
         continue;
       const entry: DeviceConfig = { inputId: config.inputId, brightness: config.brightness };
       // Optional keys are omitted when unset (keeps the file minimal).
+      if (config.mixEffects !== undefined) entry.mixEffects = config.mixEffects;
       if (config.ssid != null) entry.ssid = config.ssid;
       if (config.protocolVersion !== undefined) entry.protocolVersion = config.protocolVersion;
       if (config.transport !== undefined) entry.transport = config.transport;

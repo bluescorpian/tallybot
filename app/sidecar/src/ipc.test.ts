@@ -11,7 +11,7 @@ import {
 } from "./ipc.ts";
 
 const sampleState: AppState = {
-  source: { kind: "atem", ip: "192.168.1.50", connection: "connected" },
+  source: { kind: "atem", ip: "192.168.1.50", connection: "connected", mixEffectCount: 1 },
   inputs: [
     { id: 1, label: "Camera 1", tally: "live" },
     { id: 2, label: "Camera 2", tally: "preview" },
@@ -22,6 +22,8 @@ const sampleState: AppState = {
       macTail: "dd:ee:ff",
       state: "assigned",
       inputId: 1,
+      mixEffects: [0],
+      tally: "live",
       brightness: 128,
       protocolVersion: 1,
       firmware: { kind: "reported", version: "1.1.0" },

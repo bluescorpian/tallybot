@@ -12,8 +12,7 @@ function connectedSource(overrides: Partial<SourceSnapshot> = {}): SourceSnapsho
   return {
     ip: "10.0.0.5",
     connection: "connected",
-    programInput: 1,
-    previewInput: 2,
+    mixEffects: [{ programInput: 1, previewInput: 2 }],
     inputs: [
       { id: 1, label: "Camera 1" },
       { id: 2, label: "Camera 2" },
@@ -60,7 +59,7 @@ test("tallyFor: an untrustworthy source reports unknown, never a misleading idle
   // where we can't assert what's live — so the input is the fault state, not idle.
   assert.equal(tallyFor(connectedSource({ connection: "disconnected" }), INACTIVE_GATE, 1), "unknown");
   assert.equal(tallyFor(connectedSource({ connection: "connecting" }), INACTIVE_GATE, 1), "unknown");
-  assert.equal(tallyFor(connectedSource({ programInput: null }), INACTIVE_GATE, 1), "unknown");
+  assert.equal(tallyFor(connectedSource({ mixEffects: [{ programInput: null, previewInput: 2 }] }), INACTIVE_GATE, 1), "unknown");
 });
 
 test("tallyFor: an active program gate still wins over an untrustworthy source", () => {
@@ -133,7 +132,7 @@ test("an active program gate drops assigned devices to idle", () => {
 test("the snapshot mirrors source connection, ip, inputs, and gate", () => {
   const source = connectedSource();
   const { state } = computeEngine(source, INACTIVE_GATE, []);
-  assert.deepEqual(state.source, { kind: "atem", ip: "10.0.0.5", connection: "connected" });
+  assert.deepEqual(state.source, { kind: "atem", ip: "10.0.0.5", connection: "connected", mixEffectCount: 1 });
   assert.deepEqual(
     state.inputs,
     [
@@ -160,6 +159,8 @@ test("the device snapshot carries identity, assignment, and brightness through",
     macTail: "dd:ee:ff",
     state: "assigned",
     inputId: 2,
+    mixEffects: [0],
+    tally: "preview",
     brightness: 200,
     protocolVersion: 1,
     firmware: { kind: "reported", version: "1.2.0" },
@@ -186,7 +187,7 @@ test("the device snapshot carries the USB provisioned mode and SSID through", ()
 
 // During a mix the ATEM has already moved preview on to the source queued for after it,
 // so the incoming source is carried on the transition. Here: 1 → 2 is mixing, 3 is queued.
-const MIXING = connectedSource({ programInput: 1, previewInput: 3, transition: { incomingInput: 2, progress: 0.25 } });
+const MIXING = connectedSource({ mixEffects: [{ programInput: 1, previewInput: 3, transition: { incomingInput: 2, progress: 0.25 } }] });
 
 test("tallyFor: mid-mix both the outgoing and incoming sources are live, the queued one preview", () => {
   assert.equal(tallyFor(MIXING, INACTIVE_GATE, 1), "live", "outgoing");
@@ -212,23 +213,23 @@ test("mid-mix, the incoming light fades preview→live and the outgoing one live
 
 test("mid-mix, an outgoing light that is now on preview fades live→preview", () => {
   // The real AUTO case: preview moves to the outgoing source as the mix starts.
-  const source = connectedSource({ programInput: 1, previewInput: 1, transition: { incomingInput: 2, progress: 0.25 } });
+  const source = connectedSource({ mixEffects: [{ programInput: 1, previewInput: 1, transition: { incomingInput: 2, progress: 0.25 } }] });
   const { colors } = computeEngine(source, INACTIVE_GATE, [device({ inputId: 1 })]);
   assert.deepEqual(colors[0]!.color, { r: 191, g: 64, b: 0 }, "red 25% toward green");
 });
 
 test("the mix's end points are the plain tally colours", () => {
   const devices = [device({ mac: "00:00:00:00:00:01", inputId: 1 }), device({ mac: "00:00:00:00:00:02", inputId: 2 })];
-  const start = computeEngine({ ...MIXING, transition: { incomingInput: 2, progress: 0 } }, INACTIVE_GATE, devices);
+  const start = computeEngine({ ...MIXING, mixEffects: [{ ...MIXING.mixEffects[0]!, transition: { incomingInput: 2, progress: 0 } }] }, INACTIVE_GATE, devices);
   assert.deepEqual(start.colors[0]!.color, COLORS.live);
   assert.deepEqual(start.colors[1]!.color, COLORS.preview);
-  const end = computeEngine({ ...MIXING, transition: { incomingInput: 2, progress: 1 } }, INACTIVE_GATE, devices);
+  const end = computeEngine({ ...MIXING, mixEffects: [{ ...MIXING.mixEffects[0]!, transition: { incomingInput: 2, progress: 1 } }] }, INACTIVE_GATE, devices);
   assert.deepEqual(end.colors[0]!.color, COLORS.idle);
   assert.deepEqual(end.colors[1]!.color, COLORS.live);
 });
 
 test("mixing a source onto itself shows plain live, no blend", () => {
-  const source = connectedSource({ programInput: 1, previewInput: 2, transition: { incomingInput: 1, progress: 0.5 } });
+  const source = connectedSource({ mixEffects: [{ programInput: 1, previewInput: 2, transition: { incomingInput: 1, progress: 0.5 } }] });
   const { colors } = computeEngine(source, INACTIVE_GATE, [device({ inputId: 1 })]);
   assert.deepEqual(colors[0]!.color, COLORS.live);
 });
@@ -243,4 +244,73 @@ test("mid-mix, an active gate and an untrusted source still win over the blend",
     [COLORS.disconnected, "flash"],
     [COLORS.disconnected, "flash"],
   ]);
+});
+
+// ── Multi-ME ─────────────────────────────────────────────────────────────────────
+
+/** A connected 2 M/E: ME 1 program 1 / preview 2, ME 2 program 3 / preview 1. */
+const TWO_ME = connectedSource({
+  mixEffects: [
+    { programInput: 1, previewInput: 2 },
+    { programInput: 3, previewInput: 1 },
+  ],
+});
+
+test("tallyFor: defaults to ME 1 only", () => {
+  assert.equal(tallyFor(TWO_ME, INACTIVE_GATE, 3), "idle", "live on ME 2 is ignored by default");
+  assert.equal(tallyFor(TWO_ME, INACTIVE_GATE, 3, [1]), "live");
+});
+
+test("tallyFor: across followed MEs, live beats preview beats idle", () => {
+  assert.equal(tallyFor(TWO_ME, INACTIVE_GATE, 1, [0, 1]), "live", "live on ME 1, preview on ME 2");
+  assert.equal(tallyFor(TWO_ME, INACTIVE_GATE, 3, [0, 1]), "live", "idle on ME 1, live on ME 2");
+  assert.equal(tallyFor(TWO_ME, INACTIVE_GATE, 2, [0, 1]), "preview", "preview on ME 1, idle on ME 2");
+  assert.equal(tallyFor(TWO_ME, INACTIVE_GATE, 4, [0, 1]), "idle");
+});
+
+test("tallyFor: an ME without a program input is unknown, below live but above preview", () => {
+  const source = connectedSource({
+    mixEffects: [
+      { programInput: 1, previewInput: 2 },
+      { programInput: null, previewInput: null },
+    ],
+  });
+  assert.equal(tallyFor(source, INACTIVE_GATE, 1, [0, 1]), "live");
+  assert.equal(tallyFor(source, INACTIVE_GATE, 2, [0, 1]), "unknown");
+  assert.equal(tallyFor(source, INACTIVE_GATE, 3, [0, 1]), "unknown");
+});
+
+test("tallyFor: an ME the switcher lacks is ignored; following only missing MEs is unknown", () => {
+  const mini = connectedSource(); // one ME
+  assert.equal(tallyFor(mini, INACTIVE_GATE, 2, [0, 3]), "preview");
+  assert.equal(tallyFor(mini, INACTIVE_GATE, 1, [3]), "unknown");
+  assert.equal(tallyFor(mini, ACTIVE_GATE, 1, [3]), "idle", "the gate still wins");
+  assert.equal(tallyFor({ ...TWO_ME, connection: "disconnected" }, INACTIVE_GATE, 1, [0, 1]), "unknown");
+});
+
+test("a device follows its own MEs; the board's input tally stays ME 1's", () => {
+  const { colors, state } = computeEngine(TWO_ME, INACTIVE_GATE, [
+    device({ mac: "00:00:00:00:00:01", inputId: 3 }),
+    device({ mac: "00:00:00:00:00:02", inputId: 3, mixEffects: [0, 1] }),
+    device({ mac: "00:00:00:00:00:03", inputId: 4, mixEffects: [5] }),
+    device({ mac: "00:00:00:00:00:04", inputId: null, mixEffects: [1] }),
+  ]);
+  assert.deepEqual(colors[0]!.color, COLORS.idle);
+  assert.deepEqual(colors[1]!.color, COLORS.live);
+  assert.equal(colors[2]!.anim, "flash", "following no ME the switcher has is a fault");
+  assert.deepEqual(state.devices.map((d) => d.tally), ["idle", "live", "unknown", null]);
+  assert.deepEqual(state.devices.map((d) => d.mixEffects), [[0], [0, 1], [5], [1]]);
+  assert.equal(state.inputs.find((i) => i.id === 3)!.tally, "idle", "input 3 is live on ME 2 only");
+  assert.equal(state.source.mixEffectCount, 2);
+});
+
+test("live on two followed MEs, one mixing it out: the steady-live ME wins and the light holds red", () => {
+  const mixingOut = { programInput: 1, previewInput: 3, transition: { incomingInput: 2, progress: 0.5 } };
+  const steady = { programInput: 1, previewInput: 2 };
+  for (const mixEffects of [[mixingOut, steady], [steady, mixingOut]]) {
+    const { colors } = computeEngine(connectedSource({ mixEffects }), INACTIVE_GATE, [
+      device({ inputId: 1, mixEffects: [0, 1] }),
+    ]);
+    assert.deepEqual(colors[0]!.color, COLORS.live);
+  }
 });

@@ -142,6 +142,10 @@ class FakeStore implements StorePort {
     if (device) device.inputId = null;
     return this.#written();
   }
+  setMixEffects(mac: string, mixEffects: readonly number[]): Promise<void> {
+    this.#ensure(mac).mixEffects = [...mixEffects];
+    return this.#written();
+  }
   setBrightness(mac: string, brightness: number): Promise<void> {
     this.#ensure(mac).brightness = brightness;
     return this.#written();
@@ -264,8 +268,7 @@ function connectedSource(): SourceSnapshot {
   return {
     ip: "10.0.0.5",
     connection: "connected",
-    programInput: 1,
-    previewInput: 2,
+    mixEffects: [{ programInput: 1, previewInput: 2 }],
     inputs: [
       { id: 1, label: "Camera 1" },
       { id: 2, label: "Camera 2" },
@@ -359,7 +362,7 @@ test("a state change that doesn't affect a device's colour is not re-sent", asyn
   const before = server.sentTo(MAC).length;
 
   // Preview moves to input 3; input 1 is still on program, so MAC stays live.
-  atem.set({ ...connectedSource(), previewInput: 3 });
+  atem.set({ ...connectedSource(), mixEffects: [{ programInput: 1, previewInput: 3 }] });
 
   assert.equal(server.sentTo(MAC).length, before, "no redundant SET_COLOR for an unchanged colour");
 });
@@ -402,6 +405,50 @@ test("changing brightness re-sends the same colour at the new level", async () =
   const last = server.sentTo(MAC).at(-1)!;
   assert.deepEqual(last.color, COLORS.live);
   assert.equal(last.brightness, 50);
+});
+
+test("setMixEffects normalises and persists the list and re-derives the light at once", async () => {
+  const twoMe: SourceSnapshot = {
+    ...connectedSource(),
+    mixEffects: [
+      { programInput: 1, previewInput: 2 },
+      { programInput: 3, previewInput: 1 },
+    ],
+  };
+  const { app, server, ipc, store } = setup(twoMe);
+  await app.start();
+  server.connectDevice(MAC);
+  ipc.command({ type: "assignDevice", mac: MAC, inputId: 3 });
+  await tick();
+  assert.deepEqual(server.sentTo(MAC).at(-1)?.color, COLORS.idle, "ME 1 only by default");
+
+  ipc.command({ type: "setMixEffects", mac: MAC, mixEffects: [1, 0, 1] });
+  await tick();
+
+  assert.deepEqual(store.device(MAC)?.mixEffects, [0, 1]);
+  assert.deepEqual(server.sentTo(MAC).at(-1)?.color, COLORS.live, "live on ME 2");
+  const shown = ipc.lastState()!.state.devices.find((d) => d.mac === MAC)!;
+  assert.deepEqual(shown.mixEffects, [0, 1]);
+  assert.equal(shown.tally, "live");
+});
+
+test("setMixEffects refuses an invalid list with a warn notice and changes nothing", async () => {
+  const { app, server, ipc, store } = setup();
+  await app.start();
+  server.connectDevice(MAC);
+  ipc.command({ type: "assignDevice", mac: MAC, inputId: 1 });
+  await tick();
+  const sent = server.sentTo(MAC).length;
+
+  for (const mixEffects of [[], [0.5], [-1], [16]]) {
+    const before = ipc.notices.length;
+    ipc.command({ type: "setMixEffects", mac: MAC, mixEffects });
+    await tick();
+    assert.equal(ipc.notices.length, before + 1, `${JSON.stringify(mixEffects)} raises a notice`);
+    assert.equal(ipc.notices.at(-1)?.level, "warn");
+  }
+  assert.equal(store.device(MAC)?.mixEffects, undefined);
+  assert.equal(server.sentTo(MAC).length, sent);
 });
 
 test("a reconnecting device is re-sent its colour even if tally is unchanged", async () => {
@@ -511,8 +558,7 @@ test("setSource persists the IP and connects the ATEM", async () => {
   const { app, atem, store, ipc } = setup({
     ip: null,
     connection: "disconnected",
-    programInput: null,
-    previewInput: null,
+    mixEffects: [],
     inputs: [],
   });
   await app.start();
@@ -528,8 +574,7 @@ test("setSource refuses a non-IPv4 address with an info notice, and neither pers
   const { app, atem, store, ipc } = setup({
     ip: null,
     connection: "disconnected",
-    programInput: null,
-    previewInput: null,
+    mixEffects: [],
     inputs: [],
   });
   await app.start();
@@ -587,8 +632,7 @@ test("on startup with a saved IP, the ATEM is connected automatically", async ()
   const { app, atem, store } = setup({
     ip: null,
     connection: "disconnected",
-    programInput: null,
-    previewInput: null,
+    mixEffects: [],
     inputs: [],
   });
   store.sourceIp = "10.0.0.7";
@@ -879,8 +923,7 @@ const stateCount = (ipc: FakeIpc): number => ipc.events.filter((e) => e.type ===
 const noSource = (): SourceSnapshot => ({
   ip: null,
   connection: "disconnected",
-  programInput: null,
-  previewInput: null,
+  mixEffects: [],
   inputs: [],
 });
 

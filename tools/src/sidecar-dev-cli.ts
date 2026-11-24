@@ -21,7 +21,7 @@ import { createInterface } from "node:readline";
 import { EventEmitter } from "node:events";
 
 import { FakeAtem } from "./atem-sim.ts";
-import { DEV_STATE_FILE } from "./dev-config.ts";
+import { DEV_STATE_FILE, devMixEffectCount } from "./dev-config.ts";
 
 import type { IpcPort } from "../../app/sidecar/src/app.ts";
 import { AtemSource } from "../../app/sidecar/src/atem.ts";
@@ -40,11 +40,16 @@ import { type Color, COLORS, SETUP_COLOR } from "../../app/sidecar/src/protocol.
  * shell relays a serial port to it), so the bridge half is inert.
  */
 class ReplIpc extends EventEmitter implements IpcPort, UsbBridgePort {
+  readonly #atem: FakeAtem;
   latest: AppState | undefined;
+  constructor(atem: FakeAtem) {
+    super();
+    this.#atem = atem;
+  }
   send(event: SidecarEvent): void {
     if (event.type === "state") {
       this.latest = event.state;
-      printBoard(event.state);
+      printBoard(event.state, this.#atem);
     } else if (event.type === "notice") {
       console.log(`${stamp()} ${event.level.toUpperCase()}: ${event.message}`);
     } else if (event.type === "sourceScan") {
@@ -89,12 +94,21 @@ const TALLY_COLOR = {
   unknown: COLORS.disconnected, // fault: source untrustworthy, shown flashing-blue on the device
 } as const;
 
-function printBoard(state: AppState): void {
+function printBoard(state: AppState, atem: FakeAtem): void {
   const source = state.source;
   console.log(`\n${stamp()}  source: ATEM ${source.ip ?? "(no ip)"} — ${source.connection}`);
+  if (source.mixEffectCount > 1) {
+    const buses = atem.state.video.mixEffects.map((me) => `ME ${me.index + 1} pgm ${me.programInput} pvw ${me.previewInput}`);
+    console.log(`  ${buses.join("   ")}   (input rows show ME 1)`);
+  }
   for (const input of state.inputs) {
     const here = state.devices.filter((d) => d.inputId === input.id && d.state !== "offline");
-    const tag = here.length ? `  ← ${here.map((d) => d.macTail).join(", ")}` : "";
+    // Each light's own tally: it follows its own MEs, so it can differ from the input row (ME 1).
+    const light = (d: AppState["devices"][number]): string => {
+      const mes = source.mixEffectCount > 1 ? ` ME ${d.mixEffects.map((i) => i + 1).join("+")}` : "";
+      return paint(`${d.macTail}${mes} ${d.tally?.toUpperCase() ?? ""}`, TALLY_COLOR[d.tally ?? "unknown"]);
+    };
+    const tag = here.length ? `  ← ${here.map(light).join(", ")}` : "";
     console.log(paint(`  input ${input.id}  ${input.label.padEnd(12)} ${input.tally.toUpperCase().padEnd(8)}`, TALLY_COLOR[input.tally]) + tag);
   }
   const unassigned = state.devices.filter((d) => d.state === "unassigned");
@@ -117,27 +131,42 @@ function resolveMac(state: AppState | undefined, token: string): string | null {
 
 // ── REPL ───────────────────────────────────────────────────────────────────────
 
-const USAGE = `commands:
-  pgm <n>            put input n on program        (alias: p, program)
-  pvw <n>            put input n on preview         (alias: v, preview)
-  cut                swap program and preview
-  auto               mix preview to air over ~1 s
+const USAGE = `commands (an optional trailing [me] picks the mix effect, 1-based, default 1):
+  pgm <n> [me]       put input n on program        (alias: p, program)
+  pvw <n> [me]       put input n on preview         (alias: v, preview)
+  cut [me]           swap program and preview
+  auto [me]          mix preview to air over ~1 s
   name <id> <text>   rename an input
   assign <mac> <n>   assign a device to input n     (mac = full or tail)
   unassign <mac>     return a device to the dock
   flash <mac>        flash a device to locate it
   bright <mac> <n>   set a device's brightness (0–255)
+  me <mac> <m,m>     set the MEs a device follows, 1-based (e.g. me dd:ee 1,2)
   ls                 reprint the board
   ?                  this help
-  q                  quit`;
+  q                  quit
+(TALLYBOT_DEV_MES=<n> models an n-ME switcher; default 1)`;
+
+/** A 1-based ME argument as the fake ATEM's 0-based index (absent → ME 1). */
+function meArg(token: string | undefined): number {
+  if (token === undefined) return 0;
+  const me = Number(token);
+  if (!Number.isInteger(me) || me < 1) throw new Error(`ME must be a positive integer, got "${token}"`);
+  return me - 1;
+}
 
 async function main(): Promise<void> {
   // The REPL owns the terminal, so it logs to stderr only and opens no log file.
   const { stateFile } = loadRuntimeConfig(process.env, DEV_STATE_FILE);
   const store = await ConfigStore.load(stateFile);
-  const fakeAtem = new FakeAtem({ inputCount: 4, programInput: 1, previewInput: 2 });
+  const fakeAtem = new FakeAtem({
+    inputCount: 4,
+    programInput: 1,
+    previewInput: 2,
+    mixEffectCount: devMixEffectCount(process.env),
+  });
   const atem = new AtemSource(fakeAtem);
-  const ipc = new ReplIpc();
+  const ipc = new ReplIpc(fakeAtem);
   const log = (message: string): void => void process.stderr.write(`${message}\n`);
   const { app, tcp: server } = createSidecar({ atem, ipc, store, log, scanNetwork, transports: ["wifi"] });
   if (!server) throw new Error("the wifi transport is selected, so the TCP server exists");
@@ -150,6 +179,10 @@ async function main(): Promise<void> {
   console.log(`tallybot sidecar (dev) — TCP ${server.tcpPort} / UDP ${server.discoveryPort}, state at ${stateFile}`);
   console.log(USAGE);
 
+  // The fake ATEM's commands reject on a bad input or ME, as the real library's do: print it.
+  const surface = (command: Promise<void>): void => {
+    command.catch((err: unknown) => console.error((err as Error).message));
+  };
   const run = (action: () => void): void => {
     try {
       action();
@@ -173,18 +206,24 @@ async function main(): Promise<void> {
       case "p":
       case "pgm":
       case "program":
-        run(() => void fakeAtem.changeProgramInput(Number(rest[0])));
+        run(() => surface(fakeAtem.changeProgramInput(Number(rest[0]), meArg(rest[1]))));
         break;
       case "v":
       case "pvw":
       case "preview":
-        run(() => void fakeAtem.changePreviewInput(Number(rest[0])));
+        run(() => surface(fakeAtem.changePreviewInput(Number(rest[0]), meArg(rest[1]))));
         break;
       case "cut":
-        run(() => void fakeAtem.cut());
+        run(() => surface(fakeAtem.cut(meArg(rest[0]))));
         break;
       case "auto":
-        run(() => void fakeAtem.auto());
+        run(() => surface(fakeAtem.auto(meArg(rest[0]))));
+        break;
+      case "me":
+        run(() => {
+          const mixEffects = (rest[1] ?? "").split(",").filter(Boolean).map(meArg);
+          ipc.dispatch({ type: "setMixEffects", mac: macArg(rest[0]), mixEffects });
+        });
         break;
       case "name":
         run(() => {
@@ -210,7 +249,7 @@ async function main(): Promise<void> {
         break;
       case "ls":
       case "board":
-        if (ipc.latest) printBoard(ipc.latest);
+        if (ipc.latest) printBoard(ipc.latest, fakeAtem);
         break;
       case "?":
       case "help":

@@ -41,7 +41,7 @@ test("send writes one NDJSON line that parses back to the event", async () => {
   const event: SidecarEvent = {
     type: "state",
     state: {
-      source: { kind: "atem", ip: null, connection: "disconnected" },
+      source: { kind: "atem", ip: null, connection: "disconnected", mixEffectCount: 0 },
       inputs: [],
       devices: [],
       programGate: { active: false, source: null },

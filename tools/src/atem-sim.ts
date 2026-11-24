@@ -9,6 +9,7 @@
  * Mirrored surface (verified against the library):
  *   - `connect(address?, port?)` / `disconnect()` returning promises
  *   - events `connected`, `disconnected`, `stateChanged(state, pathsChanged[])`, `error`
+ *   - `state.info.capabilities.mixEffects` (the ME count; `mixEffectCount` option, default 1)
  *   - `state.video.mixEffects[me].programInput` / `.previewInput` / `.transitionPosition`
  *   - `state.inputs[id].longName` / `.shortName`
  *   - `changeProgramInput(input, me?)` / `changePreviewInput(input, me?)`
@@ -46,7 +47,7 @@ export interface MixEffect {
 
 /** The subset of `AtemState` the sidecar reads. */
 export interface FakeAtemState {
-  info: { model: string };
+  info: { model: string; capabilities: { mixEffects: number } };
   video: { mixEffects: MixEffect[] };
   inputs: Record<number, InputChannel>;
 }
@@ -62,6 +63,11 @@ export interface FakeAtemOptions {
   previewInput?: number;
   /** Model string reported in `state.info` (cosmetic). */
   model?: string;
+  /**
+   * How many mix effects to model (default 1, an ATEM Mini; 2 for a 2 M/E). Every ME starts on
+   * the same program/preview; drive each one with the `me` argument of the command methods.
+   */
+  mixEffectCount?: number;
 }
 
 const DEFAULT_INPUT_COUNT = 4;
@@ -98,17 +104,22 @@ export class FakeAtem extends EventEmitter {
   constructor(options: FakeAtemOptions = {}) {
     super();
     const count = options.inputCount ?? DEFAULT_INPUT_COUNT;
+    const mixEffectCount = options.mixEffectCount ?? 1;
+    if (!Number.isInteger(mixEffectCount) || mixEffectCount < 1) {
+      throw new RangeError(`mixEffectCount must be a positive integer, got ${mixEffectCount}`);
+    }
     this.state = {
-      info: { model: options.model ?? "ATEM Mini (simulated)" },
+      info: {
+        model: options.model ?? (mixEffectCount === 1 ? "ATEM Mini (simulated)" : `ATEM ${mixEffectCount} M/E (simulated)`),
+        capabilities: { mixEffects: mixEffectCount },
+      },
       video: {
-        mixEffects: [
-          {
-            index: 0,
-            programInput: options.programInput ?? 1,
-            previewInput: options.previewInput ?? 2,
-            transitionPosition: { inTransition: false, remainingFrames: 0, handlePosition: 0 },
-          },
-        ],
+        mixEffects: Array.from({ length: mixEffectCount }, (_, index) => ({
+          index,
+          programInput: options.programInput ?? 1,
+          previewInput: options.previewInput ?? 2,
+          transitionPosition: { inTransition: false, remainingFrames: 0, handlePosition: 0 },
+        })),
       },
       inputs: seedInputs(count, options.inputNames),
     };

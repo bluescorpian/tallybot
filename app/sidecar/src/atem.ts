@@ -2,8 +2,9 @@
  * ATEM integration — turns the switcher's state into engine input.
  *
  * The sidecar reads only a thin slice of the `atem-connection` library: connect /
- * disconnect, the connection lifecycle events, and the program/preview inputs, transition
- * position and input names off mix-effect 0. {@link AtemLike} captures exactly that slice, so
+ * disconnect, the connection lifecycle events, the switcher's ME count, each mix effect's
+ * program/preview inputs and transition position, and the input names. {@link AtemLike}
+ * captures exactly that slice, so
  * `AtemSource` depends on the seam, not the library — which is what lets the
  * `FakeAtem` stand in unchanged for hardware-free tests (`tools/`), while production
  * passes a real `Atem` (`src/main.ts`).
@@ -40,6 +41,8 @@ export interface AtemMixEffect {
   transitionPosition?: AtemTransitionPosition;
 }
 export interface AtemStateSlice {
+  /** `capabilities.mixEffects` is the switcher's ME count (1 on an ATEM Mini). */
+  info?: { capabilities?: { mixEffects?: number } };
   video?: { mixEffects?: ReadonlyArray<AtemMixEffect | undefined> };
   inputs?: Record<number, AtemInputChannel | undefined>;
 }
@@ -65,6 +68,15 @@ export interface AtemSourceOptions {
 
 const DEFAULT_INPUT_FILTER = (id: number): boolean => id >= 1 && id < 1000;
 
+/** One ME as the adapter tracks it: its snapshot plus whether the library last reported it mid-mix. */
+interface TrackedMixEffect {
+  programInput: number | null;
+  previewInput: number | null;
+  inTransition: boolean;
+  /** The mix in progress, or null between mixes and for one whose incoming source is unknown. */
+  transition: Transition | null;
+}
+
 // Typed events (the interface merges with the class and is erased at build).
 export interface AtemSource {
   on(event: "change", listener: (snapshot: SourceSnapshot) => void): this;
@@ -83,11 +95,8 @@ export class AtemSource extends EventEmitter {
   #wantConnection = false;
 
   // Last-known scene, retained across a disconnect so the board keeps its layout.
-  #programInput: number | null = null;
-  #previewInput: number | null = null;
-  #inTransition = false;
-  /** The mix in progress, or null between mixes and for one whose incoming source is unknown. */
-  #transition: Transition | null = null;
+  /** One entry per ME the switcher has, in ME order. */
+  #mixEffects: TrackedMixEffect[] = [];
   #inputs: Array<{ id: number; label: string }> = [];
 
   constructor(atem: AtemLike, options: AtemSourceOptions = {}) {
@@ -99,8 +108,10 @@ export class AtemSource extends EventEmitter {
       this.#connection = "connected";
       // A mix already under way when we (re)connect has an incoming source we never saw on
       // preview, so it plays out as a plain cut rather than blending from a guess.
-      this.#inTransition = true;
-      this.#transition = null;
+      for (const me of this.#mixEffects) {
+        me.inTransition = true;
+        me.transition = null;
+      }
       this.#refresh();
       this.emit("change", this.snapshot());
     });
@@ -121,9 +132,11 @@ export class AtemSource extends EventEmitter {
     return {
       ip: this.#ip,
       connection: this.#connection,
-      programInput: this.#programInput,
-      previewInput: this.#previewInput,
-      transition: this.#transition,
+      mixEffects: this.#mixEffects.map(({ programInput, previewInput, transition }) => ({
+        programInput,
+        previewInput,
+        transition,
+      })),
       inputs: this.#inputs,
     };
   }
@@ -152,28 +165,17 @@ export class AtemSource extends EventEmitter {
     this.emit("change", this.snapshot());
   }
 
-  /** Pull program/preview, the transition and input labels out of the library's current state. */
+  /** Pull every ME's program/preview and transition, and the input labels, out of the library's state. */
   #refresh(): void {
     const state = this.#atem.state;
-    const me = state?.video?.mixEffects?.[0];
-    const previousPreview = this.#previewInput;
-    this.#programInput = me?.programInput ?? null;
-    this.#previewInput = me?.previewInput ?? null;
-
-    // The packet that starts a mix also moves `previewInput` on to the source queued for
-    // *after* it, so the incoming camera is the preview from before that packet: capture it
-    // as the mix starts and hold it until it ends (docs/atem-connection-notes.md §4).
-    const position = me?.transitionPosition;
-    const inTransition = position?.inTransition ?? false;
-    const progress = Math.min(Math.max((position?.handlePosition ?? 0) / 10000, 0), 1);
-    if (!inTransition) {
-      this.#transition = null;
-    } else if (!this.#inTransition) {
-      this.#transition = previousPreview === null ? null : { incomingInput: previousPreview, progress };
-    } else if (this.#transition) {
-      this.#transition = { ...this.#transition, progress };
-    }
-    this.#inTransition = inTransition;
+    const reported = state?.video?.mixEffects ?? [];
+    // The switcher's ME count comes from its capabilities (atem-connection fills
+    // `video.mixEffects` sparsely, as each ME's state arrives); the array length stands in until
+    // the capabilities have been reported.
+    const count = state?.info?.capabilities?.mixEffects ?? reported.length;
+    this.#mixEffects = Array.from({ length: count }, (_, index) =>
+      refreshMixEffect(this.#mixEffects[index], reported[index]),
+    );
 
     const inputs = state?.inputs;
     if (inputs) {
@@ -188,4 +190,32 @@ export class AtemSource extends EventEmitter {
       this.#inputs = list;
     }
   }
+}
+
+/**
+ * One ME's tracked state after a library update. The packet that starts a mix also moves
+ * `previewInput` on to the source queued for *after* it, so the incoming camera is the preview
+ * from before that packet: capture it as the mix starts and hold it until it ends
+ * (docs/atem-connection-notes.md §4). An ME seen for the first time has no earlier preview, so a
+ * mix already under way on it plays out as a plain cut rather than blending from a guess.
+ */
+function refreshMixEffect(previous: TrackedMixEffect | undefined, me: AtemMixEffect | undefined): TrackedMixEffect {
+  const previousPreview = previous?.previewInput ?? null;
+  const position = me?.transitionPosition;
+  const inTransition = position?.inTransition ?? false;
+  const progress = Math.min(Math.max((position?.handlePosition ?? 0) / 10000, 0), 1);
+  let transition: Transition | null = null;
+  if (inTransition) {
+    if (!previous?.inTransition) {
+      transition = previousPreview === null ? null : { incomingInput: previousPreview, progress };
+    } else if (previous.transition) {
+      transition = { ...previous.transition, progress };
+    }
+  }
+  return {
+    programInput: me?.programInput ?? null,
+    previewInput: me?.previewInput ?? null,
+    inTransition,
+    transition,
+  };
 }

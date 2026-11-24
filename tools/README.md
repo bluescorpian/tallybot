@@ -10,9 +10,11 @@ and its constants), so they speak exactly the spec'd wire format.
 A stub of the [`atem-connection`](https://www.npmjs.com/package/atem-connection) library
 (`atem-sim.ts`, the `FakeAtem` class). It exposes the slice of that library's API the
 sidecar uses — `connect`/`disconnect`, the `connected` / `disconnected` /
-`stateChanged` events, `state.video.mixEffects[0].programInput`/`previewInput`, the input
-names in `state.inputs[id]`, and `changeProgramInput`/`changePreviewInput` — backed by
-configurable in-memory state. The dev sidecar entries swap the real `Atem` for this and are
+`stateChanged` events, the ME count in `state.info.capabilities.mixEffects`, each
+`state.video.mixEffects[me].programInput`/`previewInput`, the input names in
+`state.inputs[id]`, and `changeProgramInput`/`changePreviewInput` (each taking an ME) — backed
+by configurable in-memory state. `mixEffectCount` (default 1) models a multi-ME switcher; the
+dev entries take it from `TALLYBOT_DEV_MES`. The dev sidecar entries swap the real `Atem` for this and are
 otherwise unchanged.
 
 `atem-sim-cli.ts` drives it from the terminal and prints the per-input tally each change

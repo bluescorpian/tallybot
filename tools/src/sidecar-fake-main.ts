@@ -21,7 +21,7 @@
  */
 
 import { FakeAtem } from "./atem-sim.ts";
-import { DEV_STATE_FILE } from "./dev-config.ts";
+import { DEV_STATE_FILE, devMixEffectCount } from "./dev-config.ts";
 
 import { AtemSource } from "../../app/sidecar/src/atem.ts";
 import { loadRuntimeConfig } from "../../app/sidecar/src/config.ts";
@@ -42,7 +42,12 @@ const { logFile, diag, exitAfterFlush } = startDiagnostics(config.logFile);
 async function main(): Promise<void> {
   const store = await ConfigStore.load(config.stateFile);
 
-  const fakeAtem = new FakeAtem({ inputCount: 4, programInput: 1, previewInput: 2 });
+  const fakeAtem = new FakeAtem({
+    inputCount: 4,
+    programInput: 1,
+    previewInput: 2,
+    mixEffectCount: devMixEffectCount(process.env),
+  });
   const atem = new AtemSource(fakeAtem);
   const ipc = new IpcBridge();
 
@@ -58,7 +63,8 @@ async function main(): Promise<void> {
   deviceServer.on("log", ({ mac, level, text }) => diag(`[device ${macTail(mac)}] ${level}: ${text.trimEnd()}`));
 
   // Dev-only: drive the fake ATEM's program from the UI. Clicking an input takes it to
-  // air; the previously-live input drops to preview (a swap, as on a real ME cut). This
+  // air; the previously-live input drops to preview (a swap, as on a real ME cut). The keys are
+  // ME 1's, so with TALLYBOT_DEV_MES > 1 the other MEs stay where they started. This
   // listener lives alongside SidecarApp's own command handler (which ignores setProgram).
   ipc.on("command", (command) => {
     if (command.type !== "setProgram") return;

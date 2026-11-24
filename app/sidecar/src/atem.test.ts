@@ -70,8 +70,8 @@ test("connecting moves through connecting → connected and reads the scene", as
   const snap = source.snapshot();
   assert.equal(snap.connection, "connected");
   assert.equal(snap.ip, "10.0.0.5");
-  assert.equal(snap.programInput, 1);
-  assert.equal(snap.previewInput, 2);
+  assert.equal(snap.mixEffects[0]!.programInput, 1);
+  assert.equal(snap.mixEffects[0]!.previewInput, 2);
 });
 
 test("inputs are filtered to the camera range, labelled, and sorted", async () => {
@@ -96,7 +96,7 @@ test("a stateChanged updates program/preview and emits change", async () => {
   const changed = once(source, "change");
   atem.setProgram(3);
   await changed;
-  assert.equal(source.snapshot().programInput, 3);
+  assert.equal(source.snapshot().mixEffects[0]!.programInput, 3);
 });
 
 test("an unexpected drop reads as connecting (the library will retry)", async () => {
@@ -126,25 +126,25 @@ test("a mix holds the pre-mix preview as the incoming source until it ends", asy
   const source = new AtemSource(atem);
   source.connect("10.0.0.5");
   await once(atem, "connected");
-  assert.equal(source.snapshot().transition ?? null, null, "no mix yet");
+  assert.equal(source.snapshot().mixEffects[0]!.transition ?? null, null, "no mix yet");
 
   // The packet that starts the mix also moves preview on to the source queued after it.
   atem.update({ previewInput: 1, transitionPosition: mixing(0) });
-  assert.deepEqual(source.snapshot().transition, { incomingInput: 2, progress: 0 });
-  assert.equal(source.snapshot().previewInput, 1);
+  assert.deepEqual(source.snapshot().mixEffects[0]!.transition, { incomingInput: 2, progress: 0 });
+  assert.equal(source.snapshot().mixEffects[0]!.previewInput, 1);
 
   atem.update({ transitionPosition: mixing(5000) });
-  assert.deepEqual(source.snapshot().transition, { incomingInput: 2, progress: 0.5 });
+  assert.deepEqual(source.snapshot().mixEffects[0]!.transition, { incomingInput: 2, progress: 0.5 });
 
   // Preview changing again mid-mix doesn't change what's being mixed in.
   atem.update({ previewInput: 3, transitionPosition: mixing(7500) });
-  assert.deepEqual(source.snapshot().transition, { incomingInput: 2, progress: 0.75 });
+  assert.deepEqual(source.snapshot().mixEffects[0]!.transition, { incomingInput: 2, progress: 0.75 });
 
   atem.update({ programInput: 2, previewInput: 1, transitionPosition: NOT_MIXING });
   const snap = source.snapshot();
-  assert.equal(snap.transition ?? null, null, "the mix clears when it ends");
-  assert.equal(snap.programInput, 2);
-  assert.equal(snap.previewInput, 1);
+  assert.equal(snap.mixEffects[0]!.transition ?? null, null, "the mix clears when it ends");
+  assert.equal(snap.mixEffects[0]!.programInput, 2);
+  assert.equal(snap.mixEffects[0]!.previewInput, 1);
 });
 
 test("a mix already under way at connect plays out unblended; the next one blends", async () => {
@@ -154,16 +154,53 @@ test("a mix already under way at connect plays out unblended; the next one blend
   const source = new AtemSource(atem);
   source.connect("10.0.0.5");
   await once(atem, "connected");
-  assert.equal(source.snapshot().transition ?? null, null, "incoming unknown at connect");
+  assert.equal(source.snapshot().mixEffects[0]!.transition ?? null, null, "incoming unknown at connect");
 
   atem.update({ transitionPosition: mixing(8000) });
-  assert.equal(source.snapshot().transition ?? null, null, "still no guess mid-mix");
+  assert.equal(source.snapshot().mixEffects[0]!.transition ?? null, null, "still no guess mid-mix");
 
   atem.update({ programInput: 2, previewInput: 3, transitionPosition: NOT_MIXING });
-  assert.equal(source.snapshot().transition ?? null, null);
+  assert.equal(source.snapshot().mixEffects[0]!.transition ?? null, null);
 
   atem.update({ previewInput: 2, transitionPosition: mixing(0) });
-  assert.deepEqual(source.snapshot().transition, { incomingInput: 3, progress: 0 }, "the next mix blends");
+  assert.deepEqual(source.snapshot().mixEffects[0]!.transition, { incomingInput: 3, progress: 0 }, "the next mix blends");
+});
+
+test("one snapshot entry per ME, counted from capabilities, falling back to the reported array", async () => {
+  const sparse = seedState();
+  sparse.info = { capabilities: { mixEffects: 2 } }; // ME 2's state hasn't arrived yet
+  const fromCaps = new MiniAtem(sparse);
+  const a = new AtemSource(fromCaps);
+  a.connect("10.0.0.5");
+  await once(fromCaps, "connected");
+  assert.equal(a.snapshot().mixEffects.length, 2);
+  assert.equal(a.snapshot().mixEffects[1]!.programInput, null, "unreported ME reads as unknown");
+
+  const noCaps = seedState();
+  noCaps.video = { mixEffects: [{ programInput: 1, previewInput: 2 }, { programInput: 3, previewInput: 4 }] };
+  const fromArray = new MiniAtem(noCaps);
+  const b = new AtemSource(fromArray);
+  b.connect("10.0.0.5");
+  await once(fromArray, "connected");
+  assert.deepEqual(
+    b.snapshot().mixEffects.map((me) => [me.programInput, me.previewInput]),
+    [[1, 2], [3, 4]],
+  );
+});
+
+test("a mix on ME 2 captures ME 2's own pre-mix preview and leaves ME 1 alone", async () => {
+  const state = seedState();
+  state.video = { mixEffects: [{ programInput: 1, previewInput: 2 }, { programInput: 3, previewInput: 4 }] };
+  const atem = new MiniAtem(state);
+  const source = new AtemSource(atem);
+  source.connect("10.0.0.5");
+  await once(atem, "connected");
+
+  Object.assign(atem.state.video!.mixEffects![1]!, { previewInput: 3, transitionPosition: mixing(5000) });
+  atem.emit("stateChanged", atem.state, ["video.mixEffects.1"]);
+  const snap = source.snapshot();
+  assert.deepEqual(snap.mixEffects[1]!.transition, { incomingInput: 4, progress: 0.5 });
+  assert.equal(snap.mixEffects[0]!.transition ?? null, null);
 });
 
 test("a mix under way when the link reconnects plays out unblended", async () => {
@@ -176,8 +213,8 @@ test("a mix under way when the link reconnects plays out unblended", async () =>
   // While we were away a mix of 2 started and preview moved on to 1.
   Object.assign(atem.state.video!.mixEffects![0]!, { previewInput: 1, transitionPosition: mixing(3000) });
   atem.emit("connected");
-  assert.equal(source.snapshot().transition ?? null, null);
+  assert.equal(source.snapshot().mixEffects[0]!.transition ?? null, null);
 
   atem.update({ transitionPosition: mixing(6000) });
-  assert.equal(source.snapshot().transition ?? null, null);
+  assert.equal(source.snapshot().mixEffects[0]!.transition ?? null, null);
 });

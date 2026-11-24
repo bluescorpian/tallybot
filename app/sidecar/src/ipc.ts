@@ -36,6 +36,12 @@ export interface Source {
   /** The configured ATEM IP, or null until the user sets one in settings. */
   ip: string | null;
   connection: SourceConnection;
+  /**
+   * How many mix effects (MEs) the switcher has: 1 on an ATEM Mini, more on the bigger models; 0
+   * before it has ever reported. Kept across a disconnect. The UI offers the per-light ME choice
+   * ({@link SetMixEffectsCommand}) only when this is above 1.
+   */
+  mixEffectCount: number;
 }
 
 /**
@@ -105,6 +111,16 @@ export interface Device {
   state: DeviceState;
   /** The input this device is bound to, or null when unassigned. */
   inputId: number | null;
+  /**
+   * The MEs whose buses this light's tally follows, 0-based as the ATEM numbers them (`[0]` is
+   * "ME 1", the default). Sorted, unique, never empty.
+   */
+  mixEffects: number[];
+  /**
+   * The light's tally across the MEs it follows (Live > Preview > Idle), or null when unassigned.
+   * Differs from its input's {@link Input.tally}, which is ME 1's, when the light follows other MEs.
+   */
+  tally: Tally | null;
   /** Per-device LED brightness, 0–255. */
   brightness: number;
   /** Protocol version from the device's HELLO, or null if it has never connected. */
@@ -383,6 +399,17 @@ export interface SetBrightnessCommand {
   brightness: number;
 }
 
+/**
+ * Choose which MEs a device's tally follows (0-based indices; a non-empty list, each 0–15). The
+ * sidecar persists the list and re-derives the light at once; an invalid list is refused with a
+ * notice. An index the switcher doesn't have is kept but ignored until one that has it connects.
+ */
+export interface SetMixEffectsCommand {
+  type: "setMixEffects";
+  mac: string;
+  mixEffects: number[];
+}
+
 /** Set the source (ATEM) IP from settings. */
 export interface SetSourceCommand {
   type: "setSource";
@@ -485,6 +512,7 @@ export type UiCommand =
   | UnassignDeviceCommand
   | IdentifyDeviceCommand
   | SetBrightnessCommand
+  | SetMixEffectsCommand
   | SetSourceCommand
   | ScanSourcesCommand
   | ScanWifiCommand
@@ -514,6 +542,7 @@ export const COMMAND_TYPES = [
   "unassignDevice",
   "identifyDevice",
   "setBrightness",
+  "setMixEffects",
   "setSource",
   "scanSources",
   "scanWifi",

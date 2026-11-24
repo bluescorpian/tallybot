@@ -72,9 +72,13 @@ interface Stack {
  * TCP-only unless `transports` says otherwise; `"default"` leaves it to createSidecar, as main.ts does.
  */
 type TransportChoice = readonly DeviceTransport[] | "default";
-async function buildStack(stateFile: string, transports: TransportChoice = ["wifi"]): Promise<Stack> {
+async function buildStack(
+  stateFile: string,
+  transports: TransportChoice = ["wifi"],
+  mixEffectCount = 1,
+): Promise<Stack> {
   const store = await ConfigStore.load(stateFile);
-  const atem = new FakeAtem({ inputCount: 4, programInput: 1, previewInput: 2 });
+  const atem = new FakeAtem({ inputCount: 4, programInput: 1, previewInput: 2, mixEffectCount });
   const source = new AtemSource(atem);
 
   const input = new PassThrough();
@@ -172,10 +176,11 @@ async function eventually<T>(what: string, probe: () => T | undefined, timeoutMs
 async function withStack(
   body: (stack: Stack, stateFile: string) => Promise<void>,
   transports?: TransportChoice,
+  mixEffectCount?: number,
 ): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), "tallybot-e2e-"));
   const stateFile = join(dir, "state.json");
-  const stack = await buildStack(stateFile, transports);
+  const stack = await buildStack(stateFile, transports, mixEffectCount);
   try {
     await body(stack, stateFile);
   } finally {
@@ -326,6 +331,48 @@ test("brightness changes are applied to the device's colour", async () => {
       client.close();
     }
   });
+});
+
+test("on a 2 M/E, a light follows only its chosen MEs, live on any of them wins", async () => {
+  await withStack(
+    async (stack) => {
+      await connectSource(stack);
+      const mac = "aa:bb:cc:dd:ee:3e";
+      const client = new TallyClient({ mac, heartbeatIntervalMs: 60_000 });
+      try {
+        const gotSetup = nextColor(client, is(SETUP_COLOR));
+        client.connect(LOCAL, stack.server.tcpPort);
+        await gotSetup;
+        await eventually("the ME count", () => (stack.latestState()?.source.mixEffectCount === 2 ? true : undefined));
+
+        // Both MEs start on program 1 / preview 2. Input 3 goes live on ME 2 only.
+        await stack.atem.changeProgramInput(3, 1);
+        const gotIdle = nextColor(client, is(COLORS.idle));
+        stack.command({ type: "assignDevice", mac, inputId: 3 });
+        await gotIdle; // default ME 1 only: not live there
+
+        const gotLive = nextColor(client, is(COLORS.live));
+        stack.command({ type: "setMixEffects", mac, mixEffects: [1, 0] });
+        await gotLive;
+
+        const shown = await eventually("the device's MEs", () => {
+          const d = stack.latestState()?.devices.find((x) => x.mac === mac);
+          return d?.tally === "live" ? d : undefined;
+        });
+        assert.deepEqual(shown.mixEffects, [0, 1]);
+        assert.equal(stack.latestState()!.inputs.find((i) => i.id === 3)!.tally, "idle", "board keys stay ME 1's");
+
+        // Cutting input 3 off ME 2 leaves it on neither followed ME's program.
+        const gotIdleAgain = nextColor(client, is(COLORS.idle));
+        await stack.atem.changeProgramInput(4, 1);
+        await gotIdleAgain;
+      } finally {
+        client.close();
+      }
+    },
+    undefined,
+    2,
+  );
 });
 
 test("assignments survive a sidecar restart", async () => {

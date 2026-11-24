@@ -19,8 +19,10 @@ import {
   type DeviceColor,
   type DeviceRecord,
   type SourceSnapshot,
+  DEFAULT_MIX_EFFECTS,
   INACTIVE_GATE,
   computeEngine,
+  normalizeMixEffects,
 } from "./engine.ts";
 import type { DeviceTransportEvents } from "./device-events.ts";
 import { FaultBook, type FaultReport, describeError } from "./faults.ts";
@@ -155,6 +157,8 @@ export interface StorePort {
   assign(mac: string, inputId: number): Promise<void>;
   unassign(mac: string): Promise<void>;
   setBrightness(mac: string, brightness: number): Promise<void>;
+  /** Set the MEs a device's tally follows; throws on a list `normalizeMixEffects` rejects. */
+  setMixEffects(mac: string, mixEffects: readonly number[]): Promise<void>;
   /** Remember (or clear, with null) the SSID a device was provisioned to join over USB. */
   setSsid(mac: string, ssid: string | null): Promise<void>;
   /** Resolve once all queued writes have been flushed to disk. */
@@ -568,6 +572,16 @@ export class SidecarApp {
         await this.#save(this.#store.setBrightness(command.mac, command.brightness));
         this.#sync();
         break;
+      case "setMixEffects": {
+        const mixEffects = normalizeMixEffects(command.mixEffects);
+        if (!mixEffects) {
+          this.#ipc.notice("warn", `Tally ${macTail(command.mac, 2)} must follow at least one ME.`);
+          break;
+        }
+        await this.#save(this.#store.setMixEffects(command.mac, mixEffects));
+        this.#sync();
+        break;
+      }
       case "setSource":
         if (!isIPv4(command.ip)) {
           this.#ipc.notice("info", `"${command.ip}" isn't an IPv4 address — can't connect to it.`);
@@ -899,6 +913,7 @@ export class SidecarApp {
         protocolVersion: this.#online.get(mac) ?? null,
         firmware: this.#firmwareOf(mac),
         inputId: config?.inputId ?? null,
+        mixEffects: config?.mixEffects ?? DEFAULT_MIX_EFFECTS,
         brightness: config?.brightness ?? DEFAULT_BRIGHTNESS,
         // Offline/unknown devices default to WiFi; the indicator only flips to "usb" while cabled.
         transport: (online ? this.#provisioning.transportOf(mac) : null) ?? "wifi",

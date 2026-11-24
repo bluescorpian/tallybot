@@ -294,3 +294,36 @@ test("a failed write rejects only that write: flush still settles and the next w
     assert.deepEqual(reloaded.device("aa:bb:cc:dd:ee:ff"), { inputId: 2, brightness: 200 });
   });
 });
+
+// ── Multi-ME ──────────────────────────────────────────────────────────────────
+
+test("a followed-ME list round-trips normalised, and the default [0] is not written", async () => {
+  await withTempFile(async (path) => {
+    const store = await ConfigStore.load(path);
+    await store.assign("aa:bb:cc:dd:ee:ff", 2);
+    await store.setMixEffects("aa:bb:cc:dd:ee:ff", [2, 0, 2]);
+    await store.assign("11:22:33:44:55:66", 3);
+    await store.setMixEffects("11:22:33:44:55:66", [0]);
+
+    const reloaded = await ConfigStore.load(path);
+    assert.deepEqual(reloaded.device("aa:bb:cc:dd:ee:ff")?.mixEffects, [0, 2]);
+    const file = JSON.parse(await readFile(path, "utf8"));
+    assert.deepEqual(file.devices["aa:bb:cc:dd:ee:ff"].mixEffects, [0, 2]);
+    assert.equal("mixEffects" in file.devices["11:22:33:44:55:66"], false, "the default list is not stored");
+  });
+});
+
+test("an unreadable stored ME list falls back to the default and keeps the device's other fields", async () => {
+  await withTempFile(async (path) => {
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 1,
+        devices: { "aa:bb:cc:dd:ee:ff": { inputId: 4, brightness: 100, mixEffects: ["x", 99] } },
+      }),
+      "utf8",
+    );
+    const store = await ConfigStore.load(path);
+    assert.deepEqual(store.device("aa:bb:cc:dd:ee:ff"), { inputId: 4, brightness: 100 });
+  });
+});

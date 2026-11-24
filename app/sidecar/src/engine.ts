@@ -38,14 +38,49 @@ export interface SourceSnapshot {
   /** The configured ATEM IP, or null until the user sets one. */
   ip: string | null;
   connection: SourceConnection;
-  /** Input on program output, or null when unknown (e.g. not connected). */
-  programInput: number | null;
-  /** Input on preview, or null when unknown. */
-  previewInput: number | null;
-  /** The mix (AUTO or T-bar transition) in progress, or null/absent when none is. */
-  transition?: Transition | null;
+  /**
+   * One entry per mix effect the switcher has, indexed as the ATEM numbers them (0 is "ME 1").
+   * The length is the switcher's ME count: an ATEM Mini reports one, a 2 M/E two. Empty until the
+   * source has reported. Retained across a disconnect, like `inputs`.
+   */
+  mixEffects: ReadonlyArray<MixEffectSnapshot>;
   /** The source's camera inputs and their labels, in display order. */
   inputs: ReadonlyArray<{ id: number; label: string }>;
+}
+
+/** One mix effect's buses: its own Program, Preview and the mix in progress on it. */
+export interface MixEffectSnapshot {
+  /** Input on this ME's program bus, or null when unknown (not yet reported). */
+  programInput: number | null;
+  /** Input on this ME's preview bus, or null when unknown. */
+  previewInput: number | null;
+  /** The mix (AUTO or T-bar transition) in progress on this ME, or null/absent when none is. */
+  transition?: Transition | null;
+}
+
+/**
+ * The MEs a device follows when it has no setting of its own: ME 1 only, the one bus an ATEM Mini
+ * has, so a single-ME rig needs no configuration.
+ */
+export const DEFAULT_MIX_EFFECTS: readonly number[] = [0];
+
+/**
+ * Upper bound on an ME index the sidecar accepts. Not a switcher limit (the ME count comes from
+ * the switcher itself); it only keeps a hand-edited or garbled list from being taken seriously.
+ */
+const MAX_MIX_EFFECT_INDEX = 15;
+
+/**
+ * A followed-ME list in its canonical form (sorted, unique, non-empty, each index 0–15), or null
+ * when `value` isn't one. Shared by the store (loading the file) and the orchestrator (the UI
+ * command), so both accept exactly the same lists.
+ */
+export function normalizeMixEffects(value: unknown): number[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const isIndex = (i: unknown): i is number =>
+    typeof i === "number" && Number.isInteger(i) && i >= 0 && i <= MAX_MIX_EFFECT_INDEX;
+  if (!value.every(isIndex)) return null;
+  return [...new Set(value as number[])].sort((a, b) => a - b);
 }
 
 /**
@@ -79,6 +114,11 @@ export interface DeviceRecord {
   firmware?: DeviceFirmware;
   /** The input this device is assigned to, or null when unassigned. */
   inputId: number | null;
+  /**
+   * The MEs (0-based) whose buses this device's tally follows. Optional so pure-engine record
+   * literals need no change: absent reads as {@link DEFAULT_MIX_EFFECTS}.
+   */
+  mixEffects?: readonly number[];
   /** Per-device LED brightness, 0–255. */
   brightness: number;
   /** Transport currently serving the device (drives the wired indicator). */
@@ -133,8 +173,11 @@ export interface EngineResult {
 
 // ── Derivations ──────────────────────────────────────────────────────────────────
 
+/** Ranks a tally for combining MEs: the higher one wins (see {@link tallyFor}). */
+const TALLY_RANK: Record<Tally, number> = { live: 3, unknown: 2, preview: 1, idle: 0 };
+
 /**
- * The tally for one input.
+ * The tally for one input, across the MEs `mixEffects` names (default: ME 1 only).
  *
  * 1. The program gate wins first: an active override (e.g. OBS off the ATEM scene)
  *    is a *known, deliberate* "no program" state, so every input reads idle.
@@ -148,15 +191,55 @@ export interface EngineResult {
  *    keepalive to turn a silently-dead link into a disconnect, rather than guessing
  *    staleness from the gap between state changes — a quiet but healthy switcher can
  *    legitimately send nothing for minutes.
- * 3. With a trustworthy source, the input is live/preview/idle as usual. Mid-mix both the
- *    outgoing and the incoming source are on air, so both read live.
+ * 3. With a trustworthy source, each followed ME gives live/preview/idle as usual (mid-mix both
+ *    the outgoing and the incoming source are on air, so both read live), and the highest wins:
+ *    **Live > Preview > Idle** (docs/architecture.md, "Multi-ME"). A followed ME that hasn't
+ *    reported its program input is `unknown`, ranked just below live: the input may be on air
+ *    there, so the light can't claim preview or idle, but a live ME elsewhere is already certain.
+ *    An ME the switcher doesn't have is skipped (it carries nothing); an input following none
+ *    the switcher has is `unknown`, so a light set up for a bigger switcher flashes rather than
+ *    resting on a confident idle.
  */
-export function tallyFor(source: SourceSnapshot, gate: ProgramGate, inputId: number): Tally {
-  if (gate.active) return "idle";
-  if (source.connection !== "connected" || source.programInput === null) return "unknown";
-  if (inputId === source.programInput) return "live";
-  if (inputId === source.transition?.incomingInput) return "live";
-  if (inputId === source.previewInput) return "preview";
+export function tallyFor(
+  source: SourceSnapshot,
+  gate: ProgramGate,
+  inputId: number,
+  mixEffects: readonly number[] = DEFAULT_MIX_EFFECTS,
+): Tally {
+  return followedTally(source, gate, inputId, mixEffects).tally;
+}
+
+/** {@link tallyFor}, plus the ME whose state decided it (null when no single ME did). */
+function followedTally(
+  source: SourceSnapshot,
+  gate: ProgramGate,
+  inputId: number,
+  mixEffects: readonly number[],
+): { tally: Tally; me: MixEffectSnapshot | null } {
+  if (gate.active) return { tally: "idle", me: null };
+  if (source.connection !== "connected") return { tally: "unknown", me: null };
+  let best: { tally: Tally; me: MixEffectSnapshot } | null = null;
+  for (const index of mixEffects) {
+    const me = source.mixEffects[index];
+    if (!me) continue;
+    const tally = meTally(me, inputId);
+    if (best === null || TALLY_RANK[tally] > TALLY_RANK[best.tally]) {
+      best = { tally, me };
+    } else if (tally === "live" && best.tally === "live" && mixColor(best.me, inputId) && !mixColor(me, inputId)) {
+      // Live on two MEs: a steady live beats one mid-mix, so the light holds red rather than
+      // crossfading away from a bus it's still on.
+      best = { tally, me };
+    }
+  }
+  return best ?? { tally: "unknown", me: null };
+}
+
+/** One ME's tally for an input, given a connected source and an open gate. */
+function meTally(me: MixEffectSnapshot, inputId: number): Tally {
+  if (me.programInput === null) return "unknown";
+  if (inputId === me.programInput) return "live";
+  if (inputId === me.transition?.incomingInput) return "live";
+  if (inputId === me.previewInput) return "preview";
   return "idle";
 }
 
@@ -178,12 +261,12 @@ function colorFor(
   gate: ProgramGate,
 ): { color: Color; anim: Anim } {
   if (device.inputId === null) return { color: SETUP_COLOR, anim: "breathe" };
-  const tally = tallyFor(source, gate, device.inputId);
+  const { tally, me } = followedTally(source, gate, device.inputId, device.mixEffects ?? DEFAULT_MIX_EFFECTS);
   // Fault: the server flashes blue so the light is an obvious "don't trust me", not a
   // confident idle. Same hue as the device's own disconnected-blue, but flashed — and
   // the device only rests on steady blue when it has lost the server entirely.
   if (tally === "unknown") return { color: COLORS.disconnected, anim: "flash" };
-  if (tally === "live") return { color: mixColor(source, device.inputId) ?? COLORS.live, anim: "none" };
+  if (tally === "live") return { color: (me && mixColor(me, device.inputId)) ?? COLORS.live, anim: "none" };
   return { color: COLORS[tally], anim: "none" };
 }
 
@@ -192,14 +275,15 @@ function colorFor(
  * preview to live, the outgoing one from live to the colour it settles on once the mix ends.
  * The ATEM reports the mix position at its frame rate and each report re-derives this, so the
  * fade is streamed frame by frame like the other server-driven motion (docs/led.md). Null when
- * the input isn't part of a mix.
+ * the input isn't part of a mix on this ME.
  */
-function mixColor(source: SourceSnapshot, inputId: number): Color | null {
-  const mix = source.transition;
+function mixColor(me: MixEffectSnapshot, inputId: number): Color | null {
+  const mix = me.transition;
   // Mixing a source onto itself changes nothing on air.
-  if (!mix || mix.incomingInput === source.programInput) return null;
+  if (!mix || mix.incomingInput === me.programInput) return null;
   if (inputId === mix.incomingInput) return lerpColor(COLORS.preview, COLORS.live, mix.progress);
-  const after = inputId === source.previewInput ? COLORS.preview : COLORS.idle;
+  if (inputId !== me.programInput) return null;
+  const after = inputId === me.previewInput ? COLORS.preview : COLORS.idle;
   return lerpColor(COLORS.live, after, mix.progress);
 }
 
@@ -218,6 +302,8 @@ export function computeEngine(
   gate: ProgramGate,
   devices: ReadonlyArray<DeviceRecord>,
 ): EngineResult {
+  // An input's own tally is ME 1's: the board's keys are that bus's button strip. A light's tally
+  // follows its own MEs, so it is derived per device below.
   const inputs: Input[] = source.inputs.map((input) => ({
     id: input.id,
     label: input.label,
@@ -227,11 +313,14 @@ export function computeEngine(
   const uiDevices: Device[] = [];
   const colors: DeviceColor[] = [];
   for (const device of devices) {
+    const mixEffects = device.mixEffects ?? DEFAULT_MIX_EFFECTS;
     uiDevices.push({
       mac: device.mac,
       macTail: device.macTail,
       state: deviceStateOf(device),
       inputId: device.inputId,
+      mixEffects: [...mixEffects],
+      tally: device.inputId === null ? null : tallyFor(source, gate, device.inputId, mixEffects),
       brightness: device.brightness,
       protocolVersion: device.protocolVersion,
       firmware: device.firmware ?? { kind: "unknown" },
@@ -250,7 +339,7 @@ export function computeEngine(
   }
 
   const state: EngineResult["state"] = {
-    source: { kind: "atem", ip: source.ip, connection: source.connection },
+    source: { kind: "atem", ip: source.ip, connection: source.connection, mixEffectCount: source.mixEffects.length },
     inputs,
     devices: uiDevices,
     programGate: gate,
