@@ -1,9 +1,10 @@
 {
-  "//": "The binary protocol's shared constants and byte-exact payloads (unframed: no TCP length byte, no COBS). Every mirror is tested against this file: protocol.ts (protocol-vectors.test.ts), tools/src/device-protocol.ts (device-protocol.test.ts), app/src-tauri/src/usb/protocol.rs (cargo test) and firmware/src/protocol.h (scripts/check-protocol-mirrors.mjs, compiled on the host). `decoded: null` means every decoder must reject the payload. `deviceEncodes`: the firmware's encoder must produce exactly this payload. Change it together with docs/architecture.md and every mirror.",
+  "//": "The binary protocol's shared constants and byte-exact payloads (unframed: no TCP length byte, no COBS). Every mirror is tested against this file: protocol.ts (protocol-vectors.test.ts), tools/src/device-protocol.ts (device-protocol.test.ts), app/src-tauri/src/usb/protocol.rs (cargo test) and firmware/src/protocol.h (scripts/check-protocol-mirrors.mjs, compiled on the host). `decoded: null` means every decoder must reject the payload. `hostRejects`: the device decoder accepts it (the firmware refuses its value later, e.g. an out-of-range channel), but the sidecar must refuse to encode it. `deviceEncodes`: the firmware's encoder must produce exactly this payload. Change it together with docs/architecture.md and every mirror.",
   "constants": {
-    "PROTOCOL_VERSION_CURRENT": 3,
+    "PROTOCOL_VERSION_CURRENT": 4,
     "PROTOCOL_VERSION_MIN_SUPPORTED": 1,
     "PROTOCOL_VERSION_ESPNOW": 3,
+    "PROTOCOL_VERSION_CHANNEL_SELECTION": 4,
     "SERVER_PORT": 7000,
     "DISCOVERY_PORT": 7001,
     "DISCOVERY_REQUEST": "TALLY_FIND",
@@ -69,6 +70,12 @@
     "ESPNOW_CHANNEL": 1,
     "ESPNOW_CHANNEL_MIN": 1,
     "ESPNOW_CHANNEL_MAX": 13,
+    "BRIDGE_TX_POWER": {
+      "FULL": 78,
+      "REDUCED": 34
+    },
+    "CHANNEL_HUNT_AFTER_MS": 30000,
+    "CHANNEL_DWELL_MS": 150,
     "WIFI_SSID_MAX_BYTES": 32,
     "WIFI_PASSWORD_MAX_BYTES": 63,
     "HEARTBEAT_INTERVAL_MS": 10000,
@@ -78,13 +85,22 @@
   "deviceToServer": [
     {
       "name": "hello",
+      "payload": "0104aabbccddeeff",
+      "decoded": {
+        "kind": "hello",
+        "version": 4,
+        "mac": "aa:bb:cc:dd:ee:ff"
+      },
+      "deviceEncodes": true
+    },
+    {
+      "name": "hello-v3",
       "payload": "0103aabbccddeeff",
       "decoded": {
         "kind": "hello",
         "version": 3,
         "mac": "aa:bb:cc:dd:ee:ff"
-      },
-      "deviceEncodes": true
+      }
     },
     {
       "name": "hello-v1",
@@ -194,6 +210,67 @@
       "decoded": null
     },
     {
+      "name": "scan-result",
+      "payload": "0500030bc404686f6d65",
+      "decoded": {
+        "kind": "scanResult",
+        "index": 0,
+        "total": 3,
+        "ap": {
+          "channel": 11,
+          "rssi": -60,
+          "ssid": "home"
+        }
+      },
+      "deviceEncodes": true
+    },
+    {
+      "name": "scan-result-hidden-network",
+      "payload": "050203069c00",
+      "decoded": {
+        "kind": "scanResult",
+        "index": 2,
+        "total": 3,
+        "ap": {
+          "channel": 6,
+          "rssi": -100,
+          "ssid": ""
+        }
+      },
+      "deviceEncodes": true
+    },
+    {
+      "name": "scan-result-none-heard",
+      "payload": "050000000000",
+      "decoded": {
+        "kind": "scanResult",
+        "index": 0,
+        "total": 0,
+        "ap": null
+      },
+      "deviceEncodes": true
+    },
+    {
+      "name": "scan-result-none-heard-index-1",
+      "payload": "050100000000",
+      "decoded": null
+    },
+    {
+      "name": "scan-result-index-not-below-total",
+      "payload": "050303060000",
+      "decoded": null
+    },
+    {
+      "name": "scan-result-ssid-truncated",
+      "payload": "0500010bc40468",
+      "decoded": null
+    },
+    {
+      "name": "scan-result-short",
+      "payload": "0500010bc4",
+      "decoded": null
+    },
+    {
       "name": "relay",
       "payload": "06aabbccddeeff02",
       "decoded": {
@@ -294,12 +371,22 @@
     {
       "name": "set-transport-channel-0",
       "payload": "040200",
-      "decoded": null
+      "decoded": {
+        "kind": "SET_TRANSPORT",
+        "mode": 2,
+        "channel": 0
+      },
+      "hostRejects": true
     },
     {
       "name": "set-transport-channel-14",
       "payload": "04020e",
-      "decoded": null
+      "decoded": {
+        "kind": "SET_TRANSPORT",
+        "mode": 2,
+        "channel": 14
+      },
+      "hostRejects": true
     },
     {
       "name": "set-transport-long",
@@ -324,7 +411,28 @@
       "decoded": {
         "kind": "SET_BRIDGE",
         "enabled": true,
-        "channel": 1
+        "channel": 1,
+        "txPower": null
+      }
+    },
+    {
+      "name": "set-bridge-tx-power",
+      "payload": "08010b22",
+      "decoded": {
+        "kind": "SET_BRIDGE",
+        "enabled": true,
+        "channel": 11,
+        "txPower": 34
+      }
+    },
+    {
+      "name": "set-bridge-off",
+      "payload": "080001",
+      "decoded": {
+        "kind": "SET_BRIDGE",
+        "enabled": false,
+        "channel": 1,
+        "txPower": null
       }
     },
     {
@@ -333,17 +441,42 @@
       "decoded": {
         "kind": "SET_BRIDGE",
         "enabled": false,
-        "channel": 0
-      }
+        "channel": 0,
+        "txPower": null
+      },
+      "hostRejects": true
     },
     {
       "name": "set-bridge-channel-0",
       "payload": "080100",
-      "decoded": null
+      "decoded": {
+        "kind": "SET_BRIDGE",
+        "enabled": true,
+        "channel": 0,
+        "txPower": null
+      },
+      "hostRejects": true
     },
     {
       "name": "set-bridge-short",
       "payload": "0801",
+      "decoded": null
+    },
+    {
+      "name": "set-bridge-long",
+      "payload": "08010b2200",
+      "decoded": null
+    },
+    {
+      "name": "scan-wifi",
+      "payload": "06",
+      "decoded": {
+        "kind": "SCAN_WIFI"
+      }
+    },
+    {
+      "name": "scan-wifi-long",
+      "payload": "0600",
       "decoded": null
     },
     {

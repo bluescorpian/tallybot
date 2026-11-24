@@ -13,8 +13,12 @@ import {
   DISCOVERY_REQUEST,
   DISCOVERY_RESPONSE_PREFIX,
   DeviceMessageType,
+  BRIDGE_TX_POWER,
+  CHANNEL_DWELL_MS,
+  CHANNEL_HUNT_AFTER_MS,
   ESPNOW_CHANNEL,
-  ESPNOW_CHANNELS,
+  ESPNOW_CHANNEL_MAX,
+  ESPNOW_CHANNEL_MIN,
   HEARTBEAT_INTERVAL_MS,
   HOST_SILENCE_TIMEOUT_MS,
   LogLevel,
@@ -29,6 +33,7 @@ import {
   decodeDeviceMessage,
   getStatusPayload,
   relayPayload,
+  scanWifiPayload,
   setBridgePayload,
   setColorPayload,
   setTransportPayload,
@@ -39,6 +44,7 @@ interface Vector {
   name: string;
   payload: string;
   decoded: Record<string, unknown> | null;
+  hostRejects?: boolean;
 }
 const vectors = JSON.parse(readFileSync(new URL("./protocol-vectors.json", import.meta.url), "utf8")) as {
   constants: Record<string, unknown>;
@@ -56,6 +62,7 @@ test("protocol.ts's constants match the shared vectors", () => {
       PROTOCOL_VERSION_CURRENT: PROTOCOL_VERSION.CURRENT,
       PROTOCOL_VERSION_MIN_SUPPORTED: PROTOCOL_VERSION.MIN_SUPPORTED,
       PROTOCOL_VERSION_ESPNOW: PROTOCOL_VERSION.ESPNOW,
+      PROTOCOL_VERSION_CHANNEL_SELECTION: PROTOCOL_VERSION.CHANNEL_SELECTION,
       SERVER_PORT,
       DISCOVERY_PORT,
       DISCOVERY_REQUEST,
@@ -69,8 +76,11 @@ test("protocol.ts's constants match the shared vectors", () => {
       DEFAULT_BRIGHTNESS,
       MAX_PAYLOAD_BYTES,
       ESPNOW_CHANNEL,
-      ESPNOW_CHANNEL_MIN: ESPNOW_CHANNELS.MIN,
-      ESPNOW_CHANNEL_MAX: ESPNOW_CHANNELS.MAX,
+      ESPNOW_CHANNEL_MIN,
+      ESPNOW_CHANNEL_MAX,
+      BRIDGE_TX_POWER: { ...BRIDGE_TX_POWER },
+      CHANNEL_HUNT_AFTER_MS,
+      CHANNEL_DWELL_MS,
       WIFI_SSID_MAX_BYTES,
       WIFI_PASSWORD_MAX_BYTES,
       HEARTBEAT_INTERVAL_MS,
@@ -105,7 +115,9 @@ function encode(d: Record<string, unknown>): Uint8Array {
     case "GET_STATUS":
       return getStatusPayload();
     case "SET_BRIDGE":
-      return setBridgePayload(d["enabled"] as boolean, d["channel"] as number);
+      return setBridgePayload(d["enabled"] as boolean, d["channel"] as number, (d["txPower"] as number | null) ?? undefined);
+    case "SCAN_WIFI":
+      return scanWifiPayload();
     case "RELAY":
       return relayPayload(d["targetMac"] as string, bytes(d["inner"] as string));
     default:
@@ -115,6 +127,13 @@ function encode(d: Record<string, unknown>): Uint8Array {
 
 for (const v of vectors.serverToDevice) {
   if (v.decoded === null) continue; // the device's decoder is the one that must refuse these
+  if (v.hostRejects) {
+    // The device decodes it and refuses the value itself; the sidecar must never send it.
+    test(`server→device vector "${v.name}" is one the sidecar refuses to encode`, () => {
+      assert.throws(() => encode(v.decoded!), RangeError);
+    });
+    continue;
+  }
   test(`server→device vector "${v.name}" is what the sidecar encodes`, () => {
     assert.equal(hex(encode(v.decoded!)), v.payload);
   });

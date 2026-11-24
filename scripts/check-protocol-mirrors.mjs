@@ -37,7 +37,10 @@ const fieldChecks = {
   SET_TRANSPORT: (d) =>
     d.channel === null ? `m.transportMode == ${d.mode} && !m.hasChannel` : `m.transportMode == ${d.mode} && m.hasChannel && m.channel == ${d.channel}`,
   GET_STATUS: () => "true",
-  SET_BRIDGE: (d) => `m.bridgeEnabled == ${d.enabled} && m.channel == ${d.channel}`,
+  SET_BRIDGE: (d) =>
+    `m.bridgeEnabled == ${d.enabled} && m.channel == ${d.channel} && ` +
+    (d.txPower === null ? "!m.hasTxPower && m.txPower == BRIDGE_TX_POWER_FULL" : `m.hasTxPower && m.txPower == ${d.txPower}`),
+  SCAN_WIFI: () => "true",
   RELAY: (d) =>
     `memcmp(m.targetMac, ${macBytes(d.targetMac)}.data(), 6) == 0 && sameBytes(m.inner, m.innerLen, ${bytes(d.inner)})`,
 };
@@ -61,6 +64,10 @@ const encoders = {
   firmware: (d) => `return encodeFirmwarePayload(out, 64, ${str(d.version)});`,
   status: (d) =>
     `return encodeStatusPayload(out, ${d.transport}, ${d.wifiState}, ${d.rssi}, ${str(d.ssid)}, ${Buffer.byteLength(d.ssid)}, ${d.channel}, ${d.bridge ? 1 : 0});`,
+  scanResult: (d) =>
+    d.ap === null
+      ? "return encodeEmptyScanResultPayload(out);"
+      : `return encodeScanResultPayload(out, ${d.index}, ${d.total}, ${d.ap.channel}, ${d.ap.rssi}, ${str(d.ap.ssid)}, ${Buffer.byteLength(d.ap.ssid)});`,
   log: (d) => `return encodeLogPayload(out, 64, ${d.level}, ${str(d.text)}, ${Buffer.byteLength(d.text)});`,
 };
 for (const v of vectors.deviceToServer) {
